@@ -18,7 +18,13 @@ build: init
 	done
 	mkdir -p $(PICOQUIC_DIR)/_deps
 	ln -sfn ../build/_deps/picotls-build $(PICOQUIC_DIR)/_deps/picotls-build
-	cd $(IMQUIC_DIR) && autoreconf -fi && ./configure --with-picoquic=$(PICOQUIC_DIR) && make -j$${JOBS:-$$(nproc)}
+	cd $(IMQUIC_DIR) && autoreconf -fi && ./configure --with-picoquic=$(PICOQUIC_DIR) && make -j$${JOBS:-$$(nproc)}; status=$$?; \
+		for library in libpicoquic-core.a libpicoquic-log.a libpicohttp-core.a; do \
+			if [ -L $(PICOQUIC_DIR)/$$library ]; then unlink $(PICOQUIC_DIR)/$$library; fi; \
+		done; \
+		if [ -L $(PICOQUIC_DIR)/_deps/picotls-build ]; then unlink $(PICOQUIC_DIR)/_deps/picotls-build; fi; \
+		if [ -d $(PICOQUIC_DIR)/_deps ] && [ -z "$$(find $(PICOQUIC_DIR)/_deps -mindepth 1 -maxdepth 1 -print -quit)" ]; then rmdir $(PICOQUIC_DIR)/_deps; fi; \
+		exit $$status
 
 l4s-timeseries-guest-check:
 	tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
