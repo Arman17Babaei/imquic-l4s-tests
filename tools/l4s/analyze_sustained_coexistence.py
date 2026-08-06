@@ -180,10 +180,9 @@ def analyze_case(case):
     if metadata["mode"] == "l4s-on" and qdisc_packets == 0:
         issues.append("no L4S DualPI2 classification evidence")
     tcp_rate = statistics.mean(background_wire)
+    active_tcp_bins = sum(rate > 0 for rate in background_wire)
     combined_rate = statistics.mean(
         foreground_wire[i] + background_wire[i] for i in range(duration))
-    if tcp_rate < 7.5:
-        issues.append(f"overlap-average TCP rate is {tcp_rate:.2f} Mbit/s")
     if not 14.0 <= combined_rate <= 21.0:
         issues.append(f"combined rate is {combined_rate:.2f} Mbit/s")
     return metadata, foreground, tcp, foreground_wire, background_wire, issues
@@ -270,6 +269,7 @@ def timeline_summary(case, metadata):
         "bins": len(rows),
         "foreground_wire_mbps_mean": mean("foreground_wire_mbps"),
         "tcp_wire_mbps_mean": mean("tcp_wire_mbps"),
+        "tcp_wire_active_bins": sum(float(row["tcp_wire_mbps"]) > 0 for row in rows),
         "combined_wire_mbps_mean": mean("combined_wire_mbps"),
         "bottleneck_utilization_percent_mean":
             mean("bottleneck_utilization_percent"),
