@@ -197,6 +197,15 @@ writes `summary.json` with per-repetition evidence and three-mode aggregates:
 python3 tools/l4s/analyze_sustained_coexistence.py --self-test
 ```
 
+The analyzer enforces nine completed cases, 60-second foreground coverage,
+non-empty captures, TCP measurements in at least 90% of overlap bins, a
+7.5 Mbit/s minimum TCP overlap average, and a 14--21 Mbit/s combined-wire-rate
+tolerance. It also checks the Not-ECT, ECT(0), and Prague ECN/CE invariants
+and Prague's L4S classification plus CE-associated cwnd reduction. If an
+acceptance condition fails, it still writes every timeline, SVG, and
+`summary.json`; the latter records `acceptance_passed: false` and the exact
+per-case reasons, while the analyzer exits nonzero.
+
 ## Reference evidence
 
 The tracked historical summary is [the Mininet report](l4s/mininet-benchmark.md)
