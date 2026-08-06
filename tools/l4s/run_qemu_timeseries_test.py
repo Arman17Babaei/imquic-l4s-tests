@@ -244,7 +244,7 @@ def main():
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
             provision = f'''set -e
 if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
-  printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null
+  printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null || true
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
 fi
 rm -rf {shlex.quote(guest_root)}
