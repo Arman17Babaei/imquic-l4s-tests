@@ -61,32 +61,35 @@ FLOAT_FIELDS = {
 }
 
 
-def packet_count(path, display_filter):
+def tshark_fields(path, display_filter, field):
     result = subprocess.run(
         [
             "tshark", "-r", str(path), "-Y", display_filter,
-            "-T", "fields", "-e", "frame.number",
+            "-T", "fields", "-e", field,
         ],
-        check=True,
+        check=False,
         text=True,
         capture_output=True,
     )
-    return len(result.stdout.splitlines())
+    if result.returncode == 0:
+        return result.stdout
+    if (result.returncode == 2 and
+            "appears to have been cut short in the middle of a packet" in
+            result.stderr):
+        return result.stdout
+    raise AnalysisError(
+        f"{path}: tshark failed ({result.returncode}): {result.stderr.strip()}"
+    )
+
+
+def packet_count(path, display_filter):
+    return len(tshark_fields(path, display_filter, "frame.number").splitlines())
 
 
 def packet_bytes(path, display_filter):
-    result = subprocess.run(
-        [
-            "tshark", "-r", str(path), "-Y", display_filter,
-            "-T", "fields", "-e", "ip.len",
-        ],
-        check=True,
-        text=True,
-        capture_output=True,
-    )
     return sum(
         int(value.split(",", 1)[0])
-        for value in result.stdout.splitlines()
+        for value in tshark_fields(path, display_filter, "ip.len").splitlines()
         if value
     )
 

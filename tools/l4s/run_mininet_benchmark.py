@@ -98,9 +98,15 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
             log = (case / f"tcpdump-{interface}.log").open("w", encoding="utf-8")
             files.append(log)
             captures.append(subprocess.Popen(
-                ["tcpdump", "-U", "-i", interface, "-w", str(case / name)],
+                [
+                    "tcpdump", "-U", "-s", "128", "-i", interface,
+                    "-w", str(case / name),
+                ],
                 stdout=log, stderr=subprocess.STDOUT,
             ))
+        time.sleep(0.1)
+        if any(process.poll() is not None for process in captures):
+            raise RuntimeError(f"{case.name}: tcpdump failed to start")
 
         server_log = (case / "server.log").open("w", encoding="utf-8")
         client_log = (case / "client.log").open("w", encoding="utf-8")
