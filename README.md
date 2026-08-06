@@ -168,11 +168,12 @@ including queued stream bytes, are sampled every 10 ms.
 The default matrix crosses `l4s-off`, `l4s-ect0`, and `l4s-on` with two
 classic TCP modes—Not-ECT and ECN-capable ECT(0)—and runs three repetitions,
 for 18 cases. The ECN-capable TCP case enables conventional negotiated ECN;
-it never uses ECT(1) or an L4S congestion controller. The MoQ publisher and
-the paced 10 Mbit/s TCP iperf3 sender both run on the server and send to the
-client, so their data packets share the same server-to-client HTB + DualPI2
-bottleneck. TCP starts five seconds before the 60-second MoQ overlap and
-continues five seconds afterward:
+it explicitly rewrites only the test flow to ECT(0), so it never uses ECT(1)
+or an L4S congestion controller. The MoQ publisher and the paced 10 Mbit/s
+TCP iperf3 sender both run on the server and send to the client, so their data
+packets share the same server-to-client HTB + DualPI2 bottleneck. TCP starts
+five seconds before the 60-second MoQ overlap and continues five seconds
+afterward:
 
 ```sh
 make build

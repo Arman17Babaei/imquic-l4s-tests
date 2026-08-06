@@ -57,8 +57,9 @@ def configure_tcp_ecn(client, server, tcp_ecn):
         (server, ["-p", "tcp", "--dport", "5201"]),
         (client, ["-p", "tcp", "--sport", "5201"]),
     ):
-        host.cmd("iptables -t mangle -D OUTPUT " + " ".join(rule) +
-                 " -j TOS --set-tos 0x00 2>/dev/null || true")
+        for tos in ("0x00", "0x02"):
+            host.cmd("iptables -t mangle -D OUTPUT " + " ".join(rule) +
+                     " -j TOS --set-tos " + tos + " 2>/dev/null || true")
     if tcp_ecn == "not-ect":
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
@@ -67,6 +68,11 @@ def configure_tcp_ecn(client, server, tcp_ecn):
     elif tcp_ecn == "ect0":
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=1")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=1")
+        # Some L4S-capable kernels select ECT(1) for ECN-enabled TCP.  Keep
+        # TCP's ECN negotiation enabled but rewrite only this test flow to
+        # the conventional ECT(0) codepoint, in both directions.
+        server.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x02")
+        client.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x02")
     else:
         raise ValueError(f"unsupported TCP ECN mode: {tcp_ecn}")
 

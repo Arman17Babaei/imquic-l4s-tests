@@ -34,7 +34,7 @@ l4s-mininet-benchmark-guest-check:
 	python3 tools/l4s/run_mininet_benchmark.py --output $(L4S_RESULT_DIR)
 
 l4s-sustained-moq-check:
-	python3 tools/l4s/run_sustained_coexistence.py --output $(L4S_RESULT_DIR)
+	python3 tools/l4s/run_sustained_coexistence.py --output $(L4S_RESULT_DIR) $(L4S_SUSTAINED_ARGS)
 
 moq-loopback-check:
 	python3 tools/l4s/run_sustained_moq_loopback.py
