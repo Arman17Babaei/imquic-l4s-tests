@@ -114,6 +114,7 @@ def mode_checks(mode, rows):
 
 
 def analyze_case(case):
+    issues = []
     metadata = json.loads((case / "metadata.json").read_text())
     with (case / "metrics.csv").open(newline="") as stream:
         samples = list(csv.DictReader(stream))
@@ -136,14 +137,17 @@ def analyze_case(case):
             foreground[index] = previous
         else:
             previous = row
-    mode_checks(metadata["mode"], foreground)
+    try:
+        mode_checks(metadata["mode"], foreground)
+    except ValueError as error:
+        issues.append(str(error))
     tcp = iperf_intervals(case / "iperf-client.json",
                           metadata["tcp_started_epoch"],
                           metadata["foreground_started_epoch"],
                           metadata["duration_seconds"])
     present = [row for row in tcp if row is not None]
     if len(present) < metadata["duration_seconds"] * .9:
-        raise ValueError(f"{case}: fewer than 90% TCP overlap bins")
+        issues.append("fewer than 90% TCP overlap bins")
     captures = sorted(case.glob("*.pcap"))
     if not captures or any(path.stat().st_size == 0 for path in captures):
         raise ValueError(f"{case}: missing or empty packet capture")
@@ -167,22 +171,22 @@ def analyze_case(case):
         for signal, code in IP_ECN_CODES.items():
             ecn[signal] += counts.get(code, 0)
     if metadata["mode"] == "l4s-off" and any(ecn.values()):
-        raise ValueError(f"{case}: Not-ECT capture contains ECN-marked packets")
+        issues.append("Not-ECT capture contains ECN-marked packets")
     if metadata["mode"] == "l4s-ect0" and (not ecn["ect0"] or not ecn["ce"] or ecn["ect1"]):
-        raise ValueError(f"{case}: ECT(0) capture invariant failed")
+        issues.append("ECT(0) capture invariant failed")
     if metadata["mode"] == "l4s-on" and (not ecn["ect1"] or not ecn["ce"] or ecn["ect0"]):
-        raise ValueError(f"{case}: Prague capture invariant failed")
+        issues.append("Prague capture invariant failed")
     qdisc_packets = l4s_qdisc_packets(case / "dualpi2-stats.txt")
     if metadata["mode"] == "l4s-on" and qdisc_packets == 0:
-        raise ValueError(f"{case}: no L4S DualPI2 classification evidence")
+        issues.append("no L4S DualPI2 classification evidence")
     tcp_rate = statistics.mean(background_wire)
     combined_rate = statistics.mean(
         foreground_wire[i] + background_wire[i] for i in range(duration))
     if tcp_rate < 7.5:
-        raise ValueError(f"{case}: overlap-average TCP rate is {tcp_rate:.2f} Mbit/s")
+        issues.append(f"overlap-average TCP rate is {tcp_rate:.2f} Mbit/s")
     if not 14.0 <= combined_rate <= 21.0:
-        raise ValueError(f"{case}: combined rate is {combined_rate:.2f} Mbit/s")
-    return metadata, foreground, tcp, foreground_wire, background_wire
+        issues.append(f"combined rate is {combined_rate:.2f} Mbit/s")
+    return metadata, foreground, tcp, foreground_wire, background_wire, issues
 
 
 def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_wire):
@@ -317,10 +321,12 @@ def main():
     root = Path(args.directory)
     summaries = []
     for case in sorted(path for path in root.iterdir() if path.is_dir()):
-        metadata, foreground, tcp, foreground_wire, background_wire = analyze_case(case)
+        metadata, foreground, tcp, foreground_wire, background_wire, issues = analyze_case(case)
         write_timeline(case, metadata, foreground, tcp, foreground_wire, background_wire)
         render_svg(case, MODES[metadata["mode"]])
-        summaries.append(timeline_summary(case, metadata))
+        summary = timeline_summary(case, metadata)
+        summary["acceptance_issues"] = issues
+        summaries.append(summary)
     if len(summaries) != 9:
         raise SystemExit(f"expected nine completed cases, found {len(summaries)}")
     aggregates = {}
@@ -339,9 +345,14 @@ def main():
             "foreground_share_mean": statistics.mean(
                 row["foreground_share_mean"] for row in mode_rows),
         }
+    failures = [f"{row['case']}: {issue}" for row in summaries
+                for issue in row["acceptance_issues"]]
     (root / "summary.json").write_text(
-        json.dumps({"cases": summaries, "aggregates": aggregates},
+        json.dumps({"acceptance_passed": not failures, "acceptance_failures": failures,
+                    "cases": summaries, "aggregates": aggregates},
                    indent=2) + "\n")
+    if failures:
+        raise SystemExit("sustained coexistence acceptance failed:\n" + "\n".join(failures))
 
 
 if __name__ == "__main__":
