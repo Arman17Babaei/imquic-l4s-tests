@@ -253,7 +253,7 @@ tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
 tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
-cmake -S {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src -B {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -DWITH_FUSION=OFF >/dev/null
+cmake -S {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src -B {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DWITH_FUSION=OFF >/dev/null
 cmake --build {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -j{args.cpus} >/dev/null
 cp -a {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src/include {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include
 for library in libpicotls-core.a libpicotls-openssl.a libpicotls-minicrypto.a; do
