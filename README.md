@@ -7,6 +7,9 @@ submodules:
 - `deps/imquic` — `imquic-l4s-prague` IMQUIC development branch
 - `deps/picoquic` — `prague-params` managed picoquic development branch
 
+The top-level picoquic submodule is authoritative; the nested picoquic entry
+inside the IMQUIC submodule is intentionally not initialized.
+
 The test repository owns the Mininet/DualPI2 harnesses under `tools/l4s/`, the
 test fixture under `tests/`, and reproducible reports and summaries under
 `l4s/`. Large captures and live run directories belong under the ignored
