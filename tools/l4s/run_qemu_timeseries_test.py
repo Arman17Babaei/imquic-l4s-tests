@@ -255,9 +255,9 @@ tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
 tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
-ln -s ../picotls-src/include {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include
+cp -a {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src/include {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include
 for library in libpicotls-core.a libpicotls-openssl.a libpicotls-fusion.a libpicotls-minicrypto.a; do
-  ln -s ../picotls-build/$library {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib/$library
+  cp {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build/$library {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib/$library
 done
 cd {shlex.quote(guest_root)}/deps/picoquic
 cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix . >/dev/null
