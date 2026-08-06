@@ -1,13 +1,14 @@
 IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 
-.PHONY: init analyzer-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check
+.PHONY: init analyzer-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-sustained-moq-check moq-loopback-check
 
 init:
 	git submodule update --init
 
 analyzer-check:
 	python3 tools/l4s/analyze_mininet_benchmark.py --self-test
+	python3 tools/l4s/analyze_sustained_coexistence.py --self-test
 
 build: init
 	cmake -S $(PICOQUIC_DIR) -B $(PICOQUIC_DIR)/build \
@@ -18,7 +19,7 @@ build: init
 	done
 	mkdir -p $(PICOQUIC_DIR)/_deps
 	ln -sfn ../build/_deps/picotls-build $(PICOQUIC_DIR)/_deps/picotls-build
-	cd $(IMQUIC_DIR) && autoreconf -fi && ./configure --with-picoquic=$(PICOQUIC_DIR) && make -j$${JOBS:-$$(nproc)}; status=$$?; \
+	cd $(IMQUIC_DIR) && autoreconf -fi && ./configure --with-picoquic=$(PICOQUIC_DIR) --enable-moq-examples && make -j$${JOBS:-$$(nproc)}; status=$$?; \
 		for library in libpicoquic-core.a libpicoquic-log.a libpicohttp-core.a; do \
 			if [ -L $(PICOQUIC_DIR)/$$library ]; then unlink $(PICOQUIC_DIR)/$$library; fi; \
 		done; \
@@ -31,3 +32,9 @@ l4s-timeseries-guest-check:
 
 l4s-mininet-benchmark-guest-check:
 	python3 tools/l4s/run_mininet_benchmark.py --output $(L4S_RESULT_DIR)
+
+l4s-sustained-moq-check:
+	python3 tools/l4s/run_sustained_coexistence.py --output $(L4S_RESULT_DIR)
+
+moq-loopback-check:
+	python3 tools/l4s/run_sustained_moq_loopback.py

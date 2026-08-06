@@ -155,7 +155,46 @@ Generated results remain ignored by Git. Only update the compact tracked
 evidence in `l4s/` from a completed reproducible run, with the environment and
 submodule revisions recorded in [`l4s/validation-report.md`](l4s/validation-report.md).
 
-## Reference evidence
++## Sustained MoQ coexistence
+
+The sustained test uses one server-side MoQ namespace/track and an explicit
+client subscription. The publisher emits bounded 16 KiB sequential objects
+whenever bytes-in-flight is below the current congestion window for 60
+seconds; IMQUIC supplies pacing and congestion control. The subscriber
+validates object order and payload contents. Transport metrics are sampled
+every 10 ms.
+
+The default matrix is `l4s-off`, `l4s-ect0`, and `l4s-on`, with three
+repetitions. Each case runs an ECN-disabled, paced 10 Mbit/s TCP iperf3 flow
+for five seconds before the 60-second MoQ overlap and five seconds afterward:
+
+```sh
+make build
+sudo python3 tools/l4s/run_sustained_coexistence.py \\
+  --output results/l4s/sustained-moq
+```
+
+In the prepared QEMU guest, use the wrapper so the repository and submodule
+revisions are archived with the run:
+
+```sh
+python3 tools/l4s/run_qemu_timeseries_test.py \\
+  --make-target l4s-sustained-moq-check \\
+  --guest-result-name sustained-moq
+```
+
+Each case stores metrics, iperf3 JSON, packet captures, timestamps, DualPI2
+counters, `timeline.csv`, and `timeline.svg`. The analyzer aligns TCP
+intervals to the recorded start time and resamples IMQUIC's 10 ms samples into
+one-second overlap bins. Cwnd values are compared diagnostically as
+byte-valued sender reports, not as identical controller semantics. It also
+writes `summary.json` with per-repetition evidence and three-mode aggregates:
+
+```sh
+python3 tools/l4s/analyze_sustained_coexistence.py --self-test
+```
+
++## Reference evidence
 
 The tracked historical summary is [the Mininet report](l4s/mininet-benchmark.md)
 and its [comparison plot](l4s/qemu-evidence/mininet-benchmark-comparison.svg).
