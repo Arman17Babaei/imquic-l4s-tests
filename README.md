@@ -191,7 +191,9 @@ counters, `timeline.csv`, and `timeline.svg`. The analyzer aligns TCP
 intervals to the recorded start time and resamples IMQUIC's 10 ms samples into
 one-second overlap bins. Cwnd values are compared diagnostically as
 byte-valued sender reports, not as identical controller semantics. It also
-writes `summary.json` with per-repetition evidence and three-mode aggregates:
+writes `summary.json` with per-repetition evidence and three-mode aggregates,
+plus `aggregate.svg` with per-mode mean bars and individual-repetition points
+for foreground/TCP rate, bottleneck utilisation/share, and maximum cwnd:
 
 ```sh
 python3 tools/l4s/analyze_sustained_coexistence.py --self-test

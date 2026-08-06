@@ -222,39 +222,130 @@ def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_
             })
 
 
+PLOT_COLORS = {"foreground": "#c44e52", "tcp": "#0072b2", "alpha": "#e69f00",
+               "ect0": "#9467bd", "ect1": "#2ca02c", "utilisation": "#4c78a8"}
+
+
+def svg_polyline(values, x, y, width, height, scale, color):
+    points = " ".join(
+        f"{x + index * width / max(len(values) - 1, 1):.1f},"
+        f"{y + height - value / scale * height:.1f}"
+        for index, value in enumerate(values))
+    return (f'<polyline fill="none" stroke="{color}" stroke-width="1.8" '
+            f'points="{points}"/>')
+
+
 def render_svg(case, mode):
     with (case / "timeline.csv").open(newline="") as stream:
         rows = list(csv.DictReader(stream))
-    width, panel = 1000, 180
-    def polyline(field, x0, y0, height, color):
-        values = [float(row[field]) for row in rows]
-        scale = max(max(values), 1.0)
-        points = " ".join(f"{x0 + i * 900 / max(len(values) - 1, 1):.1f},"
-                          f"{y0 + height - value / scale * height:.1f}"
-                          for i, value in enumerate(values))
-        return f'<polyline fill="none" stroke="{color}" points="{points}"/>'
-    svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{panel * 4}">',
-           f'<text x="20" y="24" font-size="18">{mode}: sustained MoQ/TCP coexistence</text>']
+    width, header, panel_height, footer = 1180, 58, 166, 24
+    height = header + panel_height * 4 + footer
+    plot_x, plot_width, plot_height = 110, 930, 92
+    svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+           f'viewBox="0 0 {width} {height}">',
+           f'<rect width="{width}" height="{height}" fill="white"/>',
+           '<style>text{font-family:Arial,sans-serif;fill:#1f2937}.axis{font-size:11px}'
+           '.title{font-size:18px;font-weight:bold}.panel{font-size:13px;font-weight:bold}'
+           '.legend{font-size:11px}</style>',
+           f'<text class="title" x="24" y="29">{mode}: sustained MoQ/TCP coexistence</text>',
+           '<text class="axis" x="24" y="47">60-second overlap; cwnd values are diagnostic byte-valued sender reports.</text>']
     panels = [
-        ("wire rate (foreground and TCP)", (("foreground_wire_mbps", "#c44e52"),
-                                             ("tcp_wire_mbps", "#0072b2"))),
-        ("cwnd bytes (diagnostic; controllers are not semantically identical)",
-         (("foreground_cwnd_bytes", "#c44e52"), ("tcp_cwnd_bytes", "#0072b2"))),
-        ("foreground RTT (us) and Prague alpha",
-         (("foreground_rtt_us", "#0072b2"), ("prague_alpha", "#e69f00"))),
-        ("CE and ECN counters",
-         (("foreground_ce_packets", "#e69f00"),
-          ("foreground_ect0_packets", "#9467bd"),
-          ("foreground_ect1_packets", "#2ca02c"))),
+        ("Wire rate", (("foreground_wire_mbps", "Foreground MoQ", PLOT_COLORS["foreground"]),
+                        ("tcp_wire_mbps", "Background TCP", PLOT_COLORS["tcp"])), "Mbit/s", False),
+        ("Sender congestion window", (("foreground_cwnd_bytes", "Foreground MoQ", PLOT_COLORS["foreground"]),
+                                       ("tcp_cwnd_bytes", "Background TCP", PLOT_COLORS["tcp"])), "bytes", False),
+        ("Foreground RTT and Prague alpha", (("foreground_rtt_us", "RTT", PLOT_COLORS["tcp"]),
+                                              ("prague_alpha", "Prague alpha", PLOT_COLORS["alpha"])), "separate scales", True),
+        ("CE and ECN counters", (("foreground_ce_packets", "CE", PLOT_COLORS["alpha"]),
+                                  ("foreground_ect0_packets", "ECT(0)", PLOT_COLORS["ect0"]),
+                                  ("foreground_ect1_packets", "ECT(1)", PLOT_COLORS["ect1"])), "packets", False),
     ]
-    for index, (label, series) in enumerate(panels):
-        y = index * panel + 40
-        svg.append(f'<text x="20" y="{y + 18}">{label}</text>')
-        svg.append(f'<line x1="50" y1="{y + 30}" x2="950" y2="{y + 30}" stroke="#888"/>')
-        for field, color in series:
-            svg.append(polyline(field, 50, y + 35, 120, color))
+    for index, (title, series, units, separate_scales) in enumerate(panels):
+        panel_y = header + index * panel_height
+        graph_y = panel_y + 48
+        svg.extend([
+            f'<rect x="20" y="{panel_y + 4}" width="1140" height="{panel_height - 8}" '
+            'fill="#ffffff" stroke="#cbd5e1"/>',
+            f'<text class="panel" x="34" y="{panel_y + 24}">{title}</text>',
+            f'<text class="axis" x="34" y="{panel_y + 40}">{units}</text>',
+            f'<rect x="{plot_x}" y="{graph_y}" width="{plot_width}" height="{plot_height}" '
+            'fill="#f8fafc" stroke="#94a3b8"/>',
+            f'<text class="axis" x="{plot_x}" y="{graph_y + plot_height + 15}">0 s</text>',
+            f'<text class="axis" x="{plot_x + plot_width - 30}" y="{graph_y + plot_height + 15}">59 s</text>',
+        ])
+        all_values = [[float(row[field]) for row in rows] for field, _, _ in series]
+        shared_scale = max(max(values) for values in all_values) or 1.0
+        legend_x = 360
+        for series_index, ((field, label, color), values) in enumerate(zip(series, all_values)):
+            scale = (max(values) or 1.0) if separate_scales else shared_scale
+            svg.append(svg_polyline(values, plot_x, graph_y, plot_width, plot_height, scale, color))
+            legend_y = panel_y + 23
+            x = legend_x + series_index * 230
+            max_label = f"max {max(values):.0f}" if separate_scales else f"max {shared_scale:.0f}"
+            svg.extend([f'<line x1="{x}" y1="{legend_y - 4}" x2="{x + 16}" y2="{legend_y - 4}" '
+                        f'stroke="{color}" stroke-width="2"/>',
+                        f'<text class="legend" x="{x + 21}" y="{legend_y}">{label} ({max_label})</text>'])
+        svg.append(f'<text class="axis" x="{plot_x - 76}" y="{graph_y + 11}">{shared_scale:.0f}</text>')
     svg.append("</svg>\n")
     (case / "timeline.svg").write_text("".join(svg), encoding="utf-8")
+
+
+def render_aggregate_svg(root, summaries, aggregates):
+    width, height = 1180, 630
+    modes = list(MODES)
+    labels = [MODES[mode] for mode in modes]
+    svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
+           f'viewBox="0 0 {width} {height}">',
+           f'<rect width="{width}" height="{height}" fill="white"/>',
+           '<style>text{font-family:Arial,sans-serif;fill:#1f2937}.axis{font-size:11px}'
+           '.title{font-size:18px;font-weight:bold}.panel{font-size:13px;font-weight:bold}'
+           '.value{font-size:10px}</style>',
+           '<text class="title" x="24" y="29">Sustained MoQ/TCP coexistence: aggregate of three repetitions</text>',
+           '<text class="axis" x="24" y="47">Bars are mode means; circles are individual repetitions.</text>']
+
+    def panel(title, values_by_series, y, unit, maximum=None):
+        chart_x, chart_y, chart_width, chart_height = 130, y + 47, 860, 108
+        max_value = maximum or max(
+            value for _, _, groups in values_by_series for group in groups for value in group
+        ) or 1.0
+        svg.extend([f'<rect x="20" y="{y}" width="1140" height="{chart_height + 69}" fill="#ffffff" stroke="#cbd5e1"/>',
+                    f'<text class="panel" x="34" y="{y + 24}">{title}</text>',
+                    f'<text class="axis" x="34" y="{y + 40}">{unit}; scale 0–{max_value:.1f}</text>',
+                    f'<rect x="{chart_x}" y="{chart_y}" width="{chart_width}" height="{chart_height}" fill="#f8fafc" stroke="#94a3b8"/>'])
+        group_width = chart_width / len(modes)
+        series_width = min(36, group_width / (len(values_by_series) + 1))
+        for mode_index, (mode, label) in enumerate(zip(modes, labels)):
+            cx = chart_x + group_width * (mode_index + .5)
+            svg.append(f'<text class="axis" text-anchor="middle" x="{cx:.1f}" y="{chart_y + chart_height + 17}">{label}</text>')
+            for series_index, (name, color, values) in enumerate(values_by_series):
+                mean = statistics.mean(values[mode_index])
+                x = cx + (series_index - (len(values_by_series) - 1) / 2) * (series_width + 8) - series_width / 2
+                bar_height = mean / max_value * chart_height
+                svg.append(f'<rect x="{x:.1f}" y="{chart_y + chart_height - bar_height:.1f}" width="{series_width:.1f}" '
+                           f'height="{bar_height:.1f}" fill="{color}" opacity=".78"/>')
+                svg.append(f'<text class="value" text-anchor="middle" x="{x + series_width / 2:.1f}" '
+                           f'y="{chart_y + chart_height - bar_height - 4:.1f}">{mean:.2f}</text>')
+                for point_index, value in enumerate(values[mode_index]):
+                    dot_x = x + series_width * (point_index + 1) / (len(values[mode_index]) + 1)
+                    dot_y = chart_y + chart_height - value / max_value * chart_height
+                    svg.append(f'<circle cx="{dot_x:.1f}" cy="{dot_y:.1f}" r="3" fill="white" stroke="{color}" stroke-width="1.5"/>')
+        legend_x = 1015
+        for index, (name, color, _) in enumerate(values_by_series):
+            y_legend = chart_y + 18 + index * 20
+            svg.extend([f'<rect x="{legend_x}" y="{y_legend - 9}" width="12" height="12" fill="{color}"/>',
+                        f'<text class="axis" x="{legend_x + 18}" y="{y_legend}">{name}</text>'])
+
+    def values(field):
+        return [[row[field] for row in summaries if row["mode"] == mode] for mode in modes]
+
+    panel("Mean forward wire rate", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_wire_mbps_mean")),
+                                      ("TCP background", PLOT_COLORS["tcp"], values("tcp_wire_mbps_mean"))), 65, "Mbit/s", 20.0)
+    panel("Bottleneck use and foreground share", (("Bottleneck utilisation", PLOT_COLORS["utilisation"], values("bottleneck_utilization_percent_mean")),
+                                                    ("Foreground share", PLOT_COLORS["foreground"], [[row["foreground_share_mean"] * 100 for row in summaries if row["mode"] == mode] for mode in modes])), 250, "percent", 100.0)
+    panel("Maximum sender cwnd (diagnostic)", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_cwnd_bytes_max")),
+                                                 ("TCP background", PLOT_COLORS["tcp"], values("tcp_cwnd_bytes_max"))), 435, "bytes")
+    svg.append("</svg>\n")
+    (root / "aggregate.svg").write_text("".join(svg), encoding="utf-8")
 
 
 def timeline_summary(case, metadata):
@@ -347,6 +438,7 @@ def main():
         }
     failures = [f"{row['case']}: {issue}" for row in summaries
                 for issue in row["acceptance_issues"]]
+    render_aggregate_svg(root, summaries, aggregates)
     (root / "summary.json").write_text(
         json.dumps({"acceptance_passed": not failures, "acceptance_failures": failures,
                     "cases": summaries, "aggregates": aggregates},
