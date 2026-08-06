@@ -196,6 +196,7 @@ def main():
         source_archive = temporary / "imquic.tar.gz"
         imquic_archive = temporary / "imquic-source.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
+        picotls_archive = temporary / "picotls-cache.tar.gz"
         serial_log = temporary / "serial.log"
         run(
             [
@@ -208,6 +209,15 @@ def main():
             ["git", "archive", "--format=tar.gz", f"--output={picoquic_archive}", "HEAD"],
             cwd=ROOT / "deps" / "picoquic",
         )
+        picotls_source = ROOT / "deps" / "picoquic" / "build" / "_deps" / "picotls-src"
+        picotls_build = ROOT / "deps" / "picoquic" / "build" / "_deps" / "picotls-build"
+        if not (picotls_source / "include" / "picotls" / "minicrypto.h").exists():
+            raise RuntimeError("QEMU validation needs the cached picotls tree; run 'make build' first")
+        run([
+            "tar", "-czf", str(picotls_archive),
+            "-C", str(picotls_source.parent), picotls_source.name,
+            "-C", str(picotls_build.parent), picotls_build.name,
+        ])
         run(
             ["git", "archive", "--format=tar.gz", f"--output={imquic_archive}", "HEAD"],
             cwd=ROOT / "deps" / "imquic",
@@ -230,6 +240,7 @@ def main():
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
+            copy_to_guest(port, args.user, args.password, picotls_archive)
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
             provision = f'''set -e
 if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
@@ -241,8 +252,10 @@ mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/pi
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
 tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
+mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
+tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
 cd {shlex.quote(guest_root)}/deps/picoquic
-cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y . >/dev/null
+cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build . >/dev/null
 cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
 cd {shlex.quote(guest_root)}/deps/imquic
 autoreconf -fi >/dev/null
