@@ -190,6 +190,9 @@ python3 tools/l4s/run_qemu_timeseries_test.py \\
   --guest-result-name sustained-moq
 ```
 
+The full 18-case suite has a 30-minute guest-command allowance by default. To
+override it explicitly, add `--guest-timeout 1800` to the wrapper command.
+
 Each case stores metrics, iperf3 JSON, packet captures, timestamps, DualPI2
 counters, `timeline.csv`, and `timeline.svg`. The analyzer aligns TCP
 intervals to the recorded start time and resamples IMQUIC's 10 ms samples into

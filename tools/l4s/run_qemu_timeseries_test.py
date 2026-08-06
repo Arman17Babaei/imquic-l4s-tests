@@ -160,6 +160,10 @@ def main():
         "--boot-timeout", type=int, default=180,
         help="seconds to wait for authenticated guest SSH",
     )
+    parser.add_argument(
+        "--guest-timeout", type=int, default=1800,
+        help="seconds to allow the guest provisioning and test command (default: 1800)",
+    )
     parser.add_argument("--make-target", default="l4s-timeseries-guest-check")
     parser.add_argument("--guest-result-name", default="qemu-run")
     parser.add_argument("--destination-prefix", default="qemu-timeseries")
@@ -168,6 +172,8 @@ def main():
 
     if not args.base.is_file():
         raise SystemExit(f"QEMU base image does not exist: {args.base}")
+    if args.guest_timeout <= 0:
+        raise SystemExit("--guest-timeout must be positive")
     for command in ("qemu-img", "qemu-system-x86_64", "git", "ssh", "scp"):
         if not shutil_which(command):
             raise SystemExit(f"missing command: {command}")
@@ -272,7 +278,8 @@ printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.mak
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S chown -R {shlex.quote(args.user)}:{shlex.quote(args.user)} {shlex.quote(guest_result)}
 '''
             try:
-                ssh_command(port, args.user, args.password, provision)
+                ssh_command(port, args.user, args.password, provision,
+                            timeout=args.guest_timeout)
             except Exception:
                 try:
                     copy_results(port, args.user, args.password, guest_result, destination)
