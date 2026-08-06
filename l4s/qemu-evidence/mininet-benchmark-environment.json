@@ -1,0 +1,26 @@
+{
+  "background_rates_mbps": [
+    0,
+    5,
+    10,
+    20
+  ],
+  "background_transport": "TCP iperf3 with ECN disabled",
+  "bottleneck": "20mbit",
+  "bottleneck_mbps": 20.0,
+  "cases": 60,
+  "evidence_runs": {
+    "l4s-ect0": "qemu-mininet-ect0-20260723T062017Z",
+    "l4s-off,l4s-on": "qemu-mininet-benchmark-20260723T055019Z"
+  },
+  "kernel": "5.15.72-48b3db6b4-prague-111",
+  "mininet": "2.3.1b4",
+  "modes": {
+    "l4s-ect0": "Reno ECT(0)",
+    "l4s-off": "Reno Not-ECT",
+    "l4s-on": "Prague ECT(1)"
+  },
+  "repetitions": 5,
+  "topology": "client--s1(OVSBridge+HTB+DualPI2)--server",
+  "transfer_bytes": 4194304
+}

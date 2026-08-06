@@ -1,0 +1,6 @@
+[submodule "deps/imquic"]
+	path = deps/imquic
+	url = https://github.com/Arman17Babaei/imquic.git
+[submodule "deps/picoquic"]
+	path = deps/picoquic
+	url = https://github.com/Arman17Babaei/picoquic.git

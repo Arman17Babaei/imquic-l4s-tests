@@ -1,0 +1,276 @@
+#!/usr/bin/env python3
+"""Run paired IMQUIC L4S-on/off benchmarks in a one-switch Mininet topology."""
+
+import argparse
+import json
+import os
+import platform
+import re
+import signal
+import shutil
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+from mininet.link import TCLink
+from mininet.net import Mininet
+from mininet.node import OVSBridge
+
+
+ROOT = Path(__file__).resolve().parents[2]
+IMQUIC_ROOT = ROOT / "deps" / "imquic"
+BINARY = IMQUIC_ROOT / "src" / "imquic-l4s-test"
+ANALYZER = ROOT / "tools" / "l4s" / "analyze_mininet_benchmark.py"
+MODE_CONTROLLERS = {
+    "l4s-off": "reno",
+    "l4s-ect0": "reno-ect0",
+    "l4s-on": "prague",
+}
+MODE_LABELS = {
+    "l4s-off": "Reno Not-ECT",
+    "l4s-ect0": "Reno ECT(0)",
+    "l4s-on": "Prague ECT(1)",
+}
+
+
+def command(args, **kwargs):
+    return subprocess.run(args, check=True, text=True, **kwargs)
+
+
+def stop_process(process):
+    if process is None or process.poll() is not None:
+        return
+    process.send_signal(signal.SIGINT)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+def configure_dualpi2(switch, bottleneck):
+    for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
+        subprocess.run(
+            ["tc", "qdisc", "del", "dev", interface, "root"],
+            check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        command(["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:",
+                 "htb", "default", "1"])
+        command(["tc", "class", "add", "dev", interface, "parent", "1:",
+                 "classid", "1:1", "htb", "rate", bottleneck, "burst", "32k"])
+        command(["tc", "qdisc", "add", "dev", interface, "parent", "1:1",
+                 "handle", "10:", "dualpi2", "target", "1ms", "tupdate", "1ms"])
+
+
+def run_case(client, server, switch, output, mode, background_mbps, repetition,
+             transfer_bytes, background_seconds, bottleneck, bottleneck_mbps):
+    case = output / (
+        f"{mode}-bg-{background_mbps:03d}mbps-rep-{repetition:02d}"
+    )
+    case.mkdir(parents=True)
+    configure_dualpi2(switch, bottleneck)
+    metadata = {
+        "mode": mode,
+        "controller": MODE_CONTROLLERS[mode],
+        "background_mbps": background_mbps,
+        "background_transport": "TCP",
+        "background_ecn": "disabled",
+        "repetition": repetition,
+        "transfer_bytes": transfer_bytes,
+        "bottleneck": bottleneck,
+        "bottleneck_mbps": bottleneck_mbps,
+        "client_ip": client.IP(),
+        "server_ip": server.IP(),
+    }
+    (case / "metadata.json").write_text(
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    captures = []
+    server_process = None
+    background_server = None
+    background_client = None
+    files = []
+    try:
+        for interface, name in ((f"{switch.name}-eth1", "switch-client.pcap"),
+                                (f"{switch.name}-eth2", "switch-server.pcap")):
+            log = (case / f"tcpdump-{interface}.log").open("w", encoding="utf-8")
+            files.append(log)
+            captures.append(subprocess.Popen(
+                ["tcpdump", "-U", "-i", interface, "-w", str(case / name)],
+                stdout=log, stderr=subprocess.STDOUT,
+            ))
+
+        server_log = (case / "server.log").open("w", encoding="utf-8")
+        client_log = (case / "client.log").open("w", encoding="utf-8")
+        files.extend((server_log, client_log))
+        controller = metadata["controller"]
+        server_process = server.popen(
+            [str(BINARY), "--server", server.IP(), "4443", controller,
+             str(transfer_bytes)],
+            cwd=str(IMQUIC_ROOT / "src"), stdout=server_log, stderr=subprocess.STDOUT,
+        )
+        time.sleep(0.5)
+
+        if background_mbps > 0:
+            iperf_server_log = (case / "iperf-server.json").open("w", encoding="utf-8")
+            iperf_client_log = (case / "iperf-client.json").open("w", encoding="utf-8")
+            files.extend((iperf_server_log, iperf_client_log))
+            background_server = server.popen(
+                ["iperf3", "-s", "-1", "-p", "5201", "--json"],
+                stdout=iperf_server_log, stderr=subprocess.STDOUT,
+            )
+            time.sleep(0.3)
+            background_client = client.popen(
+                ["iperf3", "-c", server.IP(), "-p", "5201", "-t",
+                 str(background_seconds), "-b", f"{background_mbps}M", "--json"],
+                stdout=iperf_client_log, stderr=subprocess.STDOUT,
+            )
+            time.sleep(0.5)
+
+        started = time.monotonic()
+        metadata["quic_started_epoch"] = time.time()
+        client_process = client.popen(
+            [str(BINARY), "--client", server.IP(), "4443", str(case / "metrics.csv"),
+             controller, str(transfer_bytes)],
+            cwd=str(IMQUIC_ROOT / "src"), stdout=client_log, stderr=subprocess.STDOUT,
+        )
+        client_status = client_process.wait(timeout=180)
+        metadata["quic_finished_epoch"] = time.time()
+        server_status = server_process.wait(timeout=30)
+        metadata["wall_duration_seconds"] = time.monotonic() - started
+        metadata["client_status"] = client_status
+        metadata["server_status"] = server_status
+        (case / "metadata.json").write_text(
+            json.dumps(metadata, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        if client_status != 0 or server_status != 0:
+            raise RuntimeError(f"{case.name}: IMQUIC client/server failed")
+        if background_client is not None and background_client.wait(timeout=30) != 0:
+            raise RuntimeError(f"{case.name}: background TCP client failed")
+        if background_server is not None and background_server.wait(timeout=10) != 0:
+            raise RuntimeError(f"{case.name}: background TCP server failed")
+    finally:
+        for process in captures:
+            stop_process(process)
+        stop_process(background_client)
+        stop_process(background_server)
+        stop_process(server_process)
+        for stream in files:
+            stream.close()
+
+    with (case / "dualpi2-stats.txt").open("w", encoding="utf-8") as stream:
+        for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
+            stream.write(f"device={interface}\n")
+            result = command(
+                ["tc", "-s", "qdisc", "show", "dev", interface],
+                capture_output=True,
+            )
+            stream.write(result.stdout)
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--background-mbps", default="0,5,10,20")
+    parser.add_argument("--bottleneck", default="20mbit")
+    parser.add_argument("--transfer-bytes", type=int, default=4 * 1024 * 1024)
+    parser.add_argument("--background-seconds", type=int, default=8)
+    parser.add_argument("--repetitions", type=int, default=5)
+    parser.add_argument(
+        "--modes", default="l4s-off,l4s-ect0,l4s-on",
+        help="comma-separated benchmark modes",
+    )
+    parser.add_argument("--reference-summary", type=Path)
+    args = parser.parse_args()
+    rates = [int(value) for value in args.background_mbps.split(",")]
+    modes = args.modes.split(",")
+    if not rates or any(rate < 0 for rate in rates):
+        parser.error("background rates must be non-negative integers")
+    if args.repetitions <= 0:
+        parser.error("repetitions must be positive")
+    if not modes or len(set(modes)) != len(modes) or any(
+        mode not in MODE_CONTROLLERS for mode in modes
+    ):
+        parser.error(f"modes must be unique members of {','.join(MODE_CONTROLLERS)}")
+    if args.reference_summary is not None and not args.reference_summary.is_file():
+        parser.error(f"reference summary not found: {args.reference_summary}")
+    units = {"kbit": 0.001, "mbit": 1.0, "gbit": 1000.0}
+    match = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(kbit|mbit|gbit)", args.bottleneck)
+    if match is None:
+        parser.error("bottleneck must use tc rate syntax such as 20mbit")
+    bottleneck_mbps = float(match.group(1)) * units[match.group(2)]
+    if os.geteuid() != 0:
+        raise SystemExit("Mininet benchmark must run as root inside QEMU")
+    for program in ("iperf3", "mn", "ovs-vsctl", "tc", "tcpdump", "tshark"):
+        if shutil.which(program) is None:
+            raise SystemExit(f"missing guest benchmark command: {program}")
+    for executable in (BINARY, ANALYZER):
+        if not executable.exists():
+            raise SystemExit(f"missing benchmark dependency: {executable}")
+    command(["modprobe", "sch_dualpi2"])
+    command(["service", "openvswitch-switch", "start"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    command(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    args.output.mkdir(parents=True, exist_ok=False)
+    benchmark = {
+        "topology": "client--s1(OVSBridge+HTB+DualPI2)--server",
+        "kernel": platform.release(),
+        "mininet": subprocess.run(
+            ["mn", "--version"], check=True, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        ).stdout.strip(),
+        "background_rates_mbps": rates,
+        "repetitions": args.repetitions,
+        "background_transport": "TCP iperf3 with ECN disabled",
+        "bottleneck": args.bottleneck,
+        "bottleneck_mbps": bottleneck_mbps,
+        "transfer_bytes": args.transfer_bytes,
+        "modes": {mode: MODE_LABELS[mode] for mode in modes},
+    }
+    (args.output / "benchmark.json").write_text(
+        json.dumps(benchmark, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    net = Mininet(controller=None, link=TCLink, switch=OVSBridge, autoSetMacs=True)
+    client = net.addHost("client", ip="10.0.0.1/24")
+    server = net.addHost("server", ip="10.0.0.2/24")
+    switch = net.addSwitch("s1", failMode="standalone")
+    net.addLink(client, switch)
+    net.addLink(switch, server)
+    try:
+        net.start()
+        client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+        server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+        client.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
+        server.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
+        if client.cmd(f"ping -c 1 -W 2 {server.IP()}").find("1 received") < 0:
+            raise RuntimeError("Mininet client/server connectivity failed")
+        for rate in rates:
+            for repetition in range(1, args.repetitions + 1):
+                for mode in modes:
+                    print(
+                        f"running {mode} with {rate} Mbps classic TCP background "
+                        f"(repetition {repetition}/{args.repetitions})",
+                        flush=True,
+                    )
+                    run_case(
+                        client, server, switch, args.output, mode, rate,
+                        repetition, args.transfer_bytes, args.background_seconds,
+                        args.bottleneck, bottleneck_mbps,
+                    )
+    finally:
+        net.stop()
+        command(["mn", "-c"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    analyzer_command = [sys.executable, str(ANALYZER), str(args.output)]
+    if args.reference_summary is not None:
+        analyzer_command.extend(
+            ["--reference-summary", str(args.reference_summary)]
+        )
+    command(analyzer_command)
+    print(f"Mininet L4S benchmark: PASS ({args.output})")
+
+
+if __name__ == "__main__":
+    main()

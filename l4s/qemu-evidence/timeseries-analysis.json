@@ -1,0 +1,11 @@
+{
+  "alpha_states": 27,
+  "ce_associated_cwnd_reduction": true,
+  "cwnd_max_bytes": 19627,
+  "cwnd_min_bytes": 3120,
+  "duration_us": 1601222,
+  "final_ce_packets": 170,
+  "final_ect1_packets": 155,
+  "samples": 157,
+  "status": "pass"
+}

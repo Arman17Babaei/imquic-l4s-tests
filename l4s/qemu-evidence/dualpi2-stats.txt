@@ -1,0 +1,15 @@
+QEMU guest kernel: 5.15.72-48b3db6b4-prague-111
+Topology: sender -- router -- receiver
+Shaping: HTB 2 Mbit/s, DualPI2 target 1ms tupdate 1ms on both router egress links
+
+router rs:
+  pkts_in_c 6 pkts_in_l 393 maxq 6
+  ecn_mark 191 step_marks 168
+
+router rr:
+  pkts_in_c 6 pkts_in_l 378 maxq 18
+  ecn_mark 202 step_marks 184
+
+tshark ECN packet counts (each capture contains both directions):
+  router-sender.pcap:   ECT(1) 473, CE 121
+  router-receiver.pcap: ECT(1) 380, CE 178

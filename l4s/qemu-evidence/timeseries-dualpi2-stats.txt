@@ -1,0 +1,23 @@
+device=imq-l4s-rs
+qdisc htb 1: root refcnt 5 r2q 10 default 0x1 direct_packets_stat 0 direct_qlen 1000
+ Sent 301427 bytes 377 pkt (dropped 26, overlimits 269 requeues 0)
+ backlog 0b 0p requeues 0
+qdisc dualpi2 10: parent 1:1 limit 10000p target 1ms tupdate 1ms alpha 0.156250 beta 3.195312 l4s_ect coupling_factor 2 drop_on_overload step_thresh 1ms drop_dequeue split_gso classic_protection 10%
+ Sent 301427 bytes 377 pkt (dropped 26, overlimits 0 requeues 0)
+ backlog 0b 0p requeues 0
+prob 0.925114 delay_c 0us delay_l 0us
+pkts_in_c 6 pkts_in_l 397 maxq 5
+ecn_mark 198 step_marks 163
+credit -121120 (L)
+
+device=imq-l4s-rd
+qdisc htb 1: root refcnt 5 r2q 10 default 0x1 direct_packets_stat 0 direct_qlen 1000
+ Sent 293311 bytes 333 pkt (dropped 46, overlimits 238 requeues 0)
+ backlog 0b 0p requeues 0
+qdisc dualpi2 10: parent 1:1 limit 10000p target 1ms tupdate 1ms alpha 0.156250 beta 3.195312 l4s_ect coupling_factor 2 drop_on_overload step_thresh 1ms drop_dequeue split_gso classic_protection 10%
+ Sent 293311 bytes 333 pkt (dropped 46, overlimits 0 requeues 0)
+ backlog 0b 0p requeues 0
+prob 0.855515 delay_c 0us delay_l 0us
+pkts_in_c 6 pkts_in_l 373 maxq 17
+ecn_mark 196 step_marks 169
+credit -5810 (L)
