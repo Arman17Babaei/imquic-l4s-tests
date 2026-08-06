@@ -156,6 +156,10 @@ def main():
     )
     parser.add_argument("--memory", type=int, default=4096)
     parser.add_argument("--cpus", type=int, default=4)
+    parser.add_argument(
+        "--boot-timeout", type=int, default=180,
+        help="seconds to wait for authenticated guest SSH",
+    )
     parser.add_argument("--make-target", default="l4s-timeseries-guest-check")
     parser.add_argument("--guest-result-name", default="qemu-run")
     parser.add_argument("--destination-prefix", default="qemu-timeseries")
@@ -220,7 +224,9 @@ def main():
         )
         try:
             wait_for_ssh(port, qemu)
-            wait_for_authenticated_ssh(port, args.user, args.password, qemu)
+            wait_for_authenticated_ssh(
+                port, args.user, args.password, qemu, timeout=args.boot_timeout
+            )
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
