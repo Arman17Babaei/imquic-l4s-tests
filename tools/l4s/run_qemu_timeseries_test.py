@@ -260,7 +260,7 @@ for library in libpicotls-core.a libpicotls-openssl.a libpicotls-fusion.a libpic
   cp {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build/$library {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib/$library
 done
 cd {shlex.quote(guest_root)}/deps/picoquic
-cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix . >/dev/null
+cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix -DPTLS_INCLUDE_DIR={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include . >/dev/null
 cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
 cd {shlex.quote(guest_root)}/deps/imquic
 autoreconf -fi >/dev/null
