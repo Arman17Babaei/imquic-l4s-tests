@@ -4,8 +4,8 @@ This repository separates the L4S/Prague experiment architecture and evidence
 from the IMQUIC implementation. The implementation dependencies are pinned as
 submodules:
 
-- `deps/imquic` — IMQUIC endpoint implementation
-- `deps/picoquic` — managed picoquic fork used by the L4S experiments
+- `deps/imquic` — `codex/imquic-l4s-prague` IMQUIC development branch
+- `deps/picoquic` — `codex/prague-params` managed picoquic development branch
 
 The test repository owns the Mininet/DualPI2 harnesses under `tools/l4s/`, the
 test fixture under `tests/`, and reproducible reports and summaries under
@@ -44,4 +44,6 @@ counter as an attribution cross-check.
 
 The submodule commits are intentionally recorded in the superproject. Update
 them only when an experiment revision is being changed and record the resulting
-commit in the validation report.
+commit in the validation report. These development branches are currently local
+fork branches; publish the branches on GitHub before cloning this repository on
+another machine.
