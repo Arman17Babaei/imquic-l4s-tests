@@ -1,8 +1,8 @@
 [submodule "deps/imquic"]
 	path = deps/imquic
 	url = https://github.com/Arman17Babaei/imquic.git
-	branch = codex/imquic-l4s-prague
+	branch = imquic-l4s-prague
 [submodule "deps/picoquic"]
 	path = deps/picoquic
 	url = https://github.com/Arman17Babaei/picoquic.git
-	branch = codex/prague-params
+	branch = prague-params
