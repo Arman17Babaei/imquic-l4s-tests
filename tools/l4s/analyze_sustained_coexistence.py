@@ -11,6 +11,7 @@ from pathlib import Path
 
 MODES = {"l4s-off": "Reno / Not-ECT", "l4s-ect0": "Reno / ECT(0)",
          "l4s-on": "Prague / ECT(1)"}
+IP_ECN_CODES = {"ect0": 2, "ect1": 1, "ce": 3}
 
 
 def overlap_bins(metadata, count=60):
@@ -148,24 +149,23 @@ def analyze_case(case):
         raise ValueError(f"{case}: missing or empty packet capture")
     foreground_wire = [0.0] * duration
     background_wire = [0.0] * duration
-    captures = [path for path in captures if path.name == "switch-server.pcap"]
+    captures = [path for path in captures if path.name == "switch-client.pcap"]
     if not captures:
-        raise ValueError(f"{case}: missing server-side capture")
+        raise ValueError(f"{case}: missing client-side forward capture")
     for capture in captures:
         foreground_values = packet_bins(
-            capture, 4443, metadata["server_ip"],
+            capture, 4443, metadata["client_ip"],
             metadata["foreground_started_epoch"], duration)
         background_values = packet_bins(
-            capture, 5201, metadata["server_ip"],
+            capture, 5201, metadata["client_ip"],
             metadata["foreground_started_epoch"], duration)
         foreground_wire = [a + b for a, b in zip(foreground_wire, foreground_values)]
         background_wire = [a + b for a, b in zip(background_wire, background_values)]
     ecn = {key: 0 for key in ("ect0", "ect1", "ce")}
     for capture in captures:
-        counts = ecn_counts(capture, metadata["server_ip"])
-        ecn["ect0"] += counts.get(1, 0)
-        ecn["ect1"] += counts.get(2, 0)
-        ecn["ce"] += counts.get(3, 0)
+        counts = ecn_counts(capture, metadata["client_ip"])
+        for signal, code in IP_ECN_CODES.items():
+            ecn[signal] += counts.get(code, 0)
     if metadata["mode"] == "l4s-off" and any(ecn.values()):
         raise ValueError(f"{case}: Not-ECT capture contains ECN-marked packets")
     if metadata["mode"] == "l4s-ect0" and (not ecn["ect0"] or not ecn["ce"] or ecn["ect1"]):
@@ -282,6 +282,7 @@ def timeline_summary(case, metadata):
 
 
 def self_test():
+    assert IP_ECN_CODES == {"ect0": 2, "ect1": 1, "ce": 3}
     assert [x["cwnd_bytes"] for x in resample(
         [{"time_us": 0, "cwnd_bytes": 1}, {"time_us": 1_500_000, "cwnd_bytes": 2}], 3)
         if x] == [1, 2]

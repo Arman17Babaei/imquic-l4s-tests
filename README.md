@@ -155,7 +155,7 @@ Generated results remain ignored by Git. Only update the compact tracked
 evidence in `l4s/` from a completed reproducible run, with the environment and
 submodule revisions recorded in [`l4s/validation-report.md`](l4s/validation-report.md).
 
-+## Sustained MoQ coexistence
+## Sustained MoQ coexistence
 
 The sustained test uses one server-side MoQ namespace/track and an explicit
 client subscription. The publisher emits bounded 16 KiB sequential objects
@@ -165,8 +165,11 @@ validates object order and payload contents. Transport metrics are sampled
 every 10 ms.
 
 The default matrix is `l4s-off`, `l4s-ect0`, and `l4s-on`, with three
-repetitions. Each case runs an ECN-disabled, paced 10 Mbit/s TCP iperf3 flow
-for five seconds before the 60-second MoQ overlap and five seconds afterward:
+repetitions. The MoQ publisher and the paced, ECN-disabled 10 Mbit/s TCP
+iperf3 sender both run on the server and send to the client, so their data
+packets share the same server-to-client HTB + DualPI2 bottleneck. TCP starts
+five seconds before the 60-second MoQ overlap and continues five seconds
+afterward:
 
 ```sh
 make build
@@ -194,7 +197,7 @@ writes `summary.json` with per-repetition evidence and three-mode aggregates:
 python3 tools/l4s/analyze_sustained_coexistence.py --self-test
 ```
 
-+## Reference evidence
+## Reference evidence
 
 The tracked historical summary is [the Mininet report](l4s/mininet-benchmark.md)
 and its [comparison plot](l4s/qemu-evidence/mininet-benchmark-comparison.svg).

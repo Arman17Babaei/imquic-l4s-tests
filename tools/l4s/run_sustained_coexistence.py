@@ -61,7 +61,8 @@ def run_case(client, server, switch, root, mode, repetition, duration, warmup, d
                 "drain_seconds": drain, "background_mbps": 10,
                 "bottleneck_mbps": 20, "namespace": "imquic-l4s",
                 "track": "sustained", "client_ip": client.IP(),
-                "server_ip": server.IP()}
+                "server_ip": server.IP(),
+                "forward_direction": "server-to-client"}
     (case / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     captures, files = [], []
     publisher = subscriber = tcp_server = tcp_client = None
@@ -76,12 +77,12 @@ def run_case(client, server, switch, root, mode, repetition, duration, warmup, d
         tcp_server_log = (case / "iperf-server.json").open("w")
         tcp_client_log = (case / "iperf-client.json").open("w")
         files.extend((tcp_server_log, tcp_client_log))
-        tcp_server = server.popen(["iperf3", "-s", "-1", "-p", "5201", "--json"],
+        tcp_server = client.popen(["iperf3", "-s", "-1", "-p", "5201", "--json"],
                                   stdout=tcp_server_log, stderr=subprocess.STDOUT)
         time.sleep(.3)
         tcp_started = time.time()
-        tcp_client = client.popen(
-            ["iperf3", "-c", server.IP(), "-p", "5201", "-t",
+        tcp_client = server.popen(
+            ["iperf3", "-c", client.IP(), "-p", "5201", "-t",
              str(warmup + duration + drain), "-i", "1", "-b", "10M",
              "--json"], stdout=tcp_client_log, stderr=subprocess.STDOUT)
         metadata["tcp_started_epoch"] = tcp_started
@@ -151,8 +152,8 @@ def main():
         net.start()
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
-        client.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
-        server.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
+        server.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
+        client.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
         for repetition in range(1, args.repetitions + 1):
             for mode in args.modes.split(","):
                 run_case(client, server, switch, args.output, mode, repetition,
