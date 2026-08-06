@@ -190,8 +190,8 @@ def main():
         temporary = Path(temporary)
         overlay = temporary / "overlay.qcow2"
         source_archive = temporary / "imquic.tar.gz"
+        imquic_archive = temporary / "imquic-source.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
-        picotls_archive = temporary / "picotls.tar.gz"
         serial_log = temporary / "serial.log"
         run(
             [
@@ -202,11 +202,11 @@ def main():
         run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
         run(
             ["git", "archive", "--format=tar.gz", f"--output={picoquic_archive}", "HEAD"],
-            cwd=ROOT / ".deps" / "picoquic-l4s",
+            cwd=ROOT / "deps" / "picoquic",
         )
-        archive_tracked_with_submodules(
-            ROOT / ".deps" / "picoquic-l4s" / "_deps" / "picotls-src",
-            picotls_archive,
+        run(
+            ["git", "archive", "--format=tar.gz", f"--output={imquic_archive}", "HEAD"],
+            cwd=ROOT / "deps" / "imquic",
         )
         qemu = subprocess.Popen(
             [
@@ -222,8 +222,8 @@ def main():
             wait_for_ssh(port, qemu)
             wait_for_authenticated_ssh(port, args.user, args.password, qemu)
             copy_to_guest(port, args.user, args.password, source_archive)
+            copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
-            copy_to_guest(port, args.user, args.password, picotls_archive)
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
             provision = f'''set -e
 if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
@@ -231,18 +231,19 @@ if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
 fi
 rm -rf {shlex.quote(guest_root)}
-mkdir -p {shlex.quote(guest_root)}/.deps/picoquic-l4s {shlex.quote(guest_root)}/.deps/picotls-src
+mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
-tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/.deps/picoquic-l4s
-tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/.deps/picotls-src
-cd {shlex.quote(guest_root)}/.deps/picoquic-l4s
-cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y -DFETCHCONTENT_SOURCE_DIR_PICOTLS={shlex.quote(guest_root)}/.deps/picotls-src . >/dev/null
+tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
+tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
+cd {shlex.quote(guest_root)}/deps/picoquic
+cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y . >/dev/null
 cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
-cd {shlex.quote(guest_root)}
+cd {shlex.quote(guest_root)}/deps/imquic
 autoreconf -fi >/dev/null
-./configure --with-picoquic={shlex.quote(guest_root)}/.deps/picoquic-l4s >/dev/null
+./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic >/dev/null
 make -j{args.cpus} >/dev/null
 make check
+cd {shlex.quote(guest_root)}
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S chown -R {shlex.quote(args.user)}:{shlex.quote(args.user)} {shlex.quote(guest_result)}
 '''

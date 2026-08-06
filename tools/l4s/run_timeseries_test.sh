@@ -2,6 +2,7 @@
 set -Eeuo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
+IMQUIC_ROOT="$ROOT/deps/imquic"
 RESULT_DIR=${1:-"$ROOT/results/l4s/timeseries-$(date -u +%Y%m%dT%H%M%SZ)"}
 RATE=${IMQUIC_L4S_RATE:-2mbit}
 TARGET=${IMQUIC_L4S_TARGET:-1ms}
@@ -33,7 +34,7 @@ modprobe sch_dualpi2
 modinfo sch_dualpi2 >/dev/null
 
 mkdir -p "$RESULT_DIR"
-make -C "$ROOT/src" imquic-l4s-test
+make -C "$IMQUIC_ROOT/src" imquic-l4s-test
 
 for ns in "$SENDER" "$ROUTER" "$RECEIVER"; do
 	ip netns del "$ns" 2>/dev/null || true
@@ -76,14 +77,14 @@ ip netns exec "$ROUTER" tcpdump -U -i imq-l4s-rd -w \
 CAPTURE_PIDS+=("$!")
 
 ip netns exec "$RECEIVER" bash -c \
-	"cd '$ROOT/src' && ./imquic-l4s-test --server 10.10.2.2 4443" \
+	"cd '$IMQUIC_ROOT/src' && ./imquic-l4s-test --server 10.10.2.2 4443" \
 	>"$RESULT_DIR/server.log" 2>&1 &
 SERVER_PID=$!
 sleep 1
 
 set +e
 ip netns exec "$SENDER" bash -c \
-	"cd '$ROOT/src' && ./imquic-l4s-test --client 10.10.2.2 4443 '$RESULT_DIR/metrics.csv'" \
+	"cd '$IMQUIC_ROOT/src' && ./imquic-l4s-test --client 10.10.2.2 4443 '$RESULT_DIR/metrics.csv'" \
 	>"$RESULT_DIR/client.log" 2>&1
 CLIENT_STATUS=$?
 wait "$SERVER_PID"

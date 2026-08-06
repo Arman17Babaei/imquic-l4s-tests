@@ -1,7 +1,7 @@
 IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 
-.PHONY: init analyzer-check build
+.PHONY: init analyzer-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check
 
 init:
 	git submodule update --init --recursive
@@ -14,3 +14,9 @@ build: init
 		-DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y
 	cmake --build $(PICOQUIC_DIR)/build --target picoquic-core picoquic-log picohttp-core -j$${JOBS:-$$(nproc)}
 	cd $(IMQUIC_DIR) && autoreconf -fi && ./configure --with-picoquic=$(PICOQUIC_DIR) && make -j$${JOBS:-$$(nproc)}
+
+l4s-timeseries-guest-check:
+	tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
+
+l4s-mininet-benchmark-guest-check:
+	python3 tools/l4s/run_mininet_benchmark.py --output $(L4S_RESULT_DIR)
