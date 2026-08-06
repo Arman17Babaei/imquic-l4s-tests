@@ -98,7 +98,8 @@ def mode_checks(mode, rows):
     ect0 = max(row["ect0_packets"] for row in rows)
     ect1 = max(row["ect1_packets"] for row in rows)
     ce = max(row["ce_packets"] for row in rows)
-    alpha = {row["alpha_numerator"] for row in rows}
+    alpha = {row["alpha_numerator"] / row["alpha_denominator"]
+             if row["alpha_denominator"] else 0 for row in rows}
     if mode == "l4s-off" and (ect0 or ect1 or ce):
         raise ValueError("Not-ECT mode has ECN evidence")
     if mode == "l4s-ect0" and (not ect0 or not ce or ect1):
@@ -122,7 +123,7 @@ def analyze_case(case):
         raise ValueError(f"{case}: insufficient foreground metrics")
     for sample in samples:
         for field in ("time_us", "rtt_us", "cwnd_bytes", "ect1_packets",
-                      "ce_packets", "alpha_numerator"):
+                      "ce_packets", "alpha_numerator", "alpha_denominator"):
             sample[field] = int(sample[field])
         sample["ect0_packets"] = int(sample.get("ect0_packets", 0))
     duration = metadata["duration_seconds"]
@@ -210,7 +211,8 @@ def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_
                 "foreground_ect0_packets": row.get("ect0_packets", 0),
                 "foreground_ect1_packets": row["ect1_packets"],
                 "foreground_ce_packets": row["ce_packets"],
-                "prague_alpha": row["alpha_numerator"],
+                "prague_alpha": row["alpha_numerator"] / row["alpha_denominator"]
+                if row["alpha_denominator"] else 0,
                 "foreground_wire_mbps": foreground_rate,
                 "tcp_wire_mbps": tcp_rate,
                 "combined_wire_mbps": foreground_rate + tcp_rate,
@@ -384,7 +386,7 @@ def self_test():
     assert overlap_bins({"foreground_started_epoch": 5, "tcp_started_epoch": 0}, 2) == [5, 6]
     assert aligned_interval_index(100.0, 105.0, 6.2) == 1
     valid = [{"ect0_packets": 0, "ect1_packets": 0, "ce_packets": 0,
-              "alpha_numerator": 0}]
+              "alpha_numerator": 0, "alpha_denominator": 0}]
     mode_checks("l4s-off", valid)
     try:
         mode_checks("l4s-ect0", valid)
