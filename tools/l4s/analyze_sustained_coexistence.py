@@ -67,19 +67,26 @@ def packet_bins(path, port, destination, start_epoch, count=60):
     return [value * 8 / 1e6 for value in bins]
 
 
-def ecn_counts(path, destination):
+def ecn_bins(path, port, destination, start_epoch, count=60):
     result = subprocess.run(
         ["tshark", "-r", str(path), "-Y",
-         f"ip.dst == {destination} && udp.port == 4443", "-T", "fields",
-         "-e", "ip.dsfield.ecn"],
+         f"ip.dst == {destination} && (tcp.port == {port} or udp.port == {port})",
+         "-T", "fields", "-e", "frame.time_epoch", "-e", "ip.dsfield.ecn"],
         check=False, text=True, capture_output=True)
     if result.returncode not in (0, 2):
         raise ValueError(f"{path}: tshark failed: {result.stderr.strip()}")
-    counts = {0: 0, 1: 0, 2: 0, 3: 0}
-    for value in result.stdout.splitlines():
-        if value:
-            counts[int(value, 0)] = counts.get(int(value, 0), 0) + 1
-    return counts
+    bins = {signal: [0] * count for signal in IP_ECN_CODES}
+    for line in result.stdout.splitlines():
+        fields = line.split("\t")
+        if len(fields) != 2 or not fields[0] or not fields[1]:
+            continue
+        index = int(float(fields[0]) - start_epoch)
+        code = int(fields[1], 0)
+        if 0 <= index < count:
+            for signal, expected in IP_ECN_CODES.items():
+                if code == expected:
+                    bins[signal][index] += 1
+    return bins
 
 
 def l4s_qdisc_packets(path):
@@ -114,6 +121,13 @@ def mode_checks(mode, rows):
             raise ValueError("Prague mode has no CE-associated cwnd reduction")
 
 
+def tcp_ecn_checks(mode, totals):
+    if mode == "not-ect" and any(totals.values()):
+        raise ValueError("Not-ECT TCP capture contains ECN-marked packets")
+    if mode == "ect0" and (not totals["ect0"] or totals["ect1"]):
+        raise ValueError("classic-ECN TCP capture invariant failed")
+
+
 def analyze_case(case):
     issues = []
     metadata = json.loads((case / "metadata.json").read_text())
@@ -126,6 +140,7 @@ def analyze_case(case):
                       "ce_packets", "alpha_numerator", "alpha_denominator"):
             sample[field] = int(sample[field])
         sample["ect0_packets"] = int(sample.get("ect0_packets", 0))
+        sample["queued_stream_bytes"] = int(sample.get("queued_stream_bytes", 0))
     duration = metadata["duration_seconds"]
     foreground = resample(samples, duration)
     if sum(row is not None for row in foreground) < duration * .95:
@@ -166,17 +181,29 @@ def analyze_case(case):
             metadata["foreground_started_epoch"], duration)
         foreground_wire = [a + b for a, b in zip(foreground_wire, foreground_values)]
         background_wire = [a + b for a, b in zip(background_wire, background_values)]
-    ecn = {key: 0 for key in ("ect0", "ect1", "ce")}
+    foreground_ecn = {key: [0] * duration for key in IP_ECN_CODES}
+    tcp_ecn = {key: [0] * duration for key in IP_ECN_CODES}
     for capture in captures:
-        counts = ecn_counts(capture, metadata["client_ip"])
-        for signal, code in IP_ECN_CODES.items():
-            ecn[signal] += counts.get(code, 0)
+        for signal, values in ecn_bins(
+                capture, 4443, metadata["client_ip"],
+                metadata["foreground_started_epoch"], duration).items():
+            foreground_ecn[signal] = [a + b for a, b in zip(foreground_ecn[signal], values)]
+        for signal, values in ecn_bins(
+                capture, 5201, metadata["client_ip"],
+                metadata["foreground_started_epoch"], duration).items():
+            tcp_ecn[signal] = [a + b for a, b in zip(tcp_ecn[signal], values)]
+    ecn = {signal: sum(values) for signal, values in foreground_ecn.items()}
+    tcp_ecn_totals = {signal: sum(values) for signal, values in tcp_ecn.items()}
     if metadata["mode"] == "l4s-off" and any(ecn.values()):
         issues.append("Not-ECT capture contains ECN-marked packets")
     if metadata["mode"] == "l4s-ect0" and (not ecn["ect0"] or not ecn["ce"] or ecn["ect1"]):
         issues.append("ECT(0) capture invariant failed")
     if metadata["mode"] == "l4s-on" and (not ecn["ect1"] or not ecn["ce"] or ecn["ect0"]):
         issues.append("Prague capture invariant failed")
+    try:
+        tcp_ecn_checks(metadata.get("tcp_ecn", "not-ect"), tcp_ecn_totals)
+    except ValueError as error:
+        issues.append(str(error))
     qdisc_packets = l4s_qdisc_packets(case / "dualpi2-stats.txt")
     if metadata["mode"] == "l4s-on" and qdisc_packets == 0:
         issues.append("no L4S DualPI2 classification evidence")
@@ -186,17 +213,22 @@ def analyze_case(case):
         foreground_wire[i] + background_wire[i] for i in range(duration))
     if not 14.0 <= combined_rate <= 21.0:
         issues.append(f"combined rate is {combined_rate:.2f} Mbit/s")
-    return metadata, foreground, tcp, foreground_wire, background_wire, issues
+    return metadata, foreground, tcp, foreground_wire, background_wire, foreground_ecn, tcp_ecn, issues
 
 
-def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_wire):
+def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_wire,
+                   foreground_ecn, tcp_ecn):
     path = case / "timeline.csv"
-    fields = ("time_s", "foreground_cwnd_bytes", "foreground_rtt_us",
+    fields = ("time_s", "foreground_cwnd_bytes", "foreground_queued_stream_bytes",
+              "foreground_rtt_us",
               "foreground_ect0_packets", "foreground_ect1_packets",
               "foreground_ce_packets", "prague_alpha", "foreground_wire_mbps",
               "tcp_wire_mbps", "combined_wire_mbps",
               "bottleneck_utilization_percent", "foreground_share",
-              "tcp_cwnd_bytes")
+              "tcp_cwnd_bytes", "foreground_capture_ect0_packets",
+              "foreground_capture_ect1_packets", "foreground_capture_ce_packets",
+              "tcp_capture_ect0_packets", "tcp_capture_ect1_packets",
+              "tcp_capture_ce_packets")
     with path.open("w", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
@@ -207,6 +239,7 @@ def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_
             writer.writerow({
                 "time_s": index,
                 "foreground_cwnd_bytes": row["cwnd_bytes"],
+                "foreground_queued_stream_bytes": row["queued_stream_bytes"],
                 "foreground_rtt_us": row["rtt_us"],
                 "foreground_ect0_packets": row.get("ect0_packets", 0),
                 "foreground_ect1_packets": row["ect1_packets"],
@@ -221,11 +254,18 @@ def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_
                 "foreground_share": foreground_rate /
                     max(foreground_rate + tcp_rate, 1e-9),
                 "tcp_cwnd_bytes": (tcp_row or {}).get("snd_cwnd", 0),
+                "foreground_capture_ect0_packets": foreground_ecn["ect0"][index],
+                "foreground_capture_ect1_packets": foreground_ecn["ect1"][index],
+                "foreground_capture_ce_packets": foreground_ecn["ce"][index],
+                "tcp_capture_ect0_packets": tcp_ecn["ect0"][index],
+                "tcp_capture_ect1_packets": tcp_ecn["ect1"][index],
+                "tcp_capture_ce_packets": tcp_ecn["ce"][index],
             })
 
 
 PLOT_COLORS = {"foreground": "#c44e52", "tcp": "#0072b2", "alpha": "#e69f00",
-               "ect0": "#9467bd", "ect1": "#2ca02c", "utilisation": "#4c78a8"}
+               "ect0": "#9467bd", "ect1": "#2ca02c", "tcp_ce": "#17becf",
+               "utilisation": "#4c78a8"}
 
 
 def svg_polyline(values, x, y, width, height, scale, color):
@@ -237,11 +277,11 @@ def svg_polyline(values, x, y, width, height, scale, color):
             f'points="{points}"/>')
 
 
-def render_svg(case, mode):
+def render_svg(case, mode, tcp_ecn):
     with (case / "timeline.csv").open(newline="") as stream:
         rows = list(csv.DictReader(stream))
-    width, header, panel_height, footer = 1180, 58, 166, 24
-    height = header + panel_height * 4 + footer
+    width, header, panel_height, footer = 1180, 58, 158, 24
+    height = header + panel_height * 5 + footer
     plot_x, plot_width, plot_height = 110, 930, 92
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
            f'viewBox="0 0 {width} {height}">',
@@ -249,7 +289,8 @@ def render_svg(case, mode):
            '<style>text{font-family:Arial,sans-serif;fill:#1f2937}.axis{font-size:11px}'
            '.title{font-size:18px;font-weight:bold}.panel{font-size:13px;font-weight:bold}'
            '.legend{font-size:11px}</style>',
-           f'<text class="title" x="24" y="29">{mode}: sustained MoQ/TCP coexistence</text>',
+           f'<text class="title" x="24" y="29">{mode} vs classic TCP '
+           f'{"ECT(0)" if tcp_ecn == "ect0" else "Not-ECT"}</text>',
            '<text class="axis" x="24" y="47">60-second overlap; cwnd values are diagnostic byte-valued sender reports.</text>']
     panels = [
         ("Wire rate", (("foreground_wire_mbps", "Foreground MoQ", PLOT_COLORS["foreground"]),
@@ -258,9 +299,14 @@ def render_svg(case, mode):
                                        ("tcp_cwnd_bytes", "Background TCP", PLOT_COLORS["tcp"])), "bytes", False),
         ("Foreground RTT and Prague alpha", (("foreground_rtt_us", "RTT", PLOT_COLORS["tcp"]),
                                               ("prague_alpha", "Prague alpha", PLOT_COLORS["alpha"])), "separate scales", True),
-        ("CE and ECN counters", (("foreground_ce_packets", "CE", PLOT_COLORS["alpha"]),
-                                  ("foreground_ect0_packets", "ECT(0)", PLOT_COLORS["ect0"]),
-                                  ("foreground_ect1_packets", "ECT(1)", PLOT_COLORS["ect1"])), "packets", False),
+        ("Endpoint ECN counters", (("foreground_ce_packets", "CE", PLOT_COLORS["alpha"]),
+                                    ("foreground_ect0_packets", "ECT(0)", PLOT_COLORS["ect0"]),
+                                    ("foreground_ect1_packets", "ECT(1)", PLOT_COLORS["ect1"])), "cumulative packets", False),
+        ("Forward-capture ECN packets", (("foreground_capture_ect0_packets", "MoQ ECT(0)", PLOT_COLORS["ect0"]),
+                                          ("foreground_capture_ect1_packets", "MoQ ECT(1)", PLOT_COLORS["ect1"]),
+                                          ("foreground_capture_ce_packets", "MoQ CE", PLOT_COLORS["alpha"]),
+                                          ("tcp_capture_ect0_packets", "TCP ECT(0)", PLOT_COLORS["tcp"]),
+                                          ("tcp_capture_ce_packets", "TCP CE", PLOT_COLORS["tcp_ce"])), "packets / second", False),
     ]
     for index, (title, series, units, separate_scales) in enumerate(panels):
         panel_y = header + index * panel_height
@@ -277,12 +323,12 @@ def render_svg(case, mode):
         ])
         all_values = [[float(row[field]) for row in rows] for field, _, _ in series]
         shared_scale = max(max(values) for values in all_values) or 1.0
-        legend_x = 360
+        legend_x = 270
         for series_index, ((field, label, color), values) in enumerate(zip(series, all_values)):
             scale = (max(values) or 1.0) if separate_scales else shared_scale
             svg.append(svg_polyline(values, plot_x, graph_y, plot_width, plot_height, scale, color))
             legend_y = panel_y + 23
-            x = legend_x + series_index * 230
+            x = legend_x + series_index * 170
             max_label = f"max {max(values):.0f}" if separate_scales else f"max {shared_scale:.0f}"
             svg.extend([f'<line x1="{x}" y1="{legend_y - 4}" x2="{x + 16}" y2="{legend_y - 4}" '
                         f'stroke="{color}" stroke-width="2"/>',
@@ -293,57 +339,66 @@ def render_svg(case, mode):
 
 
 def render_aggregate_svg(root, summaries, aggregates):
-    width, height = 1180, 630
-    modes = list(MODES)
-    labels = [MODES[mode] for mode in modes]
+    width, height = 1400, 630
+    tcp_modes = sorted({row["tcp_ecn"] for row in summaries},
+                       key=lambda value: (value != "not-ect", value))
+    scenarios = [(mode, tcp_mode) for tcp_mode in tcp_modes for mode in MODES
+                 if any(row["mode"] == mode and row["tcp_ecn"] == tcp_mode
+                        for row in summaries)]
+    labels = [(MODES[mode], "TCP ECT(0)" if tcp_mode == "ect0" else "TCP Not-ECT")
+              for mode, tcp_mode in scenarios]
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
            f'viewBox="0 0 {width} {height}">',
            f'<rect width="{width}" height="{height}" fill="white"/>',
            '<style>text{font-family:Arial,sans-serif;fill:#1f2937}.axis{font-size:11px}'
            '.title{font-size:18px;font-weight:bold}.panel{font-size:13px;font-weight:bold}'
            '.value{font-size:10px}</style>',
-           '<text class="title" x="24" y="29">Sustained MoQ/TCP coexistence: aggregate of three repetitions</text>',
-           '<text class="axis" x="24" y="47">Bars are mode means; circles are individual repetitions.</text>']
+           '<text class="title" x="24" y="29">Sustained MoQ/TCP coexistence: aggregate of three repetitions per scenario</text>',
+           '<text class="axis" x="24" y="47">Bars are foreground-mode/TCP-ECN means; circles are individual repetitions.</text>']
 
     def panel(title, values_by_series, y, unit, maximum=None):
-        chart_x, chart_y, chart_width, chart_height = 130, y + 47, 860, 108
+        chart_x, chart_y, chart_width, chart_height = 130, y + 47, 1080, 108
         max_value = maximum or max(
             value for _, _, groups in values_by_series for group in groups for value in group
         ) or 1.0
-        svg.extend([f'<rect x="20" y="{y}" width="1140" height="{chart_height + 69}" fill="#ffffff" stroke="#cbd5e1"/>',
+        svg.extend([f'<rect x="20" y="{y}" width="1360" height="{chart_height + 69}" fill="#ffffff" stroke="#cbd5e1"/>',
                     f'<text class="panel" x="34" y="{y + 24}">{title}</text>',
                     f'<text class="axis" x="34" y="{y + 40}">{unit}; scale 0–{max_value:.1f}</text>',
                     f'<rect x="{chart_x}" y="{chart_y}" width="{chart_width}" height="{chart_height}" fill="#f8fafc" stroke="#94a3b8"/>'])
-        group_width = chart_width / len(modes)
+        group_width = chart_width / len(scenarios)
         series_width = min(36, group_width / (len(values_by_series) + 1))
-        for mode_index, (mode, label) in enumerate(zip(modes, labels)):
-            cx = chart_x + group_width * (mode_index + .5)
-            svg.append(f'<text class="axis" text-anchor="middle" x="{cx:.1f}" y="{chart_y + chart_height + 17}">{label}</text>')
+        for scenario_index, label in enumerate(labels):
+            cx = chart_x + group_width * (scenario_index + .5)
+            svg.append(f'<text class="axis" text-anchor="middle" x="{cx:.1f}" y="{chart_y + chart_height + 14}">'
+                       f'<tspan x="{cx:.1f}">{label[0]}</tspan>'
+                       f'<tspan x="{cx:.1f}" dy="12">{label[1]}</tspan></text>')
             for series_index, (name, color, values) in enumerate(values_by_series):
-                mean = statistics.mean(values[mode_index])
+                mean = statistics.mean(values[scenario_index])
                 x = cx + (series_index - (len(values_by_series) - 1) / 2) * (series_width + 8) - series_width / 2
                 bar_height = mean / max_value * chart_height
                 svg.append(f'<rect x="{x:.1f}" y="{chart_y + chart_height - bar_height:.1f}" width="{series_width:.1f}" '
                            f'height="{bar_height:.1f}" fill="{color}" opacity=".78"/>')
                 svg.append(f'<text class="value" text-anchor="middle" x="{x + series_width / 2:.1f}" '
                            f'y="{chart_y + chart_height - bar_height - 4:.1f}">{mean:.2f}</text>')
-                for point_index, value in enumerate(values[mode_index]):
-                    dot_x = x + series_width * (point_index + 1) / (len(values[mode_index]) + 1)
+                for point_index, value in enumerate(values[scenario_index]):
+                    dot_x = x + series_width * (point_index + 1) / (len(values[scenario_index]) + 1)
                     dot_y = chart_y + chart_height - value / max_value * chart_height
                     svg.append(f'<circle cx="{dot_x:.1f}" cy="{dot_y:.1f}" r="3" fill="white" stroke="{color}" stroke-width="1.5"/>')
-        legend_x = 1015
+        legend_x = 1230
         for index, (name, color, _) in enumerate(values_by_series):
             y_legend = chart_y + 18 + index * 20
             svg.extend([f'<rect x="{legend_x}" y="{y_legend - 9}" width="12" height="12" fill="{color}"/>',
                         f'<text class="axis" x="{legend_x + 18}" y="{y_legend}">{name}</text>'])
 
     def values(field):
-        return [[row[field] for row in summaries if row["mode"] == mode] for mode in modes]
+        return [[row[field] for row in summaries
+                 if row["mode"] == mode and row["tcp_ecn"] == tcp_mode]
+                for mode, tcp_mode in scenarios]
 
     panel("Mean forward wire rate", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_wire_mbps_mean")),
                                       ("TCP background", PLOT_COLORS["tcp"], values("tcp_wire_mbps_mean"))), 65, "Mbit/s", 20.0)
     panel("Bottleneck use and foreground share", (("Bottleneck utilisation", PLOT_COLORS["utilisation"], values("bottleneck_utilization_percent_mean")),
-                                                    ("Foreground share", PLOT_COLORS["foreground"], [[row["foreground_share_mean"] * 100 for row in summaries if row["mode"] == mode] for mode in modes])), 250, "percent", 100.0)
+                                                    ("Foreground share", PLOT_COLORS["foreground"], [[row["foreground_share_mean"] * 100 for row in summaries if row["mode"] == mode and row["tcp_ecn"] == tcp_mode] for mode, tcp_mode in scenarios])), 250, "percent", 100.0)
     panel("Maximum sender cwnd (diagnostic)", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_cwnd_bytes_max")),
                                                  ("TCP background", PLOT_COLORS["tcp"], values("tcp_cwnd_bytes_max"))), 435, "bytes")
     svg.append("</svg>\n")
@@ -358,6 +413,7 @@ def timeline_summary(case, metadata):
     return {
         "case": case.name,
         "mode": metadata["mode"],
+        "tcp_ecn": metadata.get("tcp_ecn", "not-ect"),
         "repetition": metadata["repetition"],
         "bins": len(rows),
         "foreground_wire_mbps_mean": mean("foreground_wire_mbps"),
@@ -369,10 +425,24 @@ def timeline_summary(case, metadata):
         "foreground_share_mean": mean("foreground_share"),
         "foreground_cwnd_bytes_max":
             max(float(row["foreground_cwnd_bytes"]) for row in rows),
+        "foreground_queued_stream_bytes_mean":
+            mean("foreground_queued_stream_bytes"),
         "tcp_cwnd_bytes_max": max(float(row["tcp_cwnd_bytes"]) for row in rows),
         "ce_packets_final": int(rows[-1]["foreground_ce_packets"]),
         "ect0_packets_final": int(rows[-1]["foreground_ect0_packets"]),
         "ect1_packets_final": int(rows[-1]["foreground_ect1_packets"]),
+        "foreground_capture_ect0_packets": sum(
+            int(row["foreground_capture_ect0_packets"]) for row in rows),
+        "foreground_capture_ect1_packets": sum(
+            int(row["foreground_capture_ect1_packets"]) for row in rows),
+        "foreground_capture_ce_packets": sum(
+            int(row["foreground_capture_ce_packets"]) for row in rows),
+        "tcp_capture_ect0_packets": sum(
+            int(row["tcp_capture_ect0_packets"]) for row in rows),
+        "tcp_capture_ect1_packets": sum(
+            int(row["tcp_capture_ect1_packets"]) for row in rows),
+        "tcp_capture_ce_packets": sum(
+            int(row["tcp_capture_ce_packets"]) for row in rows),
         "subscriber_result": json.loads(
             (case / "subscriber-result.json").read_text()),
     }
@@ -388,6 +458,17 @@ def self_test():
     valid = [{"ect0_packets": 0, "ect1_packets": 0, "ce_packets": 0,
               "alpha_numerator": 0, "alpha_denominator": 0}]
     mode_checks("l4s-off", valid)
+    tcp_ecn_checks("not-ect", {"ect0": 0, "ect1": 0, "ce": 0})
+    tcp_ecn_checks("ect0", {"ect0": 1, "ect1": 0, "ce": 0})
+    for tcp_mode, totals in (("not-ect", {"ect0": 1, "ect1": 0, "ce": 0}),
+                             ("ect0", {"ect0": 0, "ect1": 0, "ce": 0}),
+                             ("ect0", {"ect0": 1, "ect1": 1, "ce": 0})):
+        try:
+            tcp_ecn_checks(tcp_mode, totals)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("TCP ECN invariant failure was not detected")
     try:
         mode_checks("l4s-ect0", valid)
     except ValueError:
@@ -414,30 +495,43 @@ def main():
     root = Path(args.directory)
     summaries = []
     for case in sorted(path for path in root.iterdir() if path.is_dir()):
-        metadata, foreground, tcp, foreground_wire, background_wire, issues = analyze_case(case)
-        write_timeline(case, metadata, foreground, tcp, foreground_wire, background_wire)
-        render_svg(case, MODES[metadata["mode"]])
+        (metadata, foreground, tcp, foreground_wire, background_wire,
+         foreground_ecn, tcp_ecn, issues) = analyze_case(case)
+        write_timeline(case, metadata, foreground, tcp, foreground_wire,
+                       background_wire, foreground_ecn, tcp_ecn)
+        render_svg(case, MODES[metadata["mode"]],
+                   metadata.get("tcp_ecn", "not-ect"))
         summary = timeline_summary(case, metadata)
         summary["acceptance_issues"] = issues
         summaries.append(summary)
-    if len(summaries) != 9:
-        raise SystemExit(f"expected nine completed cases, found {len(summaries)}")
+    tcp_modes = sorted({row["tcp_ecn"] for row in summaries})
+    foreground_modes = [mode for mode in MODES
+                        if any(row["mode"] == mode for row in summaries)]
+    repetitions = sorted({row["repetition"] for row in summaries})
+    expected_cases = len(repetitions) * len(foreground_modes) * len(tcp_modes)
+    if len(summaries) != expected_cases:
+        raise SystemExit(f"expected {expected_cases} completed cases, found {len(summaries)}")
     aggregates = {}
-    for mode in MODES:
-        mode_rows = [row for row in summaries if row["mode"] == mode]
-        if len(mode_rows) != 3:
-            raise SystemExit(f"{mode}: expected three repetitions")
-        aggregates[mode] = {
-            "repetitions": len(mode_rows),
-            "tcp_wire_mbps_mean": statistics.mean(
-                row["tcp_wire_mbps_mean"] for row in mode_rows),
-            "foreground_wire_mbps_mean": statistics.mean(
-                row["foreground_wire_mbps_mean"] for row in mode_rows),
-            "combined_wire_mbps_mean": statistics.mean(
-                row["combined_wire_mbps_mean"] for row in mode_rows),
-            "foreground_share_mean": statistics.mean(
-                row["foreground_share_mean"] for row in mode_rows),
-        }
+    for tcp_mode in tcp_modes:
+        for mode in foreground_modes:
+            mode_rows = [row for row in summaries
+                         if row["mode"] == mode and row["tcp_ecn"] == tcp_mode]
+            if len(mode_rows) != len(repetitions):
+                raise SystemExit(
+                    f"{mode}/tcp-{tcp_mode}: expected {len(repetitions)} repetitions")
+            aggregates[f"{mode}/tcp-{tcp_mode}"] = {
+                "mode": mode,
+                "tcp_ecn": tcp_mode,
+                "repetitions": len(mode_rows),
+                "tcp_wire_mbps_mean": statistics.mean(
+                    row["tcp_wire_mbps_mean"] for row in mode_rows),
+                "foreground_wire_mbps_mean": statistics.mean(
+                    row["foreground_wire_mbps_mean"] for row in mode_rows),
+                "combined_wire_mbps_mean": statistics.mean(
+                    row["combined_wire_mbps_mean"] for row in mode_rows),
+                "foreground_share_mean": statistics.mean(
+                    row["foreground_share_mean"] for row in mode_rows),
+            }
     failures = [f"{row['case']}: {issue}" for row in summaries
                 for issue in row["acceptance_issues"]]
     render_aggregate_svg(root, summaries, aggregates)

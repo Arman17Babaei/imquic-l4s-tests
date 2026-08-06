@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the 60-second MoQ-vs-ECN-disabled-TCP coexistence matrix."""
+"""Run the 60-second MoQ-vs-classic-TCP coexistence matrix."""
 
 import argparse
 import json
@@ -16,6 +16,7 @@ from mininet.node import OVSBridge
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = ROOT / "deps" / "imquic" / "src" / "imquic-sustained-moq"
 MODES = ("l4s-off", "l4s-ect0", "l4s-on")
+TCP_ECN_MODES = ("not-ect", "ect0")
 
 
 def stop(process):
@@ -51,12 +52,32 @@ def save_qdisc_stats(switch, case, label):
             stream.write(f"device={interface}\n{stats}")
 
 
-def run_case(client, server, switch, root, mode, repetition, duration, warmup, drain):
-    case = root / f"{mode}-rep-{repetition:02d}"
+def configure_tcp_ecn(client, server, tcp_ecn):
+    for host, rule in (
+        (server, ["-p", "tcp", "--dport", "5201"]),
+        (client, ["-p", "tcp", "--sport", "5201"]),
+    ):
+        host.cmd("iptables -t mangle -D OUTPUT " + " ".join(rule) +
+                 " -j TOS --set-tos 0x00 2>/dev/null || true")
+    if tcp_ecn == "not-ect":
+        client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+        server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+        server.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
+        client.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
+    elif tcp_ecn == "ect0":
+        client.cmd("sysctl -qw net.ipv4.tcp_ecn=1")
+        server.cmd("sysctl -qw net.ipv4.tcp_ecn=1")
+    else:
+        raise ValueError(f"unsupported TCP ECN mode: {tcp_ecn}")
+
+
+def run_case(client, server, switch, root, mode, tcp_ecn, repetition, duration, warmup, drain):
+    case = root / f"{mode}-tcp-{tcp_ecn}-rep-{repetition:02d}"
     case.mkdir(parents=True)
+    configure_tcp_ecn(client, server, tcp_ecn)
     qdisc(switch, "20mbit")
     save_qdisc_stats(switch, case, "before")
-    metadata = {"mode": mode, "repetition": repetition,
+    metadata = {"mode": mode, "tcp_ecn": tcp_ecn, "repetition": repetition,
                 "duration_seconds": duration, "warmup_seconds": warmup,
                 "drain_seconds": drain, "background_mbps": 10,
                 "bottleneck_mbps": 20, "namespace": "imquic-l4s",
@@ -137,6 +158,8 @@ def main():
     parser.add_argument("--drain", type=int, default=5)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--modes", default=",".join(MODES))
+    parser.add_argument("--tcp-ecn-modes", default=",".join(TCP_ECN_MODES),
+                        help="comma-separated classic TCP modes: not-ect,ect0")
     args = parser.parse_args()
     if os.geteuid() != 0:
         raise SystemExit("sustained coexistence must run as root")
@@ -150,14 +173,11 @@ def main():
     net.addLink(client, switch); net.addLink(switch, server)
     try:
         net.start()
-        client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
-        server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
-        server.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
-        client.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
         for repetition in range(1, args.repetitions + 1):
-            for mode in args.modes.split(","):
-                run_case(client, server, switch, args.output, mode, repetition,
-                         args.duration, args.warmup, args.drain)
+            for tcp_ecn in args.tcp_ecn_modes.split(","):
+                for mode in args.modes.split(","):
+                    run_case(client, server, switch, args.output, mode, tcp_ecn,
+                             repetition, args.duration, args.warmup, args.drain)
     finally:
         net.stop()
         subprocess.run(["mn", "-c"], check=False)

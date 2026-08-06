@@ -2,6 +2,7 @@
 """Run a short local publisher/subscriber MoQ smoke test."""
 
 import argparse
+import csv
 import subprocess
 import tempfile
 from pathlib import Path
@@ -38,9 +39,14 @@ def main():
             raise SystemExit(
                 "MoQ loopback failed\npublisher:\n"
                 f"{publisher_output}\nsubscriber:\n{subscriber_output}")
-        rows = metrics.read_text(encoding="utf-8").splitlines()
-        if len(rows) < 2:
+        with metrics.open(newline="", encoding="utf-8") as handle:
+            rows = list(csv.DictReader(handle))
+        if not rows:
             raise SystemExit("MoQ loopback produced no transport metrics")
+        if "queued_stream_bytes" not in rows[0]:
+            raise SystemExit("MoQ loopback metrics omit queued stream bytes")
+        if not any(int(row["queued_stream_bytes"]) > 0 for row in rows):
+            raise SystemExit("MoQ publisher never maintained its object buffer")
         if not result.is_file() or not result.read_text(encoding="utf-8").strip():
             raise SystemExit("MoQ loopback produced no subscriber result")
     print("Sustained MoQ loopback: PASS")

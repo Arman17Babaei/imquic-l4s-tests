@@ -158,27 +158,31 @@ submodule revisions recorded in [`l4s/validation-report.md`](l4s/validation-repo
 ## Sustained MoQ coexistence
 
 The sustained test uses one server-side MoQ namespace/track and an explicit
-client subscription. The publisher emits bounded 16 KiB sequential objects
-whenever bytes-in-flight is below the current congestion window for 60
-seconds; IMQUIC supplies pacing and congestion control. The subscriber
-validates object order and payload contents. Transport metrics are sampled
-every 10 ms.
+client subscription. The publisher keeps ten bounded 16 KiB sequential
+objects outstanding across QUIC's wire flight and stream-send queue, avoiding
+application-side polling gaps while IMQUIC remains responsible for pacing and
+the congestion-controlled wire flight during the 60-second transfer. The
+subscriber validates object order and payload contents. Transport metrics,
+including queued stream bytes, are sampled every 10 ms.
 
-The default matrix is `l4s-off`, `l4s-ect0`, and `l4s-on`, with three
-repetitions. The MoQ publisher and the paced, ECN-disabled 10 Mbit/s TCP
-iperf3 sender both run on the server and send to the client, so their data
-packets share the same server-to-client HTB + DualPI2 bottleneck. TCP starts
-five seconds before the 60-second MoQ overlap and continues five seconds
-afterward:
+The default matrix crosses `l4s-off`, `l4s-ect0`, and `l4s-on` with two
+classic TCP modes—Not-ECT and ECN-capable ECT(0)—and runs three repetitions,
+for 18 cases. The ECN-capable TCP case enables conventional negotiated ECN;
+it never uses ECT(1) or an L4S congestion controller. The MoQ publisher and
+the paced 10 Mbit/s TCP iperf3 sender both run on the server and send to the
+client, so their data packets share the same server-to-client HTB + DualPI2
+bottleneck. TCP starts five seconds before the 60-second MoQ overlap and
+continues five seconds afterward:
 
 ```sh
 make build
 sudo python3 tools/l4s/run_sustained_coexistence.py \\
-  --output results/l4s/sustained-moq
+  --output results/l4s/sustained-moq \\
+  --tcp-ecn-modes not-ect,ect0
 ```
 
-In the prepared QEMU guest, use the wrapper so the repository and submodule
-revisions are archived with the run:
+For the prepared QEMU guest, the host-side wrapper needs no privilege. It
+archives the repository and submodule revisions with the run:
 
 ```sh
 python3 tools/l4s/run_qemu_timeseries_test.py \\
@@ -190,23 +194,26 @@ Each case stores metrics, iperf3 JSON, packet captures, timestamps, DualPI2
 counters, `timeline.csv`, and `timeline.svg`. The analyzer aligns TCP
 intervals to the recorded start time and resamples IMQUIC's 10 ms samples into
 one-second overlap bins. Cwnd values are compared diagnostically as
-byte-valued sender reports, not as identical controller semantics. It also
-writes `summary.json` with per-repetition evidence and three-mode aggregates,
-plus `aggregate.svg` with per-mode mean bars and individual-repetition points
-for foreground/TCP rate, bottleneck utilisation/share, and maximum cwnd:
+byte-valued sender reports, not as identical controller semantics. The
+timeline's capture panel shows per-second ECT(0), ECT(1), and CE packet counts
+separately for MoQ and TCP. It also writes `summary.json` with per-repetition
+evidence and foreground/TCP-ECN aggregates, plus `aggregate.svg` with scenario
+mean bars and individual-repetition points for foreground/TCP rate, bottleneck
+utilisation/share, and maximum cwnd:
 
 ```sh
 python3 tools/l4s/analyze_sustained_coexistence.py --self-test
 ```
 
-The analyzer enforces nine completed cases, 60-second foreground coverage,
+The analyzer enforces 18 completed cases, 60-second foreground coverage,
 non-empty captures, TCP measurements in at least 90% of overlap bins, and a
 14--21 Mbit/s combined-wire-rate tolerance. TCP's measured overlap rate and
 the number of bins with delivered TCP wire traffic are reported as coexistence
 outcomes, rather than treated as fairness pass/fail thresholds. It also checks
-the Not-ECT, ECT(0), and Prague
-ECN/CE invariants and Prague's L4S classification plus CE-associated cwnd
-reduction. If an acceptance condition fails, it still writes every timeline,
+the foreground Not-ECT, ECT(0), and Prague ECN/CE invariants, Prague's L4S
+classification plus CE-associated cwnd reduction, and that TCP is either
+wholly Not-ECT or conventional ECT(0) without ECT(1), as selected. If an
+acceptance condition fails, it still writes every timeline,
 SVG, and `summary.json`; the latter records `acceptance_passed: false` and the
 exact per-case reasons, while the analyzer exits nonzero.
 

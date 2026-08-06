@@ -11,6 +11,7 @@
 #define NAMESPACE_NAME "imquic-l4s"
 #define TRACK_NAME "sustained"
 #define OBJECT_BYTES (16 * 1024)
+#define OUTSTANDING_OBJECTS 10
 #define METRIC_INTERVAL_US (10 * 1000)
 
 static volatile gint stop_requested, failed, subscribed;
@@ -153,10 +154,11 @@ static void write_metric(FILE *metrics, gint64 started_us) {
 	fprintf(metrics, "%" G_GINT64_FORMAT ",%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT
 		",%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT
 		",%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT
-		",%" G_GUINT64_FORMAT "\n",
+		",%" G_GUINT64_FORMAT ",%" G_GUINT64_FORMAT "\n",
 		g_get_monotonic_time() - started_us, value.smoothed_rtt_us,
 		value.congestion_window_bytes, value.bytes_in_flight,
-		value.pacing_rate_bytes_per_second, value.ect0_packets, value.ect1_packets,
+		value.queued_stream_bytes, value.pacing_rate_bytes_per_second,
+		value.ect0_packets, value.ect1_packets,
 		value.ce_packets,
 		(uint64_t)value.prague_alpha_numerator, (uint64_t)value.prague_alpha_denominator);
 }
@@ -186,22 +188,31 @@ static int run_publisher(const char *bind_address, uint16_t port, const char *mo
 	FILE *metrics = fopen(metrics_path, "w");
 	uint8_t *payload = malloc(OBJECT_BYTES);
 	if(metrics == NULL || payload == NULL) return 1;
-	fputs("time_us,rtt_us,cwnd_bytes,bytes_in_flight,pacing_Bps,ect0_packets,ect1_packets,ce_packets,alpha_numerator,alpha_denominator\n", metrics);
+	fputs("time_us,rtt_us,cwnd_bytes,bytes_in_flight,queued_stream_bytes,pacing_Bps,ect0_packets,ect1_packets,ce_packets,alpha_numerator,alpha_denominator\n", metrics);
 	gint64 next_metric_time = started;
 	while(!g_atomic_int_get(&stop_requested) && g_get_monotonic_time() < deadline) {
 		gint64 now = g_get_monotonic_time();
 		if(g_atomic_int_get(&publishing)) {
 			imquic_transport_metrics transport = { 0 };
-			if(imquic_get_transport_metrics(connection, &transport) == 0 &&
-					transport.congestion_window_bytes > transport.bytes_in_flight) {
-			for(size_t i = 0; i < OBJECT_BYTES; i++) payload[i] = (uint8_t)((next_object + i) & 0xff);
-			imquic_moq_object object = { 0 };
-			object.request_id = publish_request_id;
-			object.track_alias = publish_track_alias;
-			object.object_id = next_object++; object.payload = payload;
-			object.payload_len = OBJECT_BYTES; object.delivery = IMQUIC_MOQ_USE_SUBGROUP;
-			object.first_of_subgroup = object.object_id == 0;
-			if(imquic_moq_send_object(connection, &object) < 0) fail_case("could not send MoQ object");
+			if(imquic_get_transport_metrics(connection, &transport) == 0) {
+				uint64_t outstanding_bytes = transport.bytes_in_flight + transport.queued_stream_bytes;
+				uint64_t target_bytes = (uint64_t)OUTSTANDING_OBJECTS * OBJECT_BYTES;
+				unsigned int objects_to_queue = outstanding_bytes < target_bytes ?
+					(unsigned int)((target_bytes - outstanding_bytes + OBJECT_BYTES - 1) / OBJECT_BYTES) : 0;
+				for(unsigned int buffered = 0; buffered < objects_to_queue; buffered++) {
+					for(size_t i = 0; i < OBJECT_BYTES; i++)
+						payload[i] = (uint8_t)((next_object + i) & 0xff);
+					imquic_moq_object object = { 0 };
+					object.request_id = publish_request_id;
+					object.track_alias = publish_track_alias;
+					object.object_id = next_object++; object.payload = payload;
+					object.payload_len = OBJECT_BYTES; object.delivery = IMQUIC_MOQ_USE_SUBGROUP;
+					object.first_of_subgroup = object.object_id == 0;
+					if(imquic_moq_send_object(connection, &object) < 0) {
+						fail_case("could not send MoQ object");
+						break;
+					}
+				}
 			}
 		}
 		if(now >= next_metric_time) { write_metric(metrics, started); next_metric_time += METRIC_INTERVAL_US; }
