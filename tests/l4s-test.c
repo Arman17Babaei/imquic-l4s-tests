@@ -6,6 +6,8 @@
 
 #define TEST_PAYLOAD_SIZE (256 * 1024)
 #define TEST_TIMEOUT_STEPS 1000
+#define TEST_CERT_PATH "../../picoquic/certs/cert.pem"
+#define TEST_KEY_PATH "../../picoquic/certs/key.pem"
 
 static uint8_t *test_payload;
 static uint64_t test_payload_size = TEST_PAYLOAD_SIZE;
@@ -100,8 +102,8 @@ static int invalid_options_test(void)
 	imquic_server *server = imquic_create_server("invalid-prague",
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_PORT, 0,
-		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
-		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_PRAGUE,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS, "alpha_gain=0/1",
@@ -119,8 +121,8 @@ static int ecn_configuration_test(void)
 	imquic_server *server = imquic_create_server("ect0-smoke",
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_PORT, 0,
-		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
-		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_RENO,
 		IMQUIC_CONFIG_ECN, IMQUIC_ECN_ECT0,
@@ -133,8 +135,8 @@ static int ecn_configuration_test(void)
 	server = imquic_create_server("invalid-ecn",
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_PORT, 0,
-		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
-		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_ECN, 99,
 		IMQUIC_CONFIG_DONE, NULL);
@@ -170,8 +172,8 @@ static int loopback_traffic_test(void)
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_BIND, "127.0.0.1",
 		IMQUIC_CONFIG_LOCAL_PORT, 0,
-		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
-		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_CONGESTION_CONTROL, IMQUIC_CONGESTION_PRAGUE,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS, prague_options,
@@ -262,8 +264,8 @@ static int network_server(const char *bind_address, uint16_t port,
 		IMQUIC_CONFIG_INIT,
 		IMQUIC_CONFIG_LOCAL_BIND, bind_address,
 		IMQUIC_CONFIG_LOCAL_PORT, port,
-		IMQUIC_CONFIG_TLS_CERT, "../.deps/picoquic-l4s/certs/cert.pem",
-		IMQUIC_CONFIG_TLS_KEY, "../.deps/picoquic-l4s/certs/key.pem",
+		IMQUIC_CONFIG_TLS_CERT, TEST_CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, TEST_KEY_PATH,
 		IMQUIC_CONFIG_ALPN, "imquic-l4s-test",
 		IMQUIC_CONFIG_CONGESTION_CONTROL, controller,
 		IMQUIC_CONFIG_CONGESTION_OPTIONS,
