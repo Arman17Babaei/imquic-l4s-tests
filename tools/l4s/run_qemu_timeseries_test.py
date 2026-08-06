@@ -210,13 +210,11 @@ def main():
             cwd=ROOT / "deps" / "picoquic",
         )
         picotls_source = ROOT / "deps" / "picoquic" / "build" / "_deps" / "picotls-src"
-        picotls_build = ROOT / "deps" / "picoquic" / "build" / "_deps" / "picotls-build"
         if not (picotls_source / "include" / "picotls" / "minicrypto.h").exists():
             raise RuntimeError("QEMU validation needs the cached picotls tree; run 'make build' first")
         run([
             "tar", "-czf", str(picotls_archive),
             "-C", str(picotls_source.parent), picotls_source.name,
-            "-C", str(picotls_build.parent), picotls_build.name,
         ])
         run(
             ["git", "archive", "--format=tar.gz", f"--output={imquic_archive}", "HEAD"],
@@ -255,8 +253,10 @@ tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
 tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
+cmake -S {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src -B {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -DWITH_FUSION=OFF >/dev/null
+cmake --build {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -j{args.cpus} >/dev/null
 cp -a {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src/include {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include
-for library in libpicotls-core.a libpicotls-openssl.a libpicotls-fusion.a libpicotls-minicrypto.a; do
+for library in libpicotls-core.a libpicotls-openssl.a libpicotls-minicrypto.a; do
   cp {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build/$library {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib/$library
 done
 cd {shlex.quote(guest_root)}/deps/picoquic
