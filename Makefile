@@ -1,7 +1,7 @@
 IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 
-.PHONY: init analyzer-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-sustained-moq-check moq-loopback-check
+.PHONY: init analyzer-check reno-fairness-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-sustained-moq-check l4s-reno-fairness-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -9,6 +9,10 @@ init:
 analyzer-check:
 	python3 tools/l4s/analyze_mininet_benchmark.py --self-test
 	python3 tools/l4s/analyze_sustained_coexistence.py --self-test
+	python3 tools/l4s/analyze_reno_fairness.py --self-test
+
+reno-fairness-check:
+	python3 -m unittest discover -s tests -p 'test_reno_fairness.py' -v
 
 build: init
 	cmake -S $(PICOQUIC_DIR) -B $(PICOQUIC_DIR)/build \
@@ -35,6 +39,9 @@ l4s-mininet-benchmark-guest-check:
 
 l4s-sustained-moq-check:
 	python3 tools/l4s/run_sustained_coexistence.py --output $(L4S_RESULT_DIR) $(L4S_SUSTAINED_ARGS)
+
+l4s-reno-fairness-check:
+	python3 tools/l4s/run_reno_fairness.py --output $(L4S_RESULT_DIR) $(L4S_RENO_FAIRNESS_ARGS)
 
 moq-loopback-check:
 	python3 tools/l4s/run_sustained_moq_loopback.py
