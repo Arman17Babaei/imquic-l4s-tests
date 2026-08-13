@@ -180,7 +180,7 @@ def write_events(path: Path, events: list[dict]) -> None:
 
 def run_repetition(client, server, switch, root: Path, repetition: int,
                    phase_seconds: float, bottleneck: str,
-                   fifo_limit_packets: int) -> None:
+                   fifo_limit_packets: int, congestion: str) -> None:
     case = root / f"rep_{repetition:03d}"
     case.mkdir(parents=True)
     bottleneck_interface = f"{switch.name}-eth2"
@@ -199,7 +199,7 @@ def run_repetition(client, server, switch, root: Path, repetition: int,
         "bottleneck_interface": bottleneck_interface,
         "client_ip": client.IP(),
         "server_ip": server.IP(),
-        "tcp_congestion": "reno",
+        "tcp_congestion": congestion,
         "tcp_ecn": "not-ect",
         "topology": "client--s1(OVSBridge)--server; HTB+pfifo on s1-eth2",
         "streams": [
@@ -249,7 +249,9 @@ def run_repetition(client, server, switch, root: Path, repetition: int,
             output = (case / f"iperf_{stream.name}.json").open("w", encoding="utf-8")
             files.append(output)
             return client.popen(
-                build_iperf_client_command(server.IP(), stream, phase_seconds),
+                build_iperf_client_command(
+                    server.IP(), stream, phase_seconds, congestion
+                ),
                 stdout=output,
                 stderr=subprocess.STDOUT,
             )
@@ -288,6 +290,9 @@ def main() -> None:
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--bottleneck", default="20mbit")
     parser.add_argument("--fifo-limit-packets", type=int, default=10000)
+    parser.add_argument(
+        "--congestion", choices=("reno", "cubic", "bbr"), default="reno"
+    )
     parser.add_argument("--skip-analysis", action="store_true")
     args = parser.parse_args()
 
@@ -326,7 +331,7 @@ def main() -> None:
         "bottleneck": args.bottleneck,
         "bottleneck_mbps": bottleneck_mbps,
         "fifo_limit_packets": args.fifo_limit_packets,
-        "tcp_congestion": "reno",
+        "tcp_congestion": args.congestion,
         "tcp_ecn": "not-ect",
         "topology": "client--s1(OVSBridge)--server; HTB+pfifo on s1-eth2",
         "kernel": platform.release(),
@@ -366,14 +371,24 @@ def main() -> None:
         net.start()
         if client.cmd(f"ping -c 1 -W 2 {server.IP()}").find("1 received") < 0:
             raise RuntimeError("Mininet client/server connectivity failed")
+        if args.congestion == "bbr":
+            modprobe = shutil.which("modprobe")
+            if modprobe is not None:
+                subprocess.run(
+                    [modprobe, "tcp_bbr"], check=False,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
         available = client.cmd("sysctl -n net.ipv4.tcp_available_congestion_control")
-        if "reno" not in available.split():
-            raise RuntimeError(f"TCP Reno unavailable in guest kernel: {available.strip()}")
+        if args.congestion not in available.split():
+            raise RuntimeError(
+                f"TCP {args.congestion} unavailable in guest kernel: {available.strip()}"
+            )
         for repetition in range(1, args.repetitions + 1):
             print(f"running Reno step-join repetition {repetition}/{args.repetitions}")
             run_repetition(
                 client, server, switch, args.output, repetition,
                 args.phase_seconds, args.bottleneck, args.fifo_limit_packets,
+                args.congestion,
             )
     finally:
         net.stop()

@@ -78,6 +78,17 @@ class ScheduleContractTests(unittest.TestCase):
             self.assertNotIn("-b", command)
             self.assertIn("-J", command)
 
+    def test_cubic_and_bbr_select_independent_socket_controllers(self):
+        stream = STREAMS[0]
+        for congestion in ("cubic", "bbr"):
+            command = build_iperf_client_command(
+                "10.0.0.2", stream, 5, congestion=congestion
+            )
+            self.assertEqual(command[command.index("-C") + 1], congestion)
+            self.assertNotIn("-P", command)
+        with self.assertRaisesRegex(ValueError, "unsupported"):
+            build_iperf_client_command("10.0.0.2", stream, 5, congestion="invalid")
+
     def test_fake_clock_launches_without_drift_and_all_streams_reach_endpoint(self):
         clock = FakeClock()
         launched = []

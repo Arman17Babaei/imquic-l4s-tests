@@ -221,14 +221,14 @@ acceptance condition fails, it still writes every timeline,
 SVG, and `summary.json`; the latter records `acceptance_passed: false` and the
 exact per-case reasons, while the analyzer exits nonzero.
 
-## Incremental independent Reno streams
+## Incremental independent TCP streams
 
-The Reno step-join experiment starts ten independent, unlimited iperf3 TCP
+The step-join experiment starts ten independent, unlimited iperf3 TCP
 connections across ten phases. `stream_01` starts with phase 1, `stream_02`
 joins at phase 2, and so on; every connection remains active through the common
 experiment endpoint. Each client has its own process, socket, client port, and
-server port, so every stream has an independent Reno congestion window rather
-than sharing transport state through iperf3 parallel mode.
+server port, so every stream has an independent congestion window rather than
+sharing transport state through iperf3 parallel mode. Reno is the default.
 
 Phases are five seconds and the experiment runs three repetitions by default,
 giving a 50-second timeline per repetition. The topology and 20 Mbit/s
@@ -241,8 +241,11 @@ sudo python3 tools/l4s/run_reno_step_join.py \
 ```
 
 Use `--phase-seconds`, `--repetitions`, `--bottleneck`, and
-`--fifo-limit-packets` to override the defaults. The equivalent QEMU-wrapper
-invocation is:
+`--fifo-limit-packets` to override the defaults. Use `--congestion cubic` or
+`--congestion bbr` to run the same independent-connection schedule with those
+TCP controllers; Reno remains the default. BBR is loaded with `tcp_bbr` when
+available, and every selected controller is verified against the guest kernel
+before a run starts. The equivalent QEMU-wrapper invocation is:
 
 ```sh
 python3 tools/l4s/run_qemu_timeseries_test.py \

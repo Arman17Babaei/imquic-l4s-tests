@@ -137,7 +137,8 @@ def actual_phase_boundaries(events: Sequence[dict]) -> list[float]:
     return boundaries
 
 
-def parse_iperf_json(path: Path, expected: dict, actual_start_s: float) -> list[TransportSample]:
+def parse_iperf_json(path: Path, expected: dict, actual_start_s: float,
+                     expected_congestion: str = "reno") -> list[TransportSample]:
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -163,8 +164,11 @@ def parse_iperf_json(path: Path, expected: dict, actual_start_s: float) -> list[
             f"{path}: server port {connection.get('remote_port')} != {expected['server_port']}"
         )
     congestion = data.get("end", {}).get("sender_tcp_congestion")
-    if congestion != "reno":
-        raise AnalysisError(f"{path}: sender congestion control is {congestion!r}, expected 'reno'")
+    if congestion != expected_congestion:
+        raise AnalysisError(
+            f"{path}: sender congestion control is {congestion!r}, "
+            f"expected {expected_congestion!r}"
+        )
 
     samples = []
     for interval in data.get("intervals", []):

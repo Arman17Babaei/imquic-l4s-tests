@@ -46,17 +46,20 @@ STREAMS = tuple(
 
 
 def build_iperf_client_command(server_ip: str, stream: StreamInstance,
-                               phase_seconds: float) -> list[str]:
-    """Build one unlimited, single-connection TCP Reno client command."""
+                               phase_seconds: float,
+                               congestion: str = "reno") -> list[str]:
+    """Build one unlimited, single-connection TCP client command."""
     duration = stream.duration_seconds(phase_seconds)
     if duration <= 0:
         raise ValueError("stream duration must be positive")
+    if congestion not in ("reno", "cubic", "bbr"):
+        raise ValueError(f"unsupported congestion controller: {congestion}")
     duration_arg = str(int(duration)) if float(duration).is_integer() else str(duration)
     return [
         "iperf3", "-c", server_ip,
         "-p", str(stream.server_port),
         "--cport", str(stream.client_port),
-        "-C", "reno",
+        "-C", congestion,
         "-t", duration_arg,
         "-i", "1",
         "-J",

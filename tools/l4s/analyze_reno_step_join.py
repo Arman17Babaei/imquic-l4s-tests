@@ -203,7 +203,8 @@ def aggregate_timelines(timelines: Sequence[Sequence[dict]],
     return result
 
 
-def analyze_case(case: Path, bin_seconds: float) -> list[dict]:
+def analyze_case(case: Path, bin_seconds: float,
+                 expected_congestion: str | None = None) -> list[dict]:
     metadata = json.loads((case / "metadata.json").read_text(encoding="utf-8"))
     if int(metadata.get("phase_count", 0)) != STREAM_COUNT:
         raise AnalysisError(f"{case}: expected {STREAM_COUNT} phases")
@@ -219,11 +220,18 @@ def analyze_case(case: Path, bin_seconds: float) -> list[dict]:
     events = read_events(case / "events.csv")
     starts = validate_events(events, float(metadata["phase_seconds"]))
     flow_meta = {row["stream"]: row for row in metadata["streams"]}
+    congestion = str(metadata["tcp_congestion"])
+    if expected_congestion is not None and congestion != expected_congestion:
+        raise AnalysisError(
+            f"{case}: congestion controller {congestion!r} does not match "
+            f"experiment controller {expected_congestion!r}"
+        )
     transports = {
         stream.name: parse_iperf_json(
             case / f"iperf_{stream.name}.json",
             flow_meta[stream.name],
             starts[stream.name],
+            congestion,
         )
         for stream in STREAMS
     }
@@ -240,6 +248,7 @@ def analyze_case(case: Path, bin_seconds: float) -> list[dict]:
     plot_step_join_timeline(
         rows, boundaries, PHASE_LABELS, float(metadata["bottleneck_mbps"]),
         case / "timeline", run_label=case.name,
+        congestion_label=congestion.upper(),
     )
     return rows
 
@@ -252,17 +261,20 @@ def analyze(root: Path, bin_seconds: float) -> list[dict]:
     cases = sorted(path for path in root.glob("rep_*") if path.is_dir())
     if len(cases) != repetitions:
         raise AnalysisError(f"expected {repetitions} repetitions, found {len(cases)}")
-    timelines = [analyze_case(case, bin_seconds) for case in cases]
+    congestion = str(experiment["tcp_congestion"])
+    timelines = [analyze_case(case, bin_seconds, congestion) for case in cases]
     aggregate = aggregate_timelines(timelines, repetitions)
     write_rows(root / "aggregate_timeline.csv", aggregate, AGGREGATE_FIELDS)
     boundaries = phase_boundaries(float(experiment["phase_seconds"]))
     plot_step_join_timeline(
         aggregate, boundaries, PHASE_LABELS, float(experiment["bottleneck_mbps"]),
         root / "aggregate_timeline", aggregate=True,
+        congestion_label=str(experiment["tcp_congestion"]).upper(),
     )
     result = {
         "repetitions": repetitions,
         "streams": STREAM_COUNT,
+        "tcp_congestion": str(experiment["tcp_congestion"]),
         "phase_seconds": float(experiment["phase_seconds"]),
         "throughput_bin_ms": bin_seconds * 1000,
         "throughput_source": "bottleneck pcap IPv4 ip.len",

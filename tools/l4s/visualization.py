@@ -261,7 +261,8 @@ def plot_solo_check(summaries: Sequence[dict], output_stem: Path,
 def plot_step_join_timeline(rows: Sequence[dict], boundaries: Sequence[float],
                             labels: Sequence[str], bottleneck_mbps: float,
                             output_stem: Path, aggregate: bool = False,
-                            run_label: str = "") -> None:
+                            run_label: str = "",
+                            congestion_label: str = "Reno") -> None:
     """Plot ten cumulative independent streams in throughput and cwnd panels."""
     plt = _pyplot()
     figure, axes = plt.subplots(2, 1, figsize=(12, 7.4), sharex=True)
@@ -320,7 +321,7 @@ def plot_step_join_timeline(rows: Sequence[dict], boundaries: Sequence[float],
     ax_cwnd.set_ylim(bottom=0)
     ax_cwnd.set_xlim(boundaries[0], boundaries[-1])
     ax_rate.legend(loc="upper right", ncol=4, fontsize=7)
-    title = "Independent Reno streams joining cumulatively"
+    title = f"Independent {congestion_label} streams joining cumulatively"
     if aggregate:
         title += " — repetition mean ±1 SD"
     elif run_label:
