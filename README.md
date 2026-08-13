@@ -221,6 +221,51 @@ acceptance condition fails, it still writes every timeline,
 SVG, and `summary.json`; the latter records `acceptance_passed: false` and the
 exact per-case reasons, while the analyzer exits nonzero.
 
+## Incremental independent Reno streams
+
+The Reno step-join experiment starts ten independent, unlimited iperf3 TCP
+connections across ten phases. `stream_01` starts with phase 1, `stream_02`
+joins at phase 2, and so on; every connection remains active through the common
+experiment endpoint. Each client has its own process, socket, client port, and
+server port, so every stream has an independent Reno congestion window rather
+than sharing transport state through iperf3 parallel mode.
+
+Phases are five seconds and the experiment runs three repetitions by default,
+giving a 50-second timeline per repetition. The topology and 20 Mbit/s
+HTB+pfifo bottleneck match the Reno fairness baseline, and all test traffic is
+forced to Not-ECT. Run it directly on a provisioned host with:
+
+```sh
+sudo python3 tools/l4s/run_reno_step_join.py \
+  --output results/l4s/reno-step-join
+```
+
+Use `--phase-seconds`, `--repetitions`, `--bottleneck`, and
+`--fifo-limit-packets` to override the defaults. The equivalent QEMU-wrapper
+invocation is:
+
+```sh
+python3 tools/l4s/run_qemu_timeseries_test.py \
+  --make-target l4s-reno-step-join-check \
+  --guest-result-name reno-step-join \
+  --destination-prefix qemu-reno-step-join
+```
+
+Each repetition contains the iperf3 JSON reports, packet capture, qdisc
+statistics, event log, metadata, `timeline.csv`, and two-panel SVG/PNG plots of
+per-stream throughput and cwnd. The root additionally contains
+`aggregate_timeline.csv`, aggregate SVG/PNG plots with mean and sample-standard-
+deviation bands, and `analysis.json`. Throughput is calculated in 250 ms bins
+from forward IPv4 bytes observed at the bottleneck; cwnd comes from each
+sender's one-second TCP_INFO reports.
+
+The dependency-light schedule, parser, aggregation, and rendering checks are:
+
+```sh
+make reno-step-join-check
+python3 tools/l4s/analyze_reno_step_join.py --self-test
+```
+
 ## Reference evidence
 
 The tracked historical summary is [the Mininet report](l4s/mininet-benchmark.md)

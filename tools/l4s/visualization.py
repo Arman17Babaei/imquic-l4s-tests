@@ -256,3 +256,76 @@ def plot_solo_check(summaries: Sequence[dict], output_stem: Path,
     figure.tight_layout()
     _save(figure, output_stem)
     plt.close(figure)
+
+
+def plot_step_join_timeline(rows: Sequence[dict], boundaries: Sequence[float],
+                            labels: Sequence[str], bottleneck_mbps: float,
+                            output_stem: Path, aggregate: bool = False,
+                            run_label: str = "") -> None:
+    """Plot ten cumulative independent streams in throughput and cwnd panels."""
+    plt = _pyplot()
+    figure, axes = plt.subplots(2, 1, figsize=(12, 7.4), sharex=True)
+    ax_rate, ax_cwnd = axes
+    for ax in axes:
+        _phase_background(ax, boundaries, labels, annotate=ax is ax_rate)
+        ax.grid(axis="y", alpha=0.22)
+        for boundary in boundaries[1:-1]:
+            ax.axvline(boundary, color="#64748b", linewidth=0.7, alpha=0.6)
+
+    streams = sorted({str(row["stream"]) for row in rows})
+    colors = plt.get_cmap("tab10").colors
+    for index, stream in enumerate(streams):
+        series = sorted(
+            (row for row in rows
+             if row["stream"] == stream
+             and int(row.get("active", row.get("active_repetitions", 0))) > 0),
+            key=lambda row: float(row["time_s"]),
+        )
+        color = colors[index % len(colors)]
+        if aggregate:
+            rate_field, cwnd_field = "throughput_mbps_mean", "cwnd_bytes_mean"
+        else:
+            rate_field, cwnd_field = "throughput_mbps", "cwnd_bytes"
+        rate_rows = [row for row in series if row.get(rate_field) not in (None, "")]
+        rate_x = [float(row["time_s"]) for row in rate_rows]
+        rate_y = [float(row[rate_field]) for row in rate_rows]
+        ax_rate.plot(rate_x, rate_y, color=color, linewidth=1.35, label=stream)
+        cwnd_rows = [row for row in series if row.get(cwnd_field) not in (None, "")]
+        cwnd_x = [float(row["time_s"]) for row in cwnd_rows]
+        cwnd_y = [float(row[cwnd_field]) / 1024 for row in cwnd_rows]
+        ax_cwnd.plot(cwnd_x, cwnd_y, color=color, linewidth=1.25, label=stream)
+        if aggregate:
+            rate_sd = [float(row.get("throughput_mbps_stdev") or 0) for row in rate_rows]
+            ax_rate.fill_between(
+                rate_x,
+                [max(0.0, value - deviation) for value, deviation in zip(rate_y, rate_sd)],
+                [value + deviation for value, deviation in zip(rate_y, rate_sd)],
+                color=color, alpha=0.09, linewidth=0,
+            )
+            cwnd_sd = [float(row.get("cwnd_bytes_stdev") or 0) / 1024
+                       for row in cwnd_rows]
+            ax_cwnd.fill_between(
+                cwnd_x,
+                [max(0.0, value - deviation) for value, deviation in zip(cwnd_y, cwnd_sd)],
+                [value + deviation for value, deviation in zip(cwnd_y, cwnd_sd)],
+                color=color, alpha=0.09, linewidth=0,
+            )
+
+    ax_rate.axhline(bottleneck_mbps, color="#111827", linewidth=1.0,
+                    linestyle=":", label="bottleneck")
+    ax_rate.set_ylabel("Throughput\n(Mbit/s)")
+    ax_cwnd.set_ylabel("cwnd\n(KiB)")
+    ax_cwnd.set_xlabel("Experiment time (s)")
+    ax_rate.set_ylim(bottom=0)
+    ax_cwnd.set_ylim(bottom=0)
+    ax_cwnd.set_xlim(boundaries[0], boundaries[-1])
+    ax_rate.legend(loc="upper right", ncol=4, fontsize=7)
+    title = "Independent Reno streams joining cumulatively"
+    if aggregate:
+        title += " — repetition mean ±1 SD"
+    elif run_label:
+        title += f" — {run_label}"
+    figure.suptitle(title)
+    figure.tight_layout(rect=(0, 0, 1, 0.96))
+    _save(figure, output_stem)
+    plt.close(figure)
