@@ -32,6 +32,7 @@ MODE_LABELS = {
     "l4s-ect0": "Reno ECT(0)",
     "l4s-on": "Prague ECT(1)",
 }
+BACKGROUND_CONTROLLERS = ("reno", "cubic", "bbr")
 
 
 def command(args, **kwargs):
@@ -64,7 +65,8 @@ def configure_dualpi2(switch, bottleneck):
 
 
 def run_case(client, server, switch, output, mode, background_mbps, repetition,
-             transfer_bytes, background_seconds, bottleneck, bottleneck_mbps):
+             transfer_bytes, background_seconds, bottleneck, bottleneck_mbps,
+             background_congestion):
     case = output / (
         f"{mode}-bg-{background_mbps:03d}mbps-rep-{repetition:02d}"
     )
@@ -75,6 +77,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
         "controller": MODE_CONTROLLERS[mode],
         "background_mbps": background_mbps,
         "background_transport": "TCP",
+        "background_congestion": background_congestion,
         "background_ecn": "disabled",
         "repetition": repetition,
         "transfer_bytes": transfer_bytes,
@@ -130,7 +133,8 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
             time.sleep(0.3)
             background_client = client.popen(
                 ["iperf3", "-c", server.IP(), "-p", "5201", "-t",
-                 str(background_seconds), "-b", f"{background_mbps}M", "--json"],
+                 str(background_seconds), "-b", f"{background_mbps}M",
+                 "-C", background_congestion, "--json"],
                 stdout=iperf_client_log, stderr=subprocess.STDOUT,
             )
             time.sleep(0.5)
@@ -183,6 +187,11 @@ def main():
     parser.add_argument("--bottleneck", default="20mbit")
     parser.add_argument("--transfer-bytes", type=int, default=4 * 1024 * 1024)
     parser.add_argument("--background-seconds", type=int, default=8)
+    parser.add_argument(
+        "--background-congestion",
+        choices=BACKGROUND_CONTROLLERS,
+        default="bbr",
+    )
     parser.add_argument("--repetitions", type=int, default=5)
     parser.add_argument(
         "--modes", default="l4s-off,l4s-ect0,l4s-on",
@@ -229,7 +238,10 @@ def main():
         ).stdout.strip(),
         "background_rates_mbps": rates,
         "repetitions": args.repetitions,
-        "background_transport": "TCP iperf3 with ECN disabled",
+        "background_transport": (
+            f"TCP iperf3 {args.background_congestion} with ECN disabled"
+        ),
+        "background_congestion": args.background_congestion,
         "bottleneck": args.bottleneck,
         "bottleneck_mbps": bottleneck_mbps,
         "transfer_bytes": args.transfer_bytes,
@@ -253,11 +265,20 @@ def main():
         server.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
         if client.cmd(f"ping -c 1 -W 2 {server.IP()}").find("1 received") < 0:
             raise RuntimeError("Mininet client/server connectivity failed")
+        if args.background_congestion == "bbr":
+            command(["modprobe", "tcp_bbr"])
+        available = client.cmd("sysctl -n net.ipv4.tcp_available_congestion_control")
+        if args.background_congestion not in available.split():
+            raise RuntimeError(
+                f"TCP {args.background_congestion} unavailable in guest kernel: "
+                f"{available.strip()}"
+            )
         for rate in rates:
             for repetition in range(1, args.repetitions + 1):
                 for mode in modes:
                     print(
-                        f"running {mode} with {rate} Mbps classic TCP background "
+                        f"running {mode} with {rate} Mbps "
+                        f"{args.background_congestion} TCP background "
                         f"(repetition {repetition}/{args.repetitions})",
                         flush=True,
                     )
@@ -265,6 +286,7 @@ def main():
                         client, server, switch, args.output, mode, rate,
                         repetition, args.transfer_bytes, args.background_seconds,
                         args.bottleneck, bottleneck_mbps,
+                        args.background_congestion,
                     )
     finally:
         net.stop()

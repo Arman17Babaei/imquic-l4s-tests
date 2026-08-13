@@ -133,15 +133,29 @@ def tc_interface_drops(path, interface):
     return int(dropped.group(1))
 
 
-def iperf_rate(path):
+def iperf_rate(path, expected_congestion=None):
     if not Path(path).exists():
         return 0
     data = json.loads(Path(path).read_text(encoding="utf-8"))
+    congestion = data.get("end", {}).get("sender_tcp_congestion")
+    if expected_congestion is not None and congestion != expected_congestion:
+        raise AnalysisError(
+            f"{path}: background sender congestion control is {congestion!r}, "
+            f"expected {expected_congestion!r}"
+        )
     return int(data["end"]["sum_received"]["bits_per_second"])
 
 
-def analyze_case(directory):
+def analyze_case(directory, expected_background_congestion=None):
     metadata = json.loads((directory / "metadata.json").read_text(encoding="utf-8"))
+    background_congestion = metadata.get("background_congestion")
+    if (expected_background_congestion is not None
+            and background_congestion != expected_background_congestion):
+        raise AnalysisError(
+            f"{directory.name}: background congestion controller "
+            f"{background_congestion!r} does not match benchmark controller "
+            f"{expected_background_congestion!r}"
+        )
     samples = load_samples(directory / "metrics.csv")
     if len(samples) < 2:
         raise AnalysisError(f"{directory.name}: insufficient metrics samples")
@@ -202,7 +216,10 @@ def analyze_case(directory):
         "mode": metadata["mode"],
         "repetition": metadata["repetition"],
         "background_target_mbps": metadata["background_mbps"],
-        "background_actual_mbps": iperf_rate(directory / "iperf-client.json") / 1e6,
+        "background_actual_mbps": iperf_rate(
+            directory / "iperf-client.json",
+            background_congestion,
+        ) / 1e6,
         "quic_goodput_mbps": metadata["transfer_bytes"] * 8 / duration_us,
         "quic_wire_mbps": quic_wire_mbps,
         "background_wire_mbps": background_wire_mbps,
@@ -297,7 +314,11 @@ def analyze(root):
     benchmark = json.loads(
         (Path(root) / "benchmark.json").read_text(encoding="utf-8")
     )
-    rows = [analyze_case(path) for path in sorted(Path(root).glob("l4s-*-bg-*"))]
+    background_congestion = benchmark.get("background_congestion")
+    rows = [
+        analyze_case(path, background_congestion)
+        for path in sorted(Path(root).glob("l4s-*-bg-*"))
+    ]
     if not rows:
         raise AnalysisError("no benchmark cases found")
     modes = tuple(benchmark["modes"])
@@ -443,7 +464,9 @@ def render_plot(path, aggregates, benchmark):
             f'transform="rotate(-90 {panel_x + 12} {plot_y + plot_h / 2})" '
             f'text-anchor="middle" font-size="12">{html.escape(unit)}</text>',
             f'<text x="{plot_x + plot_w / 2}" y="{plot_y + plot_h + 42}" '
-            f'text-anchor="middle" font-size="12">Classic TCP target (Mbit/s)</text>',
+            f'text-anchor="middle" font-size="12">'
+            f'{html.escape(benchmark.get("background_congestion", "TCP").upper())} '
+            'TCP target (Mbit/s)</text>',
         ))
         for rate in rates:
             x = x_coord(rate)
@@ -561,6 +584,7 @@ def write_results(root, rows, benchmark):
         "repetitions": benchmark["repetitions"],
         "bottleneck_mbps": benchmark["bottleneck_mbps"],
         "background_rates_mbps": sorted({row["background_target_mbps"] for row in rows}),
+        "background_congestion": benchmark.get("background_congestion"),
         "aggregates": aggregates,
         "comparisons": comparisons,
         "rows": rows,
@@ -583,6 +607,21 @@ def self_test():
     if packet_deficit(120, 97) != 23 or packet_deficit(97, 120) != 0:
         raise AnalysisError("packet-drop inference self-test failed")
     with tempfile.TemporaryDirectory() as directory:
+        iperf = Path(directory) / "iperf.json"
+        iperf.write_text(json.dumps({
+            "end": {
+                "sender_tcp_congestion": "bbr",
+                "sum_received": {"bits_per_second": 10_000_000},
+            }
+        }), encoding="utf-8")
+        if iperf_rate(iperf, "bbr") != 10_000_000:
+            raise AnalysisError("iperf BBR validation self-test failed")
+        try:
+            iperf_rate(iperf, "cubic")
+        except AnalysisError:
+            pass
+        else:
+            raise AnalysisError("iperf controller mismatch self-test failed")
         tc_stats = Path(directory) / "dualpi2-stats.txt"
         tc_stats.write_text(
             "device=s1-eth1\n"
@@ -615,6 +654,7 @@ def self_test():
         "repetitions": 5,
         "bottleneck": "20mbit",
         "bottleneck_mbps": 20.0,
+        "background_congestion": "bbr",
         "modes": {mode: MODE_LABELS[mode] for mode in MODE_ORDER},
     }
     with tempfile.TemporaryDirectory() as directory:

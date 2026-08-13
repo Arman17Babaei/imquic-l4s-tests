@@ -31,10 +31,12 @@ implementation is in [`tests/l4s-test.c`](tests/l4s-test.c), mirrored in
 | Reno / ECT(0) coexistence | Separate classic ECN behaviour from Prague and L4S queue classification. | The same Mininet harness launches `l4s-ect0` (`reno-ect0`). DualPI2 classifies it in the classic queue. | Forward ECT(0), CE marks, and QUIC ACK_ECN CE feedback; no ECT(1). |
 | Prague / ECT(1) coexistence | Measure L4S behaviour under the same competing classic TCP load. | The same Mininet harness launches `l4s-on` (`prague`) with ECT(1), which DualPI2 classifies in its L4S queue. | Forward ECT(1), CE marks, ACK_ECN feedback, and nonzero L4S qdisc packet/mark counters; no ECT(0). |
 
-The coexistence matrix runs each mode at 0, 5, 10, and 20 Mbit/s requested
-classic TCP background load, with five repetitions by default (60 cases).
-The background is iperf3/TCP on port 5201 with ECN disabled. Each case creates
-fresh HTB and DualPI2 qdiscs, so their counters do not carry into the next case.
+The coexistence matrix runs each mode at 0, 5, 10, and 20 Mbit/s requested TCP
+background load, with five repetitions by default (60 cases).
+The background is iperf3/TCP BBR on port 5201 with ECN disabled. Each case
+creates fresh HTB and DualPI2 qdiscs, so their counters do not carry into the
+next case. Use `--background-congestion reno` or
+`--background-congestion cubic` to reproduce alternative TCP baselines.
 
 ## How the analysis works
 
@@ -142,8 +144,9 @@ sudo python3 tools/l4s/run_mininet_benchmark.py \
   --output results/l4s/mininet-run
 ```
 
-Use `--background-mbps`, `--repetitions`, `--transfer-bytes`, `--bottleneck`,
-and `--modes` to select a smaller or custom matrix. For example:
+Use `--background-mbps`, `--background-congestion`, `--repetitions`,
+`--transfer-bytes`, `--bottleneck`, and `--modes` to select a smaller or custom
+matrix. For example:
 
 ```sh
 sudo python3 tools/l4s/run_mininet_benchmark.py \
