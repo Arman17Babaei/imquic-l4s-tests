@@ -12,6 +12,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--binary", type=Path,
                         default=Path("deps/imquic/src/imquic-sustained-moq"))
+    parser.add_argument("--mode", choices=("reno", "bbr", "prague"),
+                        default="reno")
     args = parser.parse_args()
     args.binary = args.binary.resolve()
     if not args.binary.exists():
@@ -21,13 +23,13 @@ def main():
         result = Path(directory) / "subscriber-result.json"
         publisher = subprocess.Popen(
             [str(args.binary), "publisher", "127.0.0.1", "4443",
-             "l4s-off", str(metrics), "2"],
+             args.mode, str(metrics), "2"],
             cwd=args.binary.parent, stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT, text=True)
         try:
             subscriber = subprocess.Popen(
                 [str(args.binary), "subscriber", "127.0.0.1", "4443",
-                 "l4s-off", "2", str(result)],
+                 args.mode, "2", str(result)],
                 cwd=args.binary.parent, stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT, text=True)
             subscriber_output, _ = subscriber.communicate(timeout=10)

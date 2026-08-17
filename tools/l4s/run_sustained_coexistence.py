@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the 60-second MoQ-vs-classic-TCP coexistence matrix."""
+"""Run a sustained MoQ-vs-classic-TCP coexistence matrix."""
 
 import argparse
 import json
@@ -21,8 +21,9 @@ from experiment_metadata import (
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = ROOT / "deps" / "imquic" / "src" / "imquic-sustained-moq"
-MODES = ("l4s-off", "l4s-ect0", "l4s-on")
-TCP_ECN_MODES = ("not-ect", "ect0")
+MODES = ("reno", "bbr", "prague")
+BACKGROUND_CONTROLLERS = ("cubic", "reno", "bbr", "bbr2")
+BACKGROUND_MODULES = {"bbr": "tcp_bbr", "bbr2": "tcp_bbr2"}
 
 
 def stop(process):
@@ -44,8 +45,7 @@ def qdisc(switch, rate):
                         "classid", "1:1", "htb", "rate", rate, "burst", "32k"],
                        check=True)
         subprocess.run(["tc", "qdisc", "add", "dev", dev, "parent", "1:1",
-                        "handle", "10:", "dualpi2", "target", "1ms",
-                 "tupdate", "1ms"], check=True)
+                        "handle", "10:", "dualpi2"], check=True)
 
 
 def save_qdisc_stats(switch, case, label):
@@ -81,15 +81,20 @@ def configure_tcp_ecn(client, server, tcp_ecn):
         raise ValueError(f"unsupported TCP ECN mode: {tcp_ecn}")
 
 
-def run_case(client, server, switch, root, mode, tcp_ecn, repetition, duration, warmup, drain):
-    case = root / f"{mode}-tcp-{tcp_ecn}-rep-{repetition:02d}"
+def run_case(client, server, switch, root, mode, background_congestion,
+             repetition, duration, warmup, drain):
+    case = root / (
+        f"{mode}-tcp-{background_congestion}-unlimited-rep-{repetition:02d}"
+    )
     case.mkdir(parents=True)
-    configure_tcp_ecn(client, server, tcp_ecn)
+    configure_tcp_ecn(client, server, "not-ect")
     qdisc(switch, "20mbit")
     save_qdisc_stats(switch, case, "before")
-    metadata = {"mode": mode, "tcp_ecn": tcp_ecn, "repetition": repetition,
+    metadata = {"mode": mode, "tcp_ecn": "not-ect",
+                "background_congestion": background_congestion,
+                "background_rate": "unlimited", "repetition": repetition,
                 "duration_seconds": duration, "warmup_seconds": warmup,
-                "drain_seconds": drain, "background_mbps": 10,
+                "drain_seconds": drain, "background_mbps": -1,
                 "bottleneck_mbps": 20, "namespace": "imquic-l4s",
                 "track": "sustained", "client_ip": client.IP(),
                 "server_ip": server.IP(),
@@ -114,8 +119,9 @@ def run_case(client, server, switch, root, mode, tcp_ecn, repetition, duration, 
         tcp_started = time.time()
         tcp_client = server.popen(
             ["iperf3", "-c", client.IP(), "-p", "5201", "-t",
-             str(warmup + duration + drain), "-i", "1", "-b", "10M",
-             "--json"], stdout=tcp_client_log, stderr=subprocess.STDOUT)
+             str(warmup + duration + drain), "-i", "1", "-C",
+             background_congestion, "--json"],
+            stdout=tcp_client_log, stderr=subprocess.STDOUT)
         metadata["tcp_started_epoch"] = tcp_started
         time.sleep(warmup)
         pub_log = (case / "publisher.log").open("w")
@@ -163,18 +169,40 @@ def run_case(client, server, switch, root, mode, tcp_ecn, repetition, duration, 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--duration", type=int, default=60)
-    parser.add_argument("--warmup", type=int, default=5)
-    parser.add_argument("--drain", type=int, default=5)
-    parser.add_argument("--repetitions", type=int, default=3)
+    parser.add_argument("--duration", type=int, default=8)
+    parser.add_argument("--warmup", type=int, default=2)
+    parser.add_argument("--drain", type=int, default=1)
+    parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--modes", default=",".join(MODES))
-    parser.add_argument("--tcp-ecn-modes", default=",".join(TCP_ECN_MODES),
-                        help="comma-separated classic TCP modes: not-ect,ect0")
+    parser.add_argument(
+        "--background-congestions", default=",".join(BACKGROUND_CONTROLLERS),
+        help="comma-separated unlimited non-ECN TCP congestion controllers",
+    )
     args = parser.parse_args()
+    modes = args.modes.split(",")
+    backgrounds = args.background_congestions.split(",")
+    if (not modes or len(set(modes)) != len(modes)
+            or any(mode not in MODES for mode in modes)):
+        parser.error(f"modes must be unique members of {','.join(MODES)}")
+    if (not backgrounds or len(set(backgrounds)) != len(backgrounds)
+            or any(cc not in BACKGROUND_CONTROLLERS for cc in backgrounds)):
+        parser.error(
+            "background congestions must be unique members of "
+            + ",".join(BACKGROUND_CONTROLLERS)
+        )
+    if args.duration <= 0 or args.repetitions <= 0:
+        parser.error("duration and repetitions must be positive")
+    if args.warmup < 0 or args.drain < 0:
+        parser.error("warmup and drain must be non-negative")
     if os.geteuid() != 0:
         raise SystemExit("sustained coexistence must run as root")
     if not BINARY.exists():
         raise SystemExit(f"missing {BINARY}; run make build first")
+    subprocess.run(["modprobe", "sch_dualpi2"], check=True)
+    for controller in backgrounds:
+        module = BACKGROUND_MODULES.get(controller)
+        if module is not None:
+            subprocess.run(["modprobe", module], check=True)
     args.output.mkdir(parents=True, exist_ok=False)
     net = Mininet(controller=None, link=TCLink, switch=OVSBridge, autoSetMacs=True)
     client = net.addHost("client", ip="10.0.0.1/24")
@@ -191,17 +219,21 @@ def main():
                 "warmup_seconds": args.warmup,
                 "drain_seconds": args.drain,
                 "repetitions": args.repetitions,
-                "modes": args.modes.split(","),
-                "tcp_ecn_modes": args.tcp_ecn_modes.split(","),
-                "background_mbps": 10,
+                "modes": modes,
+                "background_congestions": backgrounds,
+                "background_transport": "unlimited non-ECN TCP iperf3",
+                "background_mbps": "unlimited",
                 "bottleneck": "20mbit",
                 "qdisc": {
                     "interfaces": ["s1-eth1", "s1-eth2"],
                     "root": "HTB",
                     "burst": "32k",
                     "child": "DualPI2",
-                    "target": "1ms",
-                    "tupdate": "1ms",
+                    "parameter_profile": "kernel-defaults",
+                    "parameter_evidence": (
+                        "exact effective values retained per case in "
+                        "dualpi2-stats.txt"
+                    ),
                 },
             },
             topology={
@@ -210,11 +242,30 @@ def main():
             },
             observed_network=capture_mininet_state(client, server, switch),
         )
+        available = server.cmd(
+            "sysctl -n net.ipv4.tcp_available_congestion_control"
+        ).split()
+        missing = [controller for controller in backgrounds
+                   if controller not in available]
+        if missing:
+            raise RuntimeError(
+                "unavailable background congestion controllers: "
+                + ", ".join(missing)
+            )
         for repetition in range(1, args.repetitions + 1):
-            for tcp_ecn in args.tcp_ecn_modes.split(","):
-                for mode in args.modes.split(","):
-                    run_case(client, server, switch, args.output, mode, tcp_ecn,
-                             repetition, args.duration, args.warmup, args.drain)
+            for background_congestion in backgrounds:
+                for mode in modes:
+                    print(
+                        f"running {mode} MoQ against unlimited "
+                        f"{background_congestion} TCP "
+                        f"(repetition {repetition}/{args.repetitions})",
+                        flush=True,
+                    )
+                    run_case(
+                        client, server, switch, args.output, mode,
+                        background_congestion, repetition, args.duration,
+                        args.warmup, args.drain,
+                    )
     finally:
         net.stop()
         subprocess.run(["mn", "-c"], check=False)

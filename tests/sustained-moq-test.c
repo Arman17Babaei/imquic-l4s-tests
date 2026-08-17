@@ -141,9 +141,10 @@ static void incoming_object(imquic_connection *conn, imquic_moq_object *object) 
 }
 
 static int parse_mode(const char *mode, imquic_congestion_controller *cc, imquic_ecn_mode *ecn) {
-	if(!strcmp(mode, "l4s-off")) { *cc = IMQUIC_CONGESTION_RENO; *ecn = IMQUIC_ECN_NOT_ECT; }
+	if(!strcmp(mode, "reno") || !strcmp(mode, "l4s-off")) { *cc = IMQUIC_CONGESTION_RENO; *ecn = IMQUIC_ECN_NOT_ECT; }
+	else if(!strcmp(mode, "bbr")) { *cc = IMQUIC_CONGESTION_BBR; *ecn = IMQUIC_ECN_NOT_ECT; }
 	else if(!strcmp(mode, "l4s-ect0")) { *cc = IMQUIC_CONGESTION_RENO; *ecn = IMQUIC_ECN_ECT0; }
-	else if(!strcmp(mode, "l4s-on")) { *cc = IMQUIC_CONGESTION_PRAGUE; *ecn = IMQUIC_ECN_ECT1; }
+	else if(!strcmp(mode, "prague") || !strcmp(mode, "l4s-on")) { *cc = IMQUIC_CONGESTION_PRAGUE; *ecn = IMQUIC_ECN_ECT1; }
 	else return -1;
 	return 0;
 }

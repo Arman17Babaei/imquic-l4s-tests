@@ -9,8 +9,8 @@ import statistics
 import subprocess
 from pathlib import Path
 
-MODES = {"l4s-off": "Reno / Not-ECT", "l4s-ect0": "Reno / ECT(0)",
-         "l4s-on": "Prague / ECT(1)"}
+MODES = {"reno": "Reno / Not-ECT", "bbr": "BBR / Not-ECT",
+         "prague": "Prague / ECT(1)"}
 IP_ECN_CODES = {"ect0": 2, "ect1": 1, "ce": 3}
 
 
@@ -32,8 +32,15 @@ def aligned_interval_index(tcp_start, foreground_start, interval_start):
     return int(tcp_start + float(interval_start) - foreground_start)
 
 
-def iperf_intervals(path, tcp_start, foreground_start, count=60):
+def iperf_intervals(path, tcp_start, foreground_start, count=60,
+                    expected_congestion=None):
     data = json.loads(Path(path).read_text())
+    congestion = data.get("end", {}).get("sender_tcp_congestion")
+    if expected_congestion is not None and congestion != expected_congestion:
+        raise ValueError(
+            f"{path}: background sender congestion control is {congestion!r}, "
+            f"expected {expected_congestion!r}"
+        )
     result = [None] * count
     for interval in data.get("intervals", []):
         streams = interval.get("streams", [])
@@ -107,13 +114,11 @@ def mode_checks(mode, rows):
     ce = max(row["ce_packets"] for row in rows)
     alpha = {row["alpha_numerator"] / row["alpha_denominator"]
              if row["alpha_denominator"] else 0 for row in rows}
-    if mode == "l4s-off" and (ect0 or ect1 or ce):
+    if mode in ("reno", "bbr") and (ect0 or ect1 or ce):
         raise ValueError("Not-ECT mode has ECN evidence")
-    if mode == "l4s-ect0" and (not ect0 or not ce or ect1):
-        raise ValueError("ECT(0) mode invariants failed")
-    if mode == "l4s-on" and (not ect1 or not ce or len(alpha) < 2):
+    if mode == "prague" and (not ect1 or not ce or len(alpha) < 2):
         raise ValueError("Prague mode invariants failed")
-    if mode == "l4s-on":
+    if mode == "prague":
         for before, after in zip(rows, rows[1:]):
             if after["ce_packets"] > before["ce_packets"] and after["cwnd_bytes"] < before["cwnd_bytes"]:
                 break
@@ -160,7 +165,8 @@ def analyze_case(case):
     tcp = iperf_intervals(case / "iperf-client.json",
                           metadata["tcp_started_epoch"],
                           metadata["foreground_started_epoch"],
-                          metadata["duration_seconds"])
+                          metadata["duration_seconds"],
+                          metadata["background_congestion"])
     present = [row for row in tcp if row is not None]
     if len(present) < metadata["duration_seconds"] * .9:
         issues.append("fewer than 90% TCP overlap bins")
@@ -194,24 +200,23 @@ def analyze_case(case):
             tcp_ecn[signal] = [a + b for a, b in zip(tcp_ecn[signal], values)]
     ecn = {signal: sum(values) for signal, values in foreground_ecn.items()}
     tcp_ecn_totals = {signal: sum(values) for signal, values in tcp_ecn.items()}
-    if metadata["mode"] == "l4s-off" and any(ecn.values()):
+    if metadata["mode"] in ("reno", "bbr") and any(ecn.values()):
         issues.append("Not-ECT capture contains ECN-marked packets")
-    if metadata["mode"] == "l4s-ect0" and (not ecn["ect0"] or not ecn["ce"] or ecn["ect1"]):
-        issues.append("ECT(0) capture invariant failed")
-    if metadata["mode"] == "l4s-on" and (not ecn["ect1"] or not ecn["ce"] or ecn["ect0"]):
+    if metadata["mode"] == "prague" and (not ecn["ect1"] or not ecn["ce"] or ecn["ect0"]):
         issues.append("Prague capture invariant failed")
     try:
         tcp_ecn_checks(metadata.get("tcp_ecn", "not-ect"), tcp_ecn_totals)
     except ValueError as error:
         issues.append(str(error))
     qdisc_packets = l4s_qdisc_packets(case / "dualpi2-stats.txt")
-    if metadata["mode"] == "l4s-on" and qdisc_packets == 0:
+    if metadata["mode"] == "prague" and qdisc_packets == 0:
         issues.append("no L4S DualPI2 classification evidence")
     tcp_rate = statistics.mean(background_wire)
     active_tcp_bins = sum(rate > 0 for rate in background_wire)
     combined_rate = statistics.mean(
         foreground_wire[i] + background_wire[i] for i in range(duration))
-    if not 14.0 <= combined_rate <= 21.0:
+    bottleneck = metadata["bottleneck_mbps"]
+    if not bottleneck * .7 <= combined_rate <= bottleneck * 1.05:
         issues.append(f"combined rate is {combined_rate:.2f} Mbit/s")
     return metadata, foreground, tcp, foreground_wire, background_wire, foreground_ecn, tcp_ecn, issues
 
@@ -250,7 +255,8 @@ def write_timeline(case, metadata, foreground, tcp, foreground_wire, background_
                 "tcp_wire_mbps": tcp_rate,
                 "combined_wire_mbps": foreground_rate + tcp_rate,
                 "bottleneck_utilization_percent":
-                    (foreground_rate + tcp_rate) / 20 * 100,
+                    (foreground_rate + tcp_rate) /
+                    metadata["bottleneck_mbps"] * 100,
                 "foreground_share": foreground_rate /
                     max(foreground_rate + tcp_rate, 1e-9),
                 "tcp_cwnd_bytes": (tcp_row or {}).get("snd_cwnd", 0),
@@ -277,7 +283,7 @@ def svg_polyline(values, x, y, width, height, scale, color):
             f'points="{points}"/>')
 
 
-def render_svg(case, mode, tcp_ecn):
+def render_svg(case, mode, background_congestion):
     with (case / "timeline.csv").open(newline="") as stream:
         rows = list(csv.DictReader(stream))
     width, header, panel_height, footer = 1180, 58, 158, 24
@@ -289,9 +295,9 @@ def render_svg(case, mode, tcp_ecn):
            '<style>text{font-family:Arial,sans-serif;fill:#1f2937}.axis{font-size:11px}'
            '.title{font-size:18px;font-weight:bold}.panel{font-size:13px;font-weight:bold}'
            '.legend{font-size:11px}</style>',
-           f'<text class="title" x="24" y="29">{mode} vs classic TCP '
-           f'{"ECT(0)" if tcp_ecn == "ect0" else "Not-ECT"}</text>',
-           '<text class="axis" x="24" y="47">60-second overlap; cwnd values are diagnostic byte-valued sender reports.</text>']
+           f'<text class="title" x="24" y="29">{mode} MoQ vs unlimited '
+           f'{background_congestion.upper()} TCP</text>',
+           f'<text class="axis" x="24" y="47">{len(rows)}-second overlap; cwnd values are diagnostic byte-valued sender reports.</text>']
     panels = [
         ("Wire rate", (("foreground_wire_mbps", "Foreground MoQ", PLOT_COLORS["foreground"]),
                         ("tcp_wire_mbps", "Background TCP", PLOT_COLORS["tcp"])), "Mbit/s", False),
@@ -340,21 +346,21 @@ def render_svg(case, mode, tcp_ecn):
 
 def render_aggregate_svg(root, summaries, aggregates):
     width, height = 1400, 630
-    tcp_modes = sorted({row["tcp_ecn"] for row in summaries},
-                       key=lambda value: (value != "not-ect", value))
-    scenarios = [(mode, tcp_mode) for tcp_mode in tcp_modes for mode in MODES
-                 if any(row["mode"] == mode and row["tcp_ecn"] == tcp_mode
+    backgrounds = sorted({row["background_congestion"] for row in summaries})
+    scenarios = [(mode, background) for background in backgrounds for mode in MODES
+                 if any(row["mode"] == mode and row["background_congestion"] == background
                         for row in summaries)]
-    labels = [(MODES[mode], "TCP ECT(0)" if tcp_mode == "ect0" else "TCP Not-ECT")
-              for mode, tcp_mode in scenarios]
+    labels = [(MODES[mode], f"TCP {background.upper()}")
+              for mode, background in scenarios]
+    repetitions = len({row["repetition"] for row in summaries})
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
            f'viewBox="0 0 {width} {height}">',
            f'<rect width="{width}" height="{height}" fill="white"/>',
            '<style>text{font-family:Arial,sans-serif;fill:#1f2937}.axis{font-size:11px}'
            '.title{font-size:18px;font-weight:bold}.panel{font-size:13px;font-weight:bold}'
            '.value{font-size:10px}</style>',
-           '<text class="title" x="24" y="29">Sustained MoQ/TCP coexistence: aggregate of three repetitions per scenario</text>',
-           '<text class="axis" x="24" y="47">Bars are foreground-mode/TCP-ECN means; circles are individual repetitions.</text>']
+           f'<text class="title" x="24" y="29">Sustained MoQ/TCP coexistence: {repetitions} repetition(s) per scenario</text>',
+           '<text class="axis" x="24" y="47">Bars are foreground/background means; circles are individual repetitions.</text>']
 
     def panel(title, values_by_series, y, unit, maximum=None):
         chart_x, chart_y, chart_width, chart_height = 130, y + 47, 1080, 108
@@ -392,13 +398,13 @@ def render_aggregate_svg(root, summaries, aggregates):
 
     def values(field):
         return [[row[field] for row in summaries
-                 if row["mode"] == mode and row["tcp_ecn"] == tcp_mode]
-                for mode, tcp_mode in scenarios]
+                 if row["mode"] == mode and row["background_congestion"] == background]
+                for mode, background in scenarios]
 
     panel("Mean forward wire rate", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_wire_mbps_mean")),
                                       ("TCP background", PLOT_COLORS["tcp"], values("tcp_wire_mbps_mean"))), 65, "Mbit/s", 20.0)
     panel("Bottleneck use and foreground share", (("Bottleneck utilisation", PLOT_COLORS["utilisation"], values("bottleneck_utilization_percent_mean")),
-                                                    ("Foreground share", PLOT_COLORS["foreground"], [[row["foreground_share_mean"] * 100 for row in summaries if row["mode"] == mode and row["tcp_ecn"] == tcp_mode] for mode, tcp_mode in scenarios])), 250, "percent", 100.0)
+                                                    ("Foreground share", PLOT_COLORS["foreground"], [[row["foreground_share_mean"] * 100 for row in summaries if row["mode"] == mode and row["background_congestion"] == background] for mode, background in scenarios])), 250, "percent", 100.0)
     panel("Maximum sender cwnd (diagnostic)", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_cwnd_bytes_max")),
                                                  ("TCP background", PLOT_COLORS["tcp"], values("tcp_cwnd_bytes_max"))), 435, "bytes")
     svg.append("</svg>\n")
@@ -414,6 +420,7 @@ def timeline_summary(case, metadata):
         "case": case.name,
         "mode": metadata["mode"],
         "tcp_ecn": metadata.get("tcp_ecn", "not-ect"),
+        "background_congestion": metadata["background_congestion"],
         "repetition": metadata["repetition"],
         "bins": len(rows),
         "foreground_wire_mbps_mean": mean("foreground_wire_mbps"),
@@ -457,7 +464,8 @@ def self_test():
     assert aligned_interval_index(100.0, 105.0, 6.2) == 1
     valid = [{"ect0_packets": 0, "ect1_packets": 0, "ce_packets": 0,
               "alpha_numerator": 0, "alpha_denominator": 0}]
-    mode_checks("l4s-off", valid)
+    mode_checks("reno", valid)
+    mode_checks("bbr", valid)
     tcp_ecn_checks("not-ect", {"ect0": 0, "ect1": 0, "ce": 0})
     tcp_ecn_checks("ect0", {"ect0": 1, "ect1": 0, "ce": 0})
     for tcp_mode, totals in (("not-ect", {"ect0": 1, "ect1": 0, "ce": 0}),
@@ -470,7 +478,7 @@ def self_test():
         else:
             raise AssertionError("TCP ECN invariant failure was not detected")
     try:
-        mode_checks("l4s-ect0", valid)
+        mode_checks("prague", valid)
     except ValueError:
         pass
     else:
@@ -500,28 +508,29 @@ def main():
         write_timeline(case, metadata, foreground, tcp, foreground_wire,
                        background_wire, foreground_ecn, tcp_ecn)
         render_svg(case, MODES[metadata["mode"]],
-                   metadata.get("tcp_ecn", "not-ect"))
+                   metadata["background_congestion"])
         summary = timeline_summary(case, metadata)
         summary["acceptance_issues"] = issues
         summaries.append(summary)
-    tcp_modes = sorted({row["tcp_ecn"] for row in summaries})
+    backgrounds = sorted({row["background_congestion"] for row in summaries})
     foreground_modes = [mode for mode in MODES
                         if any(row["mode"] == mode for row in summaries)]
     repetitions = sorted({row["repetition"] for row in summaries})
-    expected_cases = len(repetitions) * len(foreground_modes) * len(tcp_modes)
+    expected_cases = len(repetitions) * len(foreground_modes) * len(backgrounds)
     if len(summaries) != expected_cases:
         raise SystemExit(f"expected {expected_cases} completed cases, found {len(summaries)}")
     aggregates = {}
-    for tcp_mode in tcp_modes:
+    for background in backgrounds:
         for mode in foreground_modes:
             mode_rows = [row for row in summaries
-                         if row["mode"] == mode and row["tcp_ecn"] == tcp_mode]
+                         if row["mode"] == mode
+                         and row["background_congestion"] == background]
             if len(mode_rows) != len(repetitions):
                 raise SystemExit(
-                    f"{mode}/tcp-{tcp_mode}: expected {len(repetitions)} repetitions")
-            aggregates[f"{mode}/tcp-{tcp_mode}"] = {
+                    f"{mode}/tcp-{background}: expected {len(repetitions)} repetitions")
+            aggregates[f"{mode}/tcp-{background}"] = {
                 "mode": mode,
-                "tcp_ecn": tcp_mode,
+                "background_congestion": background,
                 "repetitions": len(mode_rows),
                 "tcp_wire_mbps_mean": statistics.mean(
                     row["tcp_wire_mbps_mean"] for row in mode_rows),
