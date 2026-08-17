@@ -459,7 +459,7 @@ def render_plot(path, aggregates, benchmark):
         '<style>text{font-family:DejaVu Sans,Arial,sans-serif;fill:#222}'
         '.grid{stroke:#ddd;stroke-width:1}.axis{stroke:#333;stroke-width:1.5}'
         '.series{fill:none;stroke-width:3}.error{stroke-width:1.5}'
-        '.point{stroke:white;stroke-width:1.5}</style>',
+        '.point{stroke:white;stroke-width:1.5;fill-opacity:.65}</style>',
         '<text x="600" y="34" text-anchor="middle" font-size="22" '
         'font-weight="bold">Mininet L4S coexistence benchmark</text>',
         f'<text x="600" y="58" text-anchor="middle" font-size="14">'
