@@ -1,7 +1,7 @@
 IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -43,6 +43,26 @@ l4s-timeseries-guest-check:
 
 l4s-mininet-benchmark-guest-check:
 	python3 tools/l4s/run_mininet_benchmark.py --output $(L4S_RESULT_DIR)
+
+l4s-dualpi2-reference-guest-check:
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	$(MAKE) analyzer-check
+	$(MAKE) experiment-record-check
+	$(MAKE) l4s-timeseries-guest-check L4S_RESULT_DIR="$(L4S_RESULT_DIR)/timeseries"
+	@grep -E 'qdisc dualpi2|target|tupdate|alpha|beta|step_thresh|coupling_factor|classic_protection' \
+		"$(L4S_RESULT_DIR)/timeseries/dualpi2-stats.txt" | tee "$(L4S_RESULT_DIR)/dualpi2-reference-parameters.txt"
+	@grep -Eq 'target 15ms' "$(L4S_RESULT_DIR)/dualpi2-reference-parameters.txt" || { echo "unexpected DualPI2 Classic target" >&2; exit 1; }
+	@grep -Eq 'tupdate 16ms' "$(L4S_RESULT_DIR)/dualpi2-reference-parameters.txt" || { echo "unexpected DualPI2 update interval" >&2; exit 1; }
+	@grep -Eq 'step_thresh 1ms' "$(L4S_RESULT_DIR)/dualpi2-reference-parameters.txt" || { echo "unexpected DualPI2 L4S step threshold" >&2; exit 1; }
+	@grep -Eq 'coupling_factor 2' "$(L4S_RESULT_DIR)/dualpi2-reference-parameters.txt" || { echo "unexpected DualPI2 coupling factor" >&2; exit 1; }
+	$(MAKE) l4s-mininet-benchmark-guest-check L4S_RESULT_DIR="$(L4S_RESULT_DIR)/mininet"
+
+l4s-dualpi2-reference-qemu-check:
+	python3 tools/l4s/run_qemu_timeseries_test.py \
+		--make-target l4s-dualpi2-reference-guest-check \
+		--guest-result-name dualpi2-reference \
+		--destination-prefix qemu-dualpi2-reference \
+		$(L4S_QEMU_ARGS)
 
 l4s-sustained-moq-check:
 	python3 tools/l4s/run_sustained_coexistence.py --output $(L4S_RESULT_DIR) $(L4S_SUSTAINED_ARGS)
