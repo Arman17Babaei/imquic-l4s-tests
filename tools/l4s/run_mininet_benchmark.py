@@ -66,8 +66,11 @@ def configure_dualpi2(switch, bottleneck):
                  "htb", "default", "1"])
         command(["tc", "class", "add", "dev", interface, "parent", "1:",
                  "classid", "1:1", "htb", "rate", bottleneck, "burst", "32k"])
+        # Keep the Linux DualPI2 reference parameters as one coherent set.
+        # `target` is the Classic PI2 target; the L4S step threshold is a
+        # separate sch_dualpi2 parameter. Do not override either here.
         command(["tc", "qdisc", "add", "dev", interface, "parent", "1:1",
-                 "handle", "10:", "dualpi2", "target", "1ms", "tupdate", "1ms"])
+                 "handle", "10:", "dualpi2"])
 
 
 def run_case(client, server, switch, output, mode, background_mbps, repetition,
@@ -291,8 +294,9 @@ def main():
                     "rate": args.bottleneck,
                     "burst": "32k",
                     "child": "DualPI2",
-                    "target": "1ms",
-                    "tupdate": "1ms",
+                    "parameter_profile": "kernel-defaults",
+                    "parameter_evidence":
+                        "exact effective values are retained per case in dualpi2-stats.txt",
                 },
             },
             topology={

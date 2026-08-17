@@ -5,8 +5,6 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 IMQUIC_ROOT="$ROOT/deps/imquic"
 RESULT_DIR=${1:-"$ROOT/results/l4s/timeseries-$(date -u +%Y%m%dT%H%M%SZ)"}
 RATE=${IMQUIC_L4S_RATE:-2mbit}
-TARGET=${IMQUIC_L4S_TARGET:-1ms}
-UPDATE=${IMQUIC_L4S_TUPDATE:-1ms}
 SENDER=imq-l4s-sender
 ROUTER=imq-l4s-router
 RECEIVER=imq-l4s-receiver
@@ -63,8 +61,11 @@ for device in imq-l4s-rs imq-l4s-rd; do
 	ip netns exec "$ROUTER" tc qdisc add dev "$device" root handle 1: htb default 1
 	ip netns exec "$ROUTER" tc class add dev "$device" parent 1: \
 		classid 1:1 htb rate "$RATE" burst 16k
+	# Use sch_dualpi2's coherent Linux reference defaults. In particular,
+	# `target` controls the Classic PI2 queue; the L4S step threshold is
+	# configured independently by sch_dualpi2.
 	ip netns exec "$ROUTER" tc qdisc add dev "$device" parent 1:1 \
-		handle 10: dualpi2 target "$TARGET" tupdate "$UPDATE"
+		handle 10: dualpi2
 done
 
 python3 "$ROOT/tools/l4s/experiment_metadata.py" \
@@ -72,8 +73,7 @@ python3 "$ROOT/tools/l4s/experiment_metadata.py" \
 	--scenario prague-timeseries \
 	--topology "sender--router--receiver; HTB+DualPI2 on both router egress interfaces" \
 	--set "rate=$RATE" \
-	--set "dualpi2_target=$TARGET" \
-	--set "dualpi2_tupdate=$UPDATE" \
+	--set "dualpi2_profile=kernel-defaults; exact effective values retained in dualpi2-stats.txt" \
 	--set "sender=10.10.1.2/24" \
 	--set "receiver=10.10.2.2/24" \
 	--set "router_interfaces=imq-l4s-rs,imq-l4s-rd"
