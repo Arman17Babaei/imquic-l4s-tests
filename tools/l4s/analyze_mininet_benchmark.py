@@ -247,6 +247,17 @@ def analyze_case(directory, expected_background_congestion=None):
                 f"{directory.name}: QUIC traffic spans only {quic_span:.3f}s "
                 f"of the {expected_duration:.3f}s foreground interval"
             )
+        if metadata["background_mbps"] > 0:
+            background_span = packet_span_seconds(
+                server_capture,
+                f"{interval} && tcp.dstport == 5201",
+            )
+            if background_span < expected_duration * 0.9:
+                raise AnalysisError(
+                    f"{directory.name}: background TCP spans only "
+                    f"{background_span:.3f}s of the "
+                    f"{expected_duration:.3f}s foreground interval"
+                )
     echoed_bytes = delivered_bytes(directory / "client.log")
     if echoed_bytes >= metadata["transfer_bytes"]:
         raise AnalysisError(
@@ -304,8 +315,6 @@ def analyze_case(directory, expected_background_congestion=None):
     target = metadata["background_mbps"]
     if tcp_ecn_capture != 0:
         raise AnalysisError(f"{directory.name}: background TCP was ECN-capable")
-    if target > 0 and row["background_actual_mbps"] < target * 0.5:
-        raise AnalysisError(f"{directory.name}: background TCP missed requested rate")
     return row
 
 
