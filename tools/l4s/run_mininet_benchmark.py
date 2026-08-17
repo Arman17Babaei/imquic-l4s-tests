@@ -75,8 +75,8 @@ def configure_dualpi2(switch, bottleneck):
 
 
 def run_case(client, server, switch, output, mode, background_mbps, repetition,
-             transfer_bytes, background_seconds, bottleneck, bottleneck_mbps,
-             background_congestion):
+             transfer_bytes, foreground_seconds, background_warmup_seconds,
+             bottleneck, bottleneck_mbps, background_congestion):
     case = output / (
         f"{mode}-bg-{background_mbps:03d}mbps-rep-{repetition:02d}"
     )
@@ -91,6 +91,11 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
         "background_ecn": "disabled",
         "repetition": repetition,
         "transfer_bytes": transfer_bytes,
+        "foreground_seconds": foreground_seconds,
+        "background_warmup_seconds": background_warmup_seconds,
+        "background_seconds": (
+            foreground_seconds + background_warmup_seconds + 1
+        ),
         "bottleneck": bottleneck,
         "bottleneck_mbps": bottleneck_mbps,
         "client_ip": client.IP(),
@@ -127,7 +132,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
         controller = metadata["controller"]
         server_process = server.popen(
             [str(BINARY), "--server", server.IP(), "4443", controller,
-             str(transfer_bytes)],
+             str(transfer_bytes), str(foreground_seconds)],
             cwd=str(IMQUIC_ROOT / "src"), stdout=server_log, stderr=subprocess.STDOUT,
         )
         time.sleep(0.5)
@@ -143,20 +148,21 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
             time.sleep(0.3)
             background_client = client.popen(
                 ["iperf3", "-c", server.IP(), "-p", "5201", "-t",
-                 str(background_seconds), "-b", f"{background_mbps}M",
+                 str(metadata["background_seconds"]), "-b",
+                 f"{background_mbps}M",
                  "-C", background_congestion, "--json"],
                 stdout=iperf_client_log, stderr=subprocess.STDOUT,
             )
-            time.sleep(0.5)
+            time.sleep(background_warmup_seconds)
 
         started = time.monotonic()
         metadata["quic_started_epoch"] = time.time()
         client_process = client.popen(
             [str(BINARY), "--client", server.IP(), "4443", str(case / "metrics.csv"),
-             controller, str(transfer_bytes)],
+             controller, str(transfer_bytes), str(foreground_seconds)],
             cwd=str(IMQUIC_ROOT / "src"), stdout=client_log, stderr=subprocess.STDOUT,
         )
-        client_status = client_process.wait(timeout=180)
+        client_status = client_process.wait(timeout=foreground_seconds + 30)
         metadata["quic_finished_epoch"] = time.time()
         server_status = server_process.wait(timeout=30)
         metadata["wall_duration_seconds"] = time.monotonic() - started
@@ -191,8 +197,9 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--background-mbps", default="0,5,10,20")
     parser.add_argument("--bottleneck", default="20mbit")
-    parser.add_argument("--transfer-bytes", type=int, default=4 * 1024 * 1024)
-    parser.add_argument("--background-seconds", type=int, default=8)
+    parser.add_argument("--transfer-bytes", type=int, default=64 * 1024 * 1024)
+    parser.add_argument("--foreground-seconds", type=int, default=8)
+    parser.add_argument("--background-warmup-seconds", type=int, default=2)
     parser.add_argument(
         "--background-congestion",
         choices=BACKGROUND_CONTROLLERS,
@@ -211,6 +218,10 @@ def main():
         parser.error("background rates must be non-negative integers")
     if args.repetitions <= 0:
         parser.error("repetitions must be positive")
+    if args.foreground_seconds <= 0:
+        parser.error("foreground seconds must be positive")
+    if args.background_warmup_seconds < 0:
+        parser.error("background warmup seconds must be non-negative")
     if not modes or len(set(modes)) != len(modes) or any(
         mode not in MODE_CONTROLLERS for mode in modes
     ):
@@ -222,6 +233,14 @@ def main():
     if match is None:
         parser.error("bottleneck must use tc rate syntax such as 20mbit")
     bottleneck_mbps = float(match.group(1)) * units[match.group(2)]
+    maximum_path_bytes = (
+        bottleneck_mbps * 1_000_000 / 8 * args.foreground_seconds
+    )
+    if args.transfer_bytes <= maximum_path_bytes * 1.25:
+        parser.error(
+            "transfer bytes must exceed 125% of the maximum bottleneck "
+            "delivery during the foreground duration"
+        )
     if os.geteuid() != 0:
         raise SystemExit("Mininet benchmark must run as root inside QEMU")
     for program in ("iperf3", "mn", "ovs-vsctl", "tc", "tcpdump", "tshark"):
@@ -251,6 +270,8 @@ def main():
         "bottleneck": args.bottleneck,
         "bottleneck_mbps": bottleneck_mbps,
         "transfer_bytes": args.transfer_bytes,
+        "foreground_seconds": args.foreground_seconds,
+        "background_warmup_seconds": args.background_warmup_seconds,
         "modes": {mode: MODE_LABELS[mode] for mode in modes},
     }
     (args.output / "benchmark.json").write_text(
@@ -285,7 +306,9 @@ def main():
             scenario="l4s-mininet-coexistence",
             configuration={
                 **benchmark,
-                "background_seconds": args.background_seconds,
+                "background_seconds": (
+                    args.foreground_seconds + args.background_warmup_seconds + 1
+                ),
                 "reference_summary": (
                     str(args.reference_summary) if args.reference_summary else None
                 ),
@@ -319,7 +342,9 @@ def main():
                     )
                     run_case(
                         client, server, switch, args.output, mode, rate,
-                        repetition, args.transfer_bytes, args.background_seconds,
+                        repetition, args.transfer_bytes,
+                        args.foreground_seconds,
+                        args.background_warmup_seconds,
                         args.bottleneck, bottleneck_mbps,
                         args.background_congestion,
                     )

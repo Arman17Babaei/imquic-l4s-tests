@@ -146,8 +146,13 @@ sudo python3 tools/l4s/run_mininet_benchmark.py \
 ```
 
 Use `--background-mbps`, `--background-congestion`, `--repetitions`,
-`--transfer-bytes`, `--bottleneck`, and `--modes` to select a smaller or custom
-matrix. For example:
+`--foreground-seconds`, `--background-warmup-seconds`, `--transfer-bytes`,
+`--bottleneck`, and `--modes` to select a smaller or custom matrix. The QUIC
+fixture queues more data than the bottleneck can deliver, transmits continuously
+for the foreground duration, and records echoed application bytes. Background
+TCP starts before QUIC and remains active beyond the foreground interval. The
+analyzer rejects cases whose captured QUIC traffic does not span at least 90%
+of that interval. For example:
 
 ```sh
 sudo python3 tools/l4s/run_mininet_benchmark.py \

@@ -19,6 +19,10 @@ static volatile gint server_complete;
 static imquic_transport_metrics final_metrics;
 static gpointer active_client_connection;
 static gboolean expect_prague = TRUE;
+static unsigned int network_duration_seconds;
+static volatile gint64 traffic_started_us;
+static volatile gint64 server_first_received_us;
+static volatile gint64 server_last_received_us;
 
 static void fail_test(const char *message)
 {
@@ -38,6 +42,10 @@ static gboolean payload_matches(uint64_t offset, uint8_t *bytes, uint64_t length
 static void server_stream_incoming(imquic_connection *conn, uint64_t stream_id,
 		uint8_t *bytes, uint64_t length, gboolean complete)
 {
+	gint64 now_us = g_get_monotonic_time();
+	if(server_first_received_us == 0)
+		server_first_received_us = now_us;
+	server_last_received_us = now_us;
 	if(!payload_matches(server_received, bytes, length)) {
 		fail_test("server received corrupted Prague traffic sample");
 		return;
@@ -63,6 +71,10 @@ static void client_stream_incoming(imquic_connection *conn, uint64_t stream_id,
 	}
 	client_received += length;
 	if(complete) {
+		if(network_duration_seconds > 0) {
+			fail_test("sustained network payload ended before the duration elapsed");
+			return;
+		}
 		if(client_received != test_payload_size) {
 			fail_test("client received incomplete Prague traffic sample");
 			return;
@@ -84,6 +96,7 @@ static void client_new_connection(imquic_connection *conn, void *user_data)
 	(void)user_data;
 	imquic_connection_ref(conn);
 	g_atomic_pointer_set(&active_client_connection, conn);
+	traffic_started_us = g_get_monotonic_time();
 	if(imquic_new_stream_id(conn, TRUE, &stream_id) != 0 ||
 		imquic_send_on_stream(conn, stream_id, test_payload,
 			test_payload_size, TRUE) != 0) {
@@ -248,6 +261,9 @@ static void prepare_payload(void)
 	g_atomic_int_set(&test_done, 0);
 	g_atomic_int_set(&test_failed, 0);
 	g_atomic_int_set(&server_complete, 0);
+	traffic_started_us = 0;
+	server_first_received_us = 0;
+	server_last_received_us = 0;
 	memset(&final_metrics, 0, sizeof(final_metrics));
 }
 
@@ -280,15 +296,32 @@ static int network_server(const char *bind_address, uint16_t port,
 	imquic_start_endpoint(server);
 	printf("IMQUIC Prague server listening on %s:%u\n", bind_address, port);
 	fflush(stdout);
-	for(int step = 0; step < 6000 &&
-			!g_atomic_int_get(&server_complete) &&
-			!g_atomic_int_get(&test_failed); step++)
-		g_usleep(10000);
-	if(!g_atomic_int_get(&server_complete)) {
+	if(network_duration_seconds > 0) {
+		gint64 maximum_us = g_get_monotonic_time() +
+			((gint64)network_duration_seconds + 10) * G_USEC_PER_SEC;
+		while(!g_atomic_int_get(&test_failed) &&
+				g_get_monotonic_time() < maximum_us) {
+			gint64 now_us = g_get_monotonic_time();
+			if(server_first_received_us > 0 &&
+					now_us - server_first_received_us >=
+						(gint64)network_duration_seconds * G_USEC_PER_SEC &&
+					now_us - server_last_received_us >= 100000)
+				break;
+			g_usleep(10000);
+		}
+	} else {
+		for(int step = 0; step < 6000 &&
+				!g_atomic_int_get(&server_complete) &&
+				!g_atomic_int_get(&test_failed); step++)
+			g_usleep(10000);
+	}
+	if(g_atomic_int_get(&test_failed) ||
+			(network_duration_seconds == 0 &&
+			 !g_atomic_int_get(&server_complete)) ||
+			(network_duration_seconds > 0 && server_received == 0)) {
 		fprintf(stderr, "timed out waiting for network Prague traffic\n");
 		ret = -1;
 	} else {
-		g_usleep(500000);
 		printf("IMQUIC Prague server: received=%" G_GUINT64_FORMAT "\n",
 			server_received);
 	}
@@ -365,16 +398,36 @@ static int network_client(const char *remote_host, uint16_t port,
 	imquic_set_connection_failed_cb(client, client_connection_failed);
 	started_us = g_get_monotonic_time();
 	imquic_start_endpoint(client);
-	for(int step = 0; step < 6000 && !g_atomic_int_get(&test_done); step++) {
-		write_metrics_sample(metrics_csv, started_us);
-		g_usleep(10000);
+	if(network_duration_seconds > 0) {
+		gint64 maximum_us = started_us +
+			((gint64)network_duration_seconds + 10) * G_USEC_PER_SEC;
+		while(!g_atomic_int_get(&test_failed) &&
+				g_get_monotonic_time() < maximum_us) {
+			write_metrics_sample(metrics_csv, started_us);
+			if(traffic_started_us > 0 &&
+					g_get_monotonic_time() - traffic_started_us >=
+						(gint64)network_duration_seconds * G_USEC_PER_SEC)
+				break;
+			g_usleep(10000);
+		}
+	} else {
+		for(int step = 0; step < 6000 && !g_atomic_int_get(&test_done); step++) {
+			write_metrics_sample(metrics_csv, started_us);
+			g_usleep(10000);
+		}
 	}
 	write_metrics_sample(metrics_csv, started_us);
-	if(!g_atomic_int_get(&test_done) || g_atomic_int_get(&test_failed)) {
+	imquic_connection *active = g_atomic_pointer_get(&active_client_connection);
+	if(active != NULL)
+		imquic_get_transport_metrics(active, &final_metrics);
+	if(g_atomic_int_get(&test_failed) ||
+			(network_duration_seconds == 0 && !g_atomic_int_get(&test_done)) ||
+			(network_duration_seconds > 0 &&
+			 (traffic_started_us == 0 || client_received == 0))) {
 		fprintf(stderr, "network Prague traffic failed or timed out\n");
 		ret = -1;
 	} else {
-		printf("IMQUIC %s network traffic: sent=%" G_GUINT64_FORMAT
+		printf("IMQUIC %s network traffic: queued=%" G_GUINT64_FORMAT
 			", echoed=%" G_GUINT64_FORMAT
 			", rtt_us=%" G_GUINT64_FORMAT ", cwin=%" G_GUINT64_FORMAT
 			", pacing_Bps=%" G_GUINT64_FORMAT ", ect1=%" G_GUINT64_FORMAT
@@ -410,6 +463,7 @@ static int parse_network_options(int argc, char *argv[], gboolean client,
 {
 	int cc_index = client ? 5 : 4;
 	int size_index = client ? 6 : 5;
+	int duration_index = client ? 7 : 6;
 	if(metrics_csv != NULL)
 		*metrics_csv = argc > 4 && client ? argv[4] : NULL;
 	*controller = IMQUIC_CONGESTION_PRAGUE;
@@ -435,6 +489,15 @@ static int parse_network_options(int argc, char *argv[], gboolean client,
 	} else {
 		test_payload_size = TEST_PAYLOAD_SIZE;
 	}
+	network_duration_seconds = 0;
+	if(argc > duration_index) {
+		char *end = NULL;
+		uint64_t duration = g_ascii_strtoull(argv[duration_index], &end, 10);
+		if(end == argv[duration_index] || *end != '\0' || duration == 0 ||
+				duration > G_MAXUINT)
+			return -1;
+		network_duration_seconds = (unsigned int)duration;
+	}
 	expect_prague = *controller == IMQUIC_CONGESTION_PRAGUE;
 	return 0;
 }
@@ -446,14 +509,14 @@ int main(int argc, char *argv[])
 	imquic_ecn_mode ecn_mode = IMQUIC_ECN_DEFAULT;
 	const char *metrics_csv = NULL;
 	imquic_set_log_level(IMQUIC_LOG_WARN);
-	if(ret == 0 && argc >= 4 && argc <= 6 && strcmp(argv[1], "--server") == 0) {
+	if(ret == 0 && argc >= 4 && argc <= 7 && strcmp(argv[1], "--server") == 0) {
 		if(parse_network_options(argc, argv, FALSE, NULL, &controller,
 				&ecn_mode) != 0)
 			ret = -1;
 		else
 			ret = network_server(argv[2], (uint16_t)strtoul(argv[3], NULL, 10),
 				controller, ecn_mode);
-	} else if(ret == 0 && argc >= 4 && argc <= 7 &&
+	} else if(ret == 0 && argc >= 4 && argc <= 8 &&
 			strcmp(argv[1], "--client") == 0) {
 		if(parse_network_options(argc, argv, TRUE, &metrics_csv, &controller,
 				&ecn_mode) != 0)
@@ -463,8 +526,8 @@ int main(int argc, char *argv[])
 				metrics_csv, controller, ecn_mode);
 	}
 	else if(ret == 0 && argc != 1) {
-		fprintf(stderr, "usage: %s [--server BIND PORT [CC [BYTES]] | "
-			"--client HOST PORT [CSV [CC [BYTES]]]]\n",
+		fprintf(stderr, "usage: %s [--server BIND PORT [CC [BYTES [SECONDS]]] | "
+			"--client HOST PORT [CSV [CC [BYTES [SECONDS]]]]]\n",
 			argv[0]);
 		ret = -1;
 	} else if(ret == 0)

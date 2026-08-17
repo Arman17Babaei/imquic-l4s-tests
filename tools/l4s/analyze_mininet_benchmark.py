@@ -94,6 +94,25 @@ def packet_bytes(path, display_filter):
     )
 
 
+def packet_span_seconds(path, display_filter):
+    values = [
+        float(value.split(",", 1)[0])
+        for value in tshark_fields(path, display_filter, "frame.time_epoch").splitlines()
+        if value
+    ]
+    if len(values) < 2:
+        return 0.0
+    return max(values) - min(values)
+
+
+def delivered_bytes(path):
+    text = Path(path).read_text(encoding="utf-8")
+    match = re.search(r"\bechoed=(\d+)", text)
+    if match is None:
+        raise AnalysisError(f"{path}: missing echoed byte count")
+    return int(match.group(1))
+
+
 def packet_deficit(ingress_packets, egress_packets):
     """Return packets seen before, but not after, the forward bottleneck."""
     return max(0, ingress_packets - egress_packets)
@@ -210,6 +229,29 @@ def analyze_case(directory, expected_background_congestion=None):
     quic_wire_mbps = quic_wire_bytes * 8 / wall_duration / 1e6
     background_wire_mbps = background_wire_bytes * 8 / wall_duration / 1e6
     combined_wire_mbps = quic_wire_mbps + background_wire_mbps
+    foreground_seconds = metadata.get("foreground_seconds")
+    if foreground_seconds is not None:
+        expected_duration = float(foreground_seconds)
+        actual_duration = wall_duration
+        if not expected_duration * 0.9 <= actual_duration <= expected_duration * 1.25:
+            raise AnalysisError(
+                f"{directory.name}: foreground ran {actual_duration:.3f}s, "
+                f"expected approximately {expected_duration:.3f}s"
+            )
+        quic_span = packet_span_seconds(
+            server_capture,
+            f"{interval} && udp.dstport == 4443",
+        )
+        if quic_span < expected_duration * 0.9:
+            raise AnalysisError(
+                f"{directory.name}: QUIC traffic spans only {quic_span:.3f}s "
+                f"of the {expected_duration:.3f}s foreground interval"
+            )
+    echoed_bytes = delivered_bytes(directory / "client.log")
+    if echoed_bytes >= metadata["transfer_bytes"]:
+        raise AnalysisError(
+            f"{directory.name}: queued sustained payload was exhausted"
+        )
     l4s_packets, ecn_marks = tc_totals(directory / "dualpi2-stats.txt")
     final = samples[-1]
     row = {
@@ -220,7 +262,7 @@ def analyze_case(directory, expected_background_congestion=None):
             directory / "iperf-client.json",
             background_congestion,
         ) / 1e6,
-        "quic_goodput_mbps": metadata["transfer_bytes"] * 8 / duration_us,
+        "quic_goodput_mbps": echoed_bytes * 8 / duration_us,
         "quic_wire_mbps": quic_wire_mbps,
         "background_wire_mbps": background_wire_mbps,
         "combined_wire_mbps": combined_wire_mbps,
@@ -622,6 +664,13 @@ def self_test():
             pass
         else:
             raise AnalysisError("iperf controller mismatch self-test failed")
+        client_log = Path(directory) / "client.log"
+        client_log.write_text(
+            "IMQUIC Prague network traffic: queued=67108864, echoed=123456\n",
+            encoding="utf-8",
+        )
+        if delivered_bytes(client_log) != 123456:
+            raise AnalysisError("delivered-byte parser self-test failed")
         tc_stats = Path(directory) / "dualpi2-stats.txt"
         tc_stats.write_text(
             "device=s1-eth1\n"
