@@ -56,6 +56,15 @@ def _cpu_model() -> str:
 
 
 def repository_snapshot(root: Path = ROOT) -> dict[str, Any]:
+    archived_snapshot = root / ".source-provenance.json"
+    if archived_snapshot.is_file():
+        try:
+            snapshot = json.loads(archived_snapshot.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            return {"error": f"invalid archived repository snapshot: {error}"}
+        if isinstance(snapshot, dict):
+            return snapshot
+        return {"error": "invalid archived repository snapshot: expected object"}
     status = _run(["git", "status", "--porcelain", "--untracked-files=normal"], cwd=root)
     return {
         "commit": _run(["git", "rev-parse", "HEAD"], cwd=root),

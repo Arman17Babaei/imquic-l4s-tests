@@ -3,6 +3,7 @@
 
 import argparse
 import base64
+import json
 import os
 import re
 import shlex
@@ -13,6 +14,8 @@ import tarfile
 import tempfile
 import time
 from pathlib import Path
+
+from experiment_metadata import repository_snapshot
 
 try:
     import pexpect
@@ -203,6 +206,7 @@ def main():
         imquic_archive = temporary / "imquic-source.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
         picotls_archive = temporary / "picotls-cache.tar.gz"
+        source_provenance = temporary / "source-provenance.json"
         serial_log = temporary / "serial.log"
         run(
             [
@@ -211,6 +215,10 @@ def main():
             ]
         )
         run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
+        source_provenance.write_text(
+            json.dumps(repository_snapshot(ROOT), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
         run(
             ["git", "archive", "--format=tar.gz", f"--output={picoquic_archive}", "HEAD"],
             cwd=ROOT / "deps" / "picoquic",
@@ -245,6 +253,7 @@ def main():
             copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
             copy_to_guest(port, args.user, args.password, picotls_archive)
+            copy_to_guest(port, args.user, args.password, source_provenance)
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
             provision = f'''set -e
 if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
@@ -254,6 +263,7 @@ fi
 rm -rf {shlex.quote(guest_root)}
 mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
+cp /home/{shlex.quote(args.user)}/{source_provenance.name} {shlex.quote(guest_root)}/.source-provenance.json
 tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps

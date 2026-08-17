@@ -38,6 +38,26 @@ class FakeSwitch:
 
 
 class MetadataTests(unittest.TestCase):
+    def test_repository_snapshot_uses_archived_source_handoff(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            expected = {
+                "commit": "0123456789abcdef",
+                "branch": "main",
+                "dirty": False,
+                "submodules": [" abc deps/example"],
+            }
+            (root / ".source-provenance.json").write_text(
+                json.dumps(expected), encoding="utf-8"
+            )
+            with mock.patch.object(
+                experiment_metadata, "_run",
+                side_effect=AssertionError("git should not be queried"),
+            ):
+                self.assertEqual(
+                    experiment_metadata.repository_snapshot(root), expected
+                )
+
     def test_capture_mininet_state_uses_live_nodes(self):
         client = FakeNode("client", "10.0.0.1")
         server = FakeNode("server", "10.0.0.2")
