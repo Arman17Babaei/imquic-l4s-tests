@@ -42,7 +42,7 @@ l4s-timeseries-guest-check:
 	tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
 
 l4s-mininet-benchmark-guest-check:
-	python3 tools/l4s/run_mininet_benchmark.py --output $(L4S_RESULT_DIR)
+	python3 tools/l4s/run_mininet_benchmark.py --output $(L4S_RESULT_DIR) $(L4S_MININET_ARGS)
 
 l4s-dualpi2-reference-guest-check:
 	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
