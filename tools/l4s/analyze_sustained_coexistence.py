@@ -32,6 +32,14 @@ def aligned_interval_index(tcp_start, foreground_start, interval_start):
     return int(tcp_start + float(interval_start) - foreground_start)
 
 
+def relative_bin_index(timestamp, start_epoch, count):
+    offset = float(timestamp) - start_epoch
+    if offset < 0:
+        return None
+    index = int(offset)
+    return index if index < count else None
+
+
 def iperf_intervals(path, tcp_start, foreground_start, count=60,
                     expected_congestion=None):
     data = json.loads(Path(path).read_text())
@@ -68,8 +76,8 @@ def packet_bins(path, port, destination, start_epoch, count=60):
         fields = line.split("\t")
         if len(fields) != 2 or not fields[0] or not fields[1]:
             continue
-        index = int(float(fields[0]) - start_epoch)
-        if 0 <= index < count:
+        index = relative_bin_index(fields[0], start_epoch, count)
+        if index is not None:
             bins[index] += int(fields[1])
     return [value * 8 / 1e6 for value in bins]
 
@@ -87,9 +95,9 @@ def ecn_bins(path, port, destination, start_epoch, count=60):
         fields = line.split("\t")
         if len(fields) != 2 or not fields[0] or not fields[1]:
             continue
-        index = int(float(fields[0]) - start_epoch)
+        index = relative_bin_index(fields[0], start_epoch, count)
         code = int(fields[1], 0)
-        if 0 <= index < count:
+        if index is not None:
             for signal, expected in IP_ECN_CODES.items():
                 if code == expected:
                     bins[signal][index] += 1
@@ -462,6 +470,9 @@ def self_test():
         if x] == [1, 2]
     assert overlap_bins({"foreground_started_epoch": 5, "tcp_started_epoch": 0}, 2) == [5, 6]
     assert aligned_interval_index(100.0, 105.0, 6.2) == 1
+    assert relative_bin_index(99.9, 100.0, 8) is None
+    assert relative_bin_index(100.0, 100.0, 8) == 0
+    assert relative_bin_index(108.0, 100.0, 8) is None
     valid = [{"ect0_packets": 0, "ect1_packets": 0, "ce_packets": 0,
               "alpha_numerator": 0, "alpha_denominator": 0}]
     mode_checks("reno", valid)
