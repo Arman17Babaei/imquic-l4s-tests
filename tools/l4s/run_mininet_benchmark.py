@@ -42,6 +42,10 @@ BACKGROUND_CONTROLLERS = ("reno", "cubic", "bbr", "bbr2")
 BACKGROUND_MODULES = {"bbr": "tcp_bbr", "bbr2": "tcp_bbr2"}
 
 
+def background_rate_label(rate):
+    return "unlimited" if rate == -1 else f"{rate:03d}mbps"
+
+
 def command(args, **kwargs):
     return subprocess.run(args, check=True, text=True, **kwargs)
 
@@ -78,7 +82,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
              transfer_bytes, foreground_seconds, background_warmup_seconds,
              bottleneck, bottleneck_mbps, background_congestion):
     case = output / (
-        f"{mode}-bg-{background_mbps:03d}mbps-rep-{repetition:02d}"
+        f"{mode}-bg-{background_rate_label(background_mbps)}-rep-{repetition:02d}"
     )
     case.mkdir(parents=True)
     configure_dualpi2(switch, bottleneck)
@@ -86,6 +90,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
         "mode": mode,
         "controller": MODE_CONTROLLERS[mode],
         "background_mbps": background_mbps,
+        "background_rate": background_rate_label(background_mbps),
         "background_transport": "TCP",
         "background_congestion": background_congestion,
         "background_ecn": "disabled",
@@ -137,7 +142,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
         )
         time.sleep(0.5)
 
-        if background_mbps > 0:
+        if background_mbps != 0:
             iperf_server_log = (case / "iperf-server.json").open("w", encoding="utf-8")
             iperf_client_log = (case / "iperf-client.json").open("w", encoding="utf-8")
             files.extend((iperf_server_log, iperf_client_log))
@@ -146,11 +151,15 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
                 stdout=iperf_server_log, stderr=subprocess.STDOUT,
             )
             time.sleep(0.3)
+            background_command = [
+                "iperf3", "-c", server.IP(), "-p", "5201", "-t",
+                str(metadata["background_seconds"]),
+            ]
+            if background_mbps > 0:
+                background_command.extend(["-b", f"{background_mbps}M"])
+            background_command.extend(["-C", background_congestion, "--json"])
             background_client = client.popen(
-                ["iperf3", "-c", server.IP(), "-p", "5201", "-t",
-                 str(metadata["background_seconds"]), "-b",
-                 f"{background_mbps}M",
-                 "-C", background_congestion, "--json"],
+                background_command,
                 stdout=iperf_client_log, stderr=subprocess.STDOUT,
             )
             time.sleep(background_warmup_seconds)
@@ -212,10 +221,23 @@ def main():
     )
     parser.add_argument("--reference-summary", type=Path)
     args = parser.parse_args()
-    rates = [int(value) for value in args.background_mbps.split(",")]
+    rates = []
+    for value in args.background_mbps.split(","):
+        if value == "unlimited":
+            rates.append(-1)
+        else:
+            try:
+                rates.append(int(value))
+            except ValueError:
+                parser.error(
+                    "background rates must be non-negative integers or unlimited"
+                )
     modes = args.modes.split(",")
-    if not rates or any(rate < 0 for rate in rates):
-        parser.error("background rates must be non-negative integers")
+    if (not rates or len(set(rates)) != len(rates) or
+            any(rate < -1 for rate in rates)):
+        parser.error(
+            "background rates must be unique non-negative integers or unlimited"
+        )
     if args.repetitions <= 0:
         parser.error("repetitions must be positive")
     if args.foreground_seconds <= 0:
@@ -261,7 +283,9 @@ def main():
             ["mn", "--version"], check=True, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         ).stdout.strip(),
-        "background_rates_mbps": rates,
+        "background_rates_mbps": [
+            "unlimited" if rate == -1 else rate for rate in rates
+        ],
         "repetitions": args.repetitions,
         "background_transport": (
             f"TCP iperf3 {args.background_congestion} with ECN disabled"
@@ -334,8 +358,11 @@ def main():
         for rate in rates:
             for repetition in range(1, args.repetitions + 1):
                 for mode in modes:
+                    rate_description = (
+                        "unlimited" if rate == -1 else f"{rate} Mbps"
+                    )
                     print(
-                        f"running {mode} with {rate} Mbps "
+                        f"running {mode} with {rate_description} "
                         f"{args.background_congestion} TCP background "
                         f"(repetition {repetition}/{args.repetitions})",
                         flush=True,

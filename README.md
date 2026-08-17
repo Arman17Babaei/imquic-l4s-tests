@@ -152,7 +152,8 @@ fixture queues more data than the bottleneck can deliver, transmits continuously
 for the foreground duration, and records echoed application bytes. Background
 TCP starts before QUIC and remains active beyond the foreground interval. The
 analyzer rejects cases whose captured QUIC traffic does not span at least 90%
-of that interval. For example:
+of that interval. Use `unlimited` as a background rate to omit iperf's pacing
+cap while retaining the selected TCP congestion controller. For example:
 
 ```sh
 sudo python3 tools/l4s/run_mininet_benchmark.py \

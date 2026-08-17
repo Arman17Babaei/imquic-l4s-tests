@@ -25,6 +25,14 @@ MODE_COLORS = {
     "l4s-ect0": "#e69f00",
     "l4s-on": "#0072b2",
 }
+
+
+def rate_sort_key(rate):
+    return (rate == -1, rate)
+
+
+def rate_label(rate):
+    return "unlimited" if rate == -1 else str(rate)
 ROW_FIELDS = (
     "mode",
     "repetition",
@@ -247,7 +255,7 @@ def analyze_case(directory, expected_background_congestion=None):
                 f"{directory.name}: QUIC traffic spans only {quic_span:.3f}s "
                 f"of the {expected_duration:.3f}s foreground interval"
             )
-        if metadata["background_mbps"] > 0:
+        if metadata["background_mbps"] != 0:
             background_span = packet_span_seconds(
                 server_capture,
                 f"{interval} && tcp.dstport == 5201",
@@ -327,7 +335,10 @@ def validate_matrix(rows, expected_repetitions, expected_modes):
         if key in cases:
             raise AnalysisError(f"duplicate benchmark case: {key}")
         cases[key] = row
-    rates = sorted({row["background_target_mbps"] for row in rows})
+    rates = sorted(
+        {row["background_target_mbps"] for row in rows},
+        key=rate_sort_key,
+    )
     expected_repeats = set(range(1, expected_repetitions + 1))
     for rate in rates:
         for mode in expected_modes:
@@ -409,9 +420,13 @@ AGGREGATE_METRICS = (
 
 def aggregate_rows(rows):
     aggregates = []
-    keys = sorted({
-        (row["background_target_mbps"], row["mode"]) for row in rows
-    })
+    keys = sorted(
+        {
+            (row["background_target_mbps"], row["mode"])
+            for row in rows
+        },
+        key=lambda item: (rate_sort_key(item[0]), item[1]),
+    )
     for rate, mode in keys:
         group = [
             row for row in rows
@@ -448,7 +463,10 @@ def render_plot(path, aggregates, benchmark):
     )
     panel_rows = (len(panels) + 1) // 2
     width, height = 1200, 140 + panel_rows * 350
-    rates = sorted({row["background_target_mbps"] for row in aggregates})
+    rates = sorted(
+        {row["background_target_mbps"] for row in aggregates},
+        key=rate_sort_key,
+    )
     modes = [mode for mode in MODE_ORDER if any(
         row["mode"] == mode for row in aggregates
     )]
@@ -482,12 +500,10 @@ def render_plot(path, aggregates, benchmark):
         if show_bottleneck:
             values.append(benchmark["bottleneck_mbps"])
         y_max = max(values) * 1.15 if max(values) > 0 else 1.0
-        x_min, x_max = min(rates), max(rates)
-
         def x_coord(rate):
-            if x_max == x_min:
+            if len(rates) == 1:
                 return plot_x + plot_w / 2
-            return plot_x + (rate - x_min) / (x_max - x_min) * plot_w
+            return plot_x + rates.index(rate) / (len(rates) - 1) * plot_w
 
         def y_coord(value):
             return plot_y + plot_h - value / y_max * plot_h
@@ -523,7 +539,7 @@ def render_plot(path, aggregates, benchmark):
             x = x_coord(rate)
             svg.append(
                 f'<text x="{x:.1f}" y="{plot_y + plot_h + 20}" '
-                f'text-anchor="middle" font-size="11">{rate}</text>'
+                f'text-anchor="middle" font-size="11">{rate_label(rate)}</text>'
             )
         if show_bottleneck:
             y = y_coord(benchmark["bottleneck_mbps"])
@@ -538,7 +554,7 @@ def render_plot(path, aggregates, benchmark):
         for mode in modes:
             series = sorted(
                 (row for row in aggregates if row["mode"] == mode),
-                key=lambda row: row["background_target_mbps"],
+                key=lambda row: rate_sort_key(row["background_target_mbps"]),
             )
             points = " ".join(
                 f'{x_coord(row["background_target_mbps"]):.1f},'
@@ -603,7 +619,10 @@ def write_results(root, rows, benchmark):
         for row in aggregates
     }
     comparisons = []
-    for rate in sorted({row["background_target_mbps"] for row in rows}):
+    for rate in sorted(
+        {row["background_target_mbps"] for row in rows},
+        key=rate_sort_key,
+    ):
         modes = {}
         for mode in MODE_ORDER:
             aggregate = aggregate_index.get((rate, mode))
@@ -634,7 +653,13 @@ def write_results(root, rows, benchmark):
         "cases": len(rows),
         "repetitions": benchmark["repetitions"],
         "bottleneck_mbps": benchmark["bottleneck_mbps"],
-        "background_rates_mbps": sorted({row["background_target_mbps"] for row in rows}),
+        "background_rates_mbps": [
+            "unlimited" if rate == -1 else rate
+            for rate in sorted(
+                {row["background_target_mbps"] for row in rows},
+                key=rate_sort_key,
+            )
+        ],
         "background_congestion": benchmark.get("background_congestion"),
         "aggregates": aggregates,
         "comparisons": comparisons,
@@ -655,6 +680,8 @@ def write_results(root, rows, benchmark):
 
 
 def self_test():
+    if sorted((30, -1, 0), key=rate_sort_key) != [0, 30, -1]:
+        raise AnalysisError("background-rate ordering self-test failed")
     if packet_deficit(120, 97) != 23 or packet_deficit(97, 120) != 0:
         raise AnalysisError("packet-drop inference self-test failed")
     with tempfile.TemporaryDirectory() as directory:
