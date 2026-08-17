@@ -61,6 +61,20 @@ def stop_process(process):
         process.wait()
 
 
+def wait_for_metrics_start(path, process, timeout=30):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError("IMQUIC client exited before metrics started")
+        try:
+            if path.read_bytes().count(b"\n") >= 2:
+                return time.time()
+        except FileNotFoundError:
+            pass
+        time.sleep(0.02)
+    raise RuntimeError("timed out waiting for IMQUIC metrics to start")
+
+
 def configure_dualpi2(switch, bottleneck, interfaces, target, step_thresh,
                       limit):
     for interface in interfaces:
@@ -144,6 +158,8 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
     server_process = None
     background_server = None
     background_client = None
+    background_command = None
+    client_process = None
     files = []
     try:
         for interface, name in ((f"{switch.name}-eth1", "switch-client.pcap"),
@@ -188,19 +204,28 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
             if background_mbps > 0:
                 background_command.extend(["-b", f"{background_mbps}M"])
             background_command.extend(["-C", background_congestion, "--json"])
+            if background_warmup_seconds > 0:
+                background_client = client.popen(
+                    background_command,
+                    stdout=iperf_client_log, stderr=subprocess.STDOUT,
+                )
+                time.sleep(background_warmup_seconds)
+
+        metrics_path = case / "metrics.csv"
+        client_process = client.popen(
+            [str(BINARY), "--client", server.IP(), "4443", str(metrics_path),
+             controller, str(transfer_bytes), str(foreground_seconds)],
+            cwd=str(IMQUIC_ROOT / "src"), stdout=client_log, stderr=subprocess.STDOUT,
+        )
+        metadata["quic_started_epoch"] = wait_for_metrics_start(
+            metrics_path, client_process,
+        )
+        if background_command is not None and background_client is None:
             background_client = client.popen(
                 background_command,
                 stdout=iperf_client_log, stderr=subprocess.STDOUT,
             )
-            time.sleep(background_warmup_seconds)
-
         started = time.monotonic()
-        metadata["quic_started_epoch"] = time.time()
-        client_process = client.popen(
-            [str(BINARY), "--client", server.IP(), "4443", str(case / "metrics.csv"),
-             controller, str(transfer_bytes), str(foreground_seconds)],
-            cwd=str(IMQUIC_ROOT / "src"), stdout=client_log, stderr=subprocess.STDOUT,
-        )
         client_status = client_process.wait(timeout=foreground_seconds + 30)
         metadata["quic_finished_epoch"] = time.time()
         server_status = server_process.wait(timeout=30)
@@ -221,6 +246,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
             stop_process(process)
         stop_process(background_client)
         stop_process(background_server)
+        stop_process(client_process)
         stop_process(server_process)
         for stream in files:
             stream.close()
