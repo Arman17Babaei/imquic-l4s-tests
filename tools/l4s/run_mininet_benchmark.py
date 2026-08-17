@@ -38,7 +38,8 @@ MODE_LABELS = {
     "l4s-ect0": "Reno ECT(0)",
     "l4s-on": "Prague ECT(1)",
 }
-BACKGROUND_CONTROLLERS = ("reno", "cubic", "bbr")
+BACKGROUND_CONTROLLERS = ("reno", "cubic", "bbr", "bbr2")
+BACKGROUND_MODULES = {"bbr": "tcp_bbr", "bbr2": "tcp_bbr2"}
 
 
 def command(args, **kwargs):
@@ -270,8 +271,9 @@ def main():
         server.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
         if client.cmd(f"ping -c 1 -W 2 {server.IP()}").find("1 received") < 0:
             raise RuntimeError("Mininet client/server connectivity failed")
-        if args.background_congestion == "bbr":
-            command(["modprobe", "tcp_bbr"])
+        module = BACKGROUND_MODULES.get(args.background_congestion)
+        if module is not None:
+            command(["modprobe", module])
         available = client.cmd("sysctl -n net.ipv4.tcp_available_congestion_control")
         if args.background_congestion not in available.split():
             raise RuntimeError(

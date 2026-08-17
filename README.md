@@ -33,10 +33,11 @@ implementation is in [`tests/l4s-test.c`](tests/l4s-test.c), mirrored in
 
 The coexistence matrix runs each mode at 0, 5, 10, and 20 Mbit/s requested TCP
 background load, with five repetitions by default (60 cases).
-The background is iperf3/TCP BBR on port 5201 with ECN disabled. Each case
+The background is iperf3/TCP BBRv1 on port 5201 with ECN disabled. Each case
 creates fresh HTB and DualPI2 qdiscs, so their counters do not carry into the
-next case. Use `--background-congestion reno` or
-`--background-congestion cubic` to reproduce alternative TCP baselines.
+next case. Use `--background-congestion reno`, `cubic`, or `bbr2` to select an
+alternative TCP baseline; the BBRv2 choice loads `tcp_bbr2` and verifies that
+iperf3 reports `bbr2`.
 
 ## How the analysis works
 

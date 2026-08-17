@@ -18,8 +18,9 @@ The same IMQUIC transfer runs in three modes: Reno/Not-ECT (`l4s-off`),
 Reno/ECT(0) (`l4s-ect0`), and Prague/ECT(1) (`l4s-on`). The ECT(0) mode isolates
 classic ECN behavior from Prague's congestion controller and L4S queue
 classification. At the same time, iperf3 sends paced TCP from client to server
-with TCP ECN disabled. The default requested TCP rates are 0, 5, 10, and 20
-Mbit/s, and every load/mode combination runs five times.
+with TCP ECN disabled. The background controller can be Reno, CUBIC, BBRv1, or
+BBRv2. The default requested TCP rates are 0, 5, 10, and 20 Mbit/s, and every
+load/mode combination runs five times.
 
 Each case recreates both switch-port qdiscs so counters do not leak between
 runs. The analyzer separates QUIC (`udp.port == 4443`) from background TCP
