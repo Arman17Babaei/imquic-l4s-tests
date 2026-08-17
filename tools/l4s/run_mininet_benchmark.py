@@ -17,6 +17,12 @@ from mininet.link import TCLink
 from mininet.net import Mininet
 from mininet.node import OVSBridge
 
+from experiment_metadata import (
+    capture_mininet_state,
+    detailed_tc_state,
+    write_experiment_record,
+)
+
 
 ROOT = Path(__file__).resolve().parents[2]
 IMQUIC_ROOT = ROOT / "deps" / "imquic"
@@ -173,11 +179,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
     with (case / "dualpi2-stats.txt").open("w", encoding="utf-8") as stream:
         for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
             stream.write(f"device={interface}\n")
-            result = command(
-                ["tc", "-s", "qdisc", "show", "dev", interface],
-                capture_output=True,
-            )
-            stream.write(result.stdout)
+            stream.write(detailed_tc_state(interface))
 
 
 def main():
@@ -273,6 +275,33 @@ def main():
                 f"TCP {args.background_congestion} unavailable in guest kernel: "
                 f"{available.strip()}"
             )
+        write_experiment_record(
+            args.output,
+            scenario="l4s-mininet-coexistence",
+            configuration={
+                **benchmark,
+                "background_seconds": args.background_seconds,
+                "reference_summary": (
+                    str(args.reference_summary) if args.reference_summary else None
+                ),
+                "background_ecn_enforcement": "tcp_ecn=0 and TOS 0x00 on port 5201",
+                "qdisc": {
+                    "interfaces": ["s1-eth1", "s1-eth2"],
+                    "root": "HTB",
+                    "rate": args.bottleneck,
+                    "burst": "32k",
+                    "child": "DualPI2",
+                    "target": "1ms",
+                    "tupdate": "1ms",
+                },
+            },
+            topology={
+                "nodes": {"client": "10.0.0.1/24", "server": "10.0.0.2/24", "switch": "s1 OVSBridge"},
+                "links": ["client<->s1", "s1<->server"],
+                "bottleneck_interfaces": ["s1-eth1", "s1-eth2"],
+            },
+            observed_network=capture_mininet_state(client, server, switch),
+        )
         for rate in rates:
             for repetition in range(1, args.repetitions + 1):
                 for mode in modes:

@@ -13,6 +13,12 @@ from mininet.link import TCLink
 from mininet.net import Mininet
 from mininet.node import OVSBridge
 
+from experiment_metadata import (
+    capture_mininet_state,
+    detailed_tc_state,
+    write_experiment_record,
+)
+
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = ROOT / "deps" / "imquic" / "src" / "imquic-sustained-moq"
 MODES = ("l4s-off", "l4s-ect0", "l4s-on")
@@ -46,9 +52,7 @@ def save_qdisc_stats(switch, case, label):
     with (case / "dualpi2-stats.txt").open("a", encoding="utf-8") as stream:
         stream.write(f"snapshot={label}\n")
         for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
-            stats = subprocess.run(
-                ["tc", "-s", "qdisc", "show", "dev", interface],
-                check=True, text=True, capture_output=True).stdout
+            stats = detailed_tc_state(interface)
             stream.write(f"device={interface}\n{stats}")
 
 
@@ -179,6 +183,33 @@ def main():
     net.addLink(client, switch); net.addLink(switch, server)
     try:
         net.start()
+        write_experiment_record(
+            args.output,
+            scenario="sustained-moq-coexistence",
+            configuration={
+                "duration_seconds": args.duration,
+                "warmup_seconds": args.warmup,
+                "drain_seconds": args.drain,
+                "repetitions": args.repetitions,
+                "modes": args.modes.split(","),
+                "tcp_ecn_modes": args.tcp_ecn_modes.split(","),
+                "background_mbps": 10,
+                "bottleneck": "20mbit",
+                "qdisc": {
+                    "interfaces": ["s1-eth1", "s1-eth2"],
+                    "root": "HTB",
+                    "burst": "32k",
+                    "child": "DualPI2",
+                    "target": "1ms",
+                    "tupdate": "1ms",
+                },
+            },
+            topology={
+                "nodes": {"client": "10.0.0.1/24", "server": "10.0.0.2/24", "switch": "s1 OVSBridge"},
+                "links": ["client<->s1", "s1<->server"],
+            },
+            observed_network=capture_mininet_state(client, server, switch),
+        )
         for repetition in range(1, args.repetitions + 1):
             for tcp_ecn in args.tcp_ecn_modes.split(","):
                 for mode in args.modes.split(","):

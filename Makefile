@@ -1,7 +1,7 @@
 IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 
-.PHONY: init analyzer-check reno-fairness-check reno-step-join-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check build l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -11,6 +11,9 @@ analyzer-check:
 	python3 tools/l4s/analyze_sustained_coexistence.py --self-test
 	python3 tools/l4s/analyze_reno_fairness.py --self-test
 	python3 tools/l4s/analyze_reno_step_join.py --self-test
+
+experiment-record-check:
+	python3 -m unittest discover -s tests -p 'test_experiment_metadata.py' -v
 
 reno-fairness-check:
 	python3 -m unittest discover -s tests -p 'test_reno_fairness.py' -v

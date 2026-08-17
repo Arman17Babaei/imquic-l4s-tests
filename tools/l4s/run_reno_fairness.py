@@ -20,6 +20,12 @@ import time
 from pathlib import Path
 from typing import Callable
 
+from experiment_metadata import (
+    capture_mininet_state,
+    detailed_tc_state,
+    write_experiment_record,
+)
+
 from reno_fairness_common import (
     FLOW_INSTANCES,
     FLOW_PORTS,
@@ -62,9 +68,7 @@ def configure_fifo_bottleneck(interface: str, rate: str,
 
 
 def save_qdisc_stats(interface: str, path: Path) -> None:
-    result = command(["tc", "-s", "qdisc", "show", "dev", interface],
-                     capture_output=True)
-    path.write_text(result.stdout, encoding="utf-8")
+    path.write_text(detailed_tc_state(interface), encoding="utf-8")
 
 
 def configure_not_ect(client, server) -> None:
@@ -346,6 +350,25 @@ def main() -> None:
         available = client.cmd("sysctl -n net.ipv4.tcp_available_congestion_control")
         if "reno" not in available.split():
             raise RuntimeError(f"TCP Reno unavailable in guest kernel: {available.strip()}")
+        write_experiment_record(
+            args.output,
+            scenario="reno-fairness",
+            configuration={
+                **experiment,
+                "tcp_congestion": "reno",
+                "tcp_ecn": "not-ect",
+                "qdisc_commands": qdisc_commands(
+                    "s1-eth2", args.bottleneck, args.fifo_limit_packets
+                ),
+            },
+            topology={
+                "nodes": {"client": "10.0.0.1/24", "server": "10.0.0.2/24", "switch": "s1 OVSBridge"},
+                "links": ["client<->s1", "s1<->server"],
+                "bottleneck_interface": "s1-eth2",
+                "schedule": experiment["schedule"],
+            },
+            observed_network=capture_mininet_state(client, server, switch),
+        )
         for repetition in range(1, args.repetitions + 1):
             print(f"running Reno/Reno fairness repetition {repetition}/{args.repetitions}")
             run_repetition(

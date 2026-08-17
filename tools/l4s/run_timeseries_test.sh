@@ -67,6 +67,17 @@ for device in imq-l4s-rs imq-l4s-rd; do
 		handle 10: dualpi2 target "$TARGET" tupdate "$UPDATE"
 done
 
+python3 "$ROOT/tools/l4s/experiment_metadata.py" \
+	--output "$RESULT_DIR" \
+	--scenario prague-timeseries \
+	--topology "sender--router--receiver; HTB+DualPI2 on both router egress interfaces" \
+	--set "rate=$RATE" \
+	--set "dualpi2_target=$TARGET" \
+	--set "dualpi2_tupdate=$UPDATE" \
+	--set "sender=10.10.1.2/24" \
+	--set "receiver=10.10.2.2/24" \
+	--set "router_interfaces=imq-l4s-rs,imq-l4s-rd"
+
 ip netns exec "$ROUTER" tcpdump -U -i imq-l4s-rs -w \
 	"$RESULT_DIR/router-sender.pcap" udp port 4443 \
 	>"$RESULT_DIR/tcpdump-sender.log" 2>&1 &
@@ -98,7 +109,8 @@ CAPTURE_PIDS=()
 for device in imq-l4s-rs imq-l4s-rd; do
 	{
 		echo "device=$device"
-		ip netns exec "$ROUTER" tc -s qdisc show dev "$device"
+		ip netns exec "$ROUTER" tc -s -d qdisc show dev "$device"
+		ip netns exec "$ROUTER" tc -s -d class show dev "$device"
 	} >>"$RESULT_DIR/dualpi2-stats.txt"
 done
 
