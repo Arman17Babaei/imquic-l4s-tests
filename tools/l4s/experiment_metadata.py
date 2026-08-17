@@ -116,6 +116,7 @@ def _node_state(node: Any) -> dict[str, str]:
             "sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || true"
         ),
         "mangle_output": "iptables -t mangle -S OUTPUT 2>/dev/null || true",
+        "qdisc": "tc -s -d qdisc show 2>/dev/null || true",
     }
     return {name: node.cmd(command).strip() for name, command in commands.items()}
 

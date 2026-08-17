@@ -61,8 +61,9 @@ def stop_process(process):
         process.wait()
 
 
-def configure_dualpi2(switch, bottleneck):
-    for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
+def configure_dualpi2(switch, bottleneck, interfaces, target, step_thresh,
+                      limit):
+    for interface in interfaces:
         subprocess.run(
             ["tc", "qdisc", "del", "dev", interface, "root"],
             check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -71,21 +72,46 @@ def configure_dualpi2(switch, bottleneck):
                  "htb", "default", "1"])
         command(["tc", "class", "add", "dev", interface, "parent", "1:",
                  "classid", "1:1", "htb", "rate", bottleneck, "burst", "32k"])
-        # Keep the Linux DualPI2 reference parameters as one coherent set.
-        # `target` is the Classic PI2 target; the L4S step threshold is a
-        # separate sch_dualpi2 parameter. Do not override either here.
-        command(["tc", "qdisc", "add", "dev", interface, "parent", "1:1",
-                 "handle", "10:", "dualpi2"])
+        # With no explicit values, keep the kernel's DualPI2 parameters as one
+        # coherent set. `target` and `step_thresh` remain independent controls.
+        dualpi2 = ["tc", "qdisc", "add", "dev", interface, "parent", "1:1",
+                   "handle", "10:", "dualpi2"]
+        if target is not None:
+            dualpi2.extend(["target", target])
+        if step_thresh is not None:
+            dualpi2.extend(["step_thresh", step_thresh])
+        if limit is not None:
+            dualpi2.extend(["limit", str(limit)])
+        command(dualpi2)
+
+
+def configure_base_rtt(client, server, base_rtt_ms):
+    if base_rtt_ms == 0:
+        return
+    one_way_ms = base_rtt_ms / 2
+    for host in (client, server):
+        interface = host.defaultIntf().name
+        process = host.popen([
+            "tc", "qdisc", "replace", "dev", interface, "root", "netem",
+            "delay", f"{one_way_ms:g}ms", "limit", "60000",
+        ])
+        if process.wait() != 0:
+            raise RuntimeError(f"failed to configure propagation delay on {interface}")
 
 
 def run_case(client, server, switch, output, mode, background_mbps, repetition,
              transfer_bytes, foreground_seconds, background_warmup_seconds,
-             bottleneck, bottleneck_mbps, background_congestion):
+             bottleneck, bottleneck_mbps, background_congestion,
+             bottleneck_interfaces, dualpi2_target, dualpi2_step_thresh,
+             dualpi2_limit):
     case = output / (
         f"{mode}-bg-{background_rate_label(background_mbps)}-rep-{repetition:02d}"
     )
     case.mkdir(parents=True)
-    configure_dualpi2(switch, bottleneck)
+    configure_dualpi2(
+        switch, bottleneck, bottleneck_interfaces, dualpi2_target,
+        dualpi2_step_thresh, dualpi2_limit,
+    )
     metadata = {
         "mode": mode,
         "controller": MODE_CONTROLLERS[mode],
@@ -103,6 +129,10 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
         ),
         "bottleneck": bottleneck,
         "bottleneck_mbps": bottleneck_mbps,
+        "bottleneck_interfaces": bottleneck_interfaces,
+        "dualpi2_target": dualpi2_target,
+        "dualpi2_step_thresh": dualpi2_step_thresh,
+        "dualpi2_limit_packets": dualpi2_limit,
         "client_ip": client.IP(),
         "server_ip": server.IP(),
     }
@@ -196,7 +226,7 @@ def run_case(client, server, switch, output, mode, background_mbps, repetition,
             stream.close()
 
     with (case / "dualpi2-stats.txt").open("w", encoding="utf-8") as stream:
-        for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
+        for interface in bottleneck_interfaces:
             stream.write(f"device={interface}\n")
             stream.write(detailed_tc_state(interface))
 
@@ -209,6 +239,14 @@ def main():
     parser.add_argument("--transfer-bytes", type=int, default=64 * 1024 * 1024)
     parser.add_argument("--foreground-seconds", type=int, default=8)
     parser.add_argument("--background-warmup-seconds", type=int, default=2)
+    parser.add_argument("--base-rtt-ms", type=float, default=0)
+    parser.add_argument(
+        "--bottleneck-direction", choices=("forward", "both"), default="both",
+        help="shape only s1-to-server traffic or both switch egress interfaces",
+    )
+    parser.add_argument("--dualpi2-target")
+    parser.add_argument("--dualpi2-step-thresh")
+    parser.add_argument("--dualpi2-limit", type=int)
     parser.add_argument(
         "--background-congestion",
         choices=BACKGROUND_CONTROLLERS,
@@ -244,6 +282,10 @@ def main():
         parser.error("foreground seconds must be positive")
     if args.background_warmup_seconds < 0:
         parser.error("background warmup seconds must be non-negative")
+    if args.base_rtt_ms < 0:
+        parser.error("base RTT must be non-negative")
+    if args.dualpi2_limit is not None and args.dualpi2_limit <= 0:
+        parser.error("DualPI2 limit must be positive")
     if not modes or len(set(modes)) != len(modes) or any(
         mode not in MODE_CONTROLLERS for mode in modes
     ):
@@ -255,6 +297,10 @@ def main():
     if match is None:
         parser.error("bottleneck must use tc rate syntax such as 20mbit")
     bottleneck_mbps = float(match.group(1)) * units[match.group(2)]
+    bottleneck_interfaces = (
+        ["s1-eth2"] if args.bottleneck_direction == "forward"
+        else ["s1-eth1", "s1-eth2"]
+    )
     maximum_path_bytes = (
         bottleneck_mbps * 1_000_000 / 8 * args.foreground_seconds
     )
@@ -296,6 +342,12 @@ def main():
         "transfer_bytes": args.transfer_bytes,
         "foreground_seconds": args.foreground_seconds,
         "background_warmup_seconds": args.background_warmup_seconds,
+        "base_rtt_ms": args.base_rtt_ms,
+        "bottleneck_direction": args.bottleneck_direction,
+        "bottleneck_interfaces": bottleneck_interfaces,
+        "dualpi2_target": args.dualpi2_target,
+        "dualpi2_step_thresh": args.dualpi2_step_thresh,
+        "dualpi2_limit_packets": args.dualpi2_limit,
         "modes": {mode: MODE_LABELS[mode] for mode in modes},
     }
     (args.output / "benchmark.json").write_text(
@@ -310,6 +362,7 @@ def main():
     net.addLink(switch, server)
     try:
         net.start()
+        configure_base_rtt(client, server, args.base_rtt_ms)
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
         client.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
@@ -338,12 +391,19 @@ def main():
                 ),
                 "background_ecn_enforcement": "tcp_ecn=0 and TOS 0x00 on port 5201",
                 "qdisc": {
-                    "interfaces": ["s1-eth1", "s1-eth2"],
+                    "interfaces": bottleneck_interfaces,
                     "root": "HTB",
                     "rate": args.bottleneck,
                     "burst": "32k",
                     "child": "DualPI2",
-                    "parameter_profile": "kernel-defaults",
+                    "parameter_profile": (
+                        "kernel-defaults" if args.dualpi2_target is None
+                        and args.dualpi2_step_thresh is None
+                        and args.dualpi2_limit is None else "explicit"
+                    ),
+                    "target": args.dualpi2_target,
+                    "step_thresh": args.dualpi2_step_thresh,
+                    "limit_packets": args.dualpi2_limit,
                     "parameter_evidence":
                         "exact effective values are retained per case in dualpi2-stats.txt",
                 },
@@ -351,7 +411,10 @@ def main():
             topology={
                 "nodes": {"client": "10.0.0.1/24", "server": "10.0.0.2/24", "switch": "s1 OVSBridge"},
                 "links": ["client<->s1", "s1<->server"],
-                "bottleneck_interfaces": ["s1-eth1", "s1-eth2"],
+                "bottleneck_interfaces": bottleneck_interfaces,
+                "propagation_delay_interfaces": (
+                    ["client-eth0", "server-eth0"] if args.base_rtt_ms else []
+                ),
             },
             observed_network=capture_mininet_state(client, server, switch),
         )
@@ -374,6 +437,10 @@ def main():
                         args.background_warmup_seconds,
                         args.bottleneck, bottleneck_mbps,
                         args.background_congestion,
+                        bottleneck_interfaces,
+                        args.dualpi2_target,
+                        args.dualpi2_step_thresh,
+                        args.dualpi2_limit,
                     )
     finally:
         net.stop()
