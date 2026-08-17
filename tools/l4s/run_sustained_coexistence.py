@@ -82,20 +82,21 @@ def configure_tcp_ecn(client, server, tcp_ecn):
 
 
 def run_case(client, server, switch, root, mode, background_congestion,
-             repetition, duration, warmup, drain):
+             repetition, duration, warmup, drain, bottleneck_mbps):
     case = root / (
         f"{mode}-tcp-{background_congestion}-unlimited-rep-{repetition:02d}"
     )
     case.mkdir(parents=True)
     configure_tcp_ecn(client, server, "not-ect")
-    qdisc(switch, "20mbit")
+    qdisc(switch, f"{bottleneck_mbps:g}mbit")
     save_qdisc_stats(switch, case, "before")
     metadata = {"mode": mode, "tcp_ecn": "not-ect",
                 "background_congestion": background_congestion,
                 "background_rate": "unlimited", "repetition": repetition,
                 "duration_seconds": duration, "warmup_seconds": warmup,
                 "drain_seconds": drain, "background_mbps": -1,
-                "bottleneck_mbps": 20, "namespace": "imquic-l4s",
+                "bottleneck_mbps": bottleneck_mbps,
+                "namespace": "imquic-l4s",
                 "track": "sustained", "client_ip": client.IP(),
                 "server_ip": server.IP(),
                 "forward_direction": "server-to-client"}
@@ -173,6 +174,7 @@ def main():
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--drain", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=1)
+    parser.add_argument("--bottleneck-mbps", type=float, default=10)
     parser.add_argument("--modes", default=",".join(MODES))
     parser.add_argument(
         "--background-congestions", default=",".join(BACKGROUND_CONTROLLERS),
@@ -192,6 +194,8 @@ def main():
         )
     if args.duration <= 0 or args.repetitions <= 0:
         parser.error("duration and repetitions must be positive")
+    if args.bottleneck_mbps <= 0:
+        parser.error("bottleneck Mbps must be positive")
     if args.warmup < 0 or args.drain < 0:
         parser.error("warmup and drain must be non-negative")
     if os.geteuid() != 0:
@@ -223,7 +227,8 @@ def main():
                 "background_congestions": backgrounds,
                 "background_transport": "unlimited non-ECN TCP iperf3",
                 "background_mbps": "unlimited",
-                "bottleneck": "20mbit",
+                "bottleneck": f"{args.bottleneck_mbps:g}mbit",
+                "bottleneck_mbps": args.bottleneck_mbps,
                 "qdisc": {
                     "interfaces": ["s1-eth1", "s1-eth2"],
                     "root": "HTB",
@@ -264,7 +269,7 @@ def main():
                     run_case(
                         client, server, switch, args.output, mode,
                         background_congestion, repetition, args.duration,
-                        args.warmup, args.drain,
+                        args.warmup, args.drain, args.bottleneck_mbps,
                     )
     finally:
         net.stop()

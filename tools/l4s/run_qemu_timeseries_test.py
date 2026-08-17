@@ -30,9 +30,9 @@ def run(command, **kwargs):
     return subprocess.run(command, check=True, text=True, **kwargs)
 
 
-def archive_tracked_with_submodules(repository, destination):
+def archive_worktree(repository, destination):
     tracked = subprocess.run(
-        ["git", "ls-files", "--recurse-submodules", "-z"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=repository,
         check=True,
         capture_output=True,
@@ -43,6 +43,21 @@ def archive_tracked_with_submodules(repository, destination):
                 continue
             relative = os.fsdecode(encoded)
             archive.add(repository / relative, arcname=relative, recursive=False)
+
+
+def parse_guest_file(value):
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("guest files must use SOURCE=RELATIVE_DEST")
+    source_text, destination_text = value.split("=", 1)
+    source = Path(source_text).expanduser().resolve()
+    destination = Path(destination_text)
+    if not source.is_file():
+        raise argparse.ArgumentTypeError(f"guest file source not found: {source}")
+    if destination.is_absolute() or ".." in destination.parts or not destination.parts:
+        raise argparse.ArgumentTypeError(
+            "guest file destination must be a safe path relative to the guest checkout"
+        )
+    return source, destination
 
 
 def free_port():
@@ -171,6 +186,12 @@ def main():
     parser.add_argument("--guest-result-name", default="qemu-run")
     parser.add_argument("--destination-prefix", default="qemu-timeseries")
     parser.add_argument("--make-variable", action="append", default=[])
+    parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument(
+        "--guest-file", action="append", type=parse_guest_file, default=[],
+        metavar="SOURCE=RELATIVE_DEST",
+        help="copy a host input into the ephemeral guest checkout",
+    )
     args = parser.parse_args()
 
     if not args.base.is_file():
@@ -187,7 +208,7 @@ def main():
         text=True,
         capture_output=True,
     ).stdout
-    if status:
+    if status and not args.allow_dirty:
         raise SystemExit("refusing to test a dirty worktree; commit the milestone first")
     for assignment in args.make_variable:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[^\n]*", assignment):
@@ -214,7 +235,10 @@ def main():
                 "-b", str(args.base.resolve()), str(overlay),
             ]
         )
-        run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
+        if status:
+            archive_worktree(ROOT, source_archive)
+        else:
+            run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
         source_provenance.write_text(
             json.dumps(repository_snapshot(ROOT), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -254,7 +278,20 @@ def main():
             copy_to_guest(port, args.user, args.password, picoquic_archive)
             copy_to_guest(port, args.user, args.password, picotls_archive)
             copy_to_guest(port, args.user, args.password, source_provenance)
+            staged_guest_files = []
+            for index, (source, relative) in enumerate(args.guest_file):
+                staged_name = f"codex-guest-input-{index:02d}-{source.name}"
+                staged = temporary / staged_name
+                staged.symlink_to(source)
+                copy_to_guest(port, args.user, args.password, staged)
+                staged_guest_files.append((staged_name, relative))
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
+            install_guest_files = "\n".join(
+                "install -D "
+                f"/home/{shlex.quote(args.user)}/{shlex.quote(staged_name)} "
+                f"{shlex.quote(str(Path(guest_root) / relative))}"
+                for staged_name, relative in staged_guest_files
+            )
             provision = f'''set -e
 if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null || true
@@ -264,6 +301,7 @@ rm -rf {shlex.quote(guest_root)}
 mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
 cp /home/{shlex.quote(args.user)}/{source_provenance.name} {shlex.quote(guest_root)}/.source-provenance.json
+{install_guest_files}
 tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps

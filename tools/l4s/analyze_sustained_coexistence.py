@@ -361,6 +361,7 @@ def render_aggregate_svg(root, summaries, aggregates):
     labels = [(MODES[mode], f"TCP {background.upper()}")
               for mode, background in scenarios]
     repetitions = len({row["repetition"] for row in summaries})
+    bottleneck_mbps = max(row["bottleneck_mbps"] for row in summaries)
     svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" '
            f'viewBox="0 0 {width} {height}">',
            f'<rect width="{width}" height="{height}" fill="white"/>',
@@ -410,7 +411,7 @@ def render_aggregate_svg(root, summaries, aggregates):
                 for mode, background in scenarios]
 
     panel("Mean forward wire rate", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_wire_mbps_mean")),
-                                      ("TCP background", PLOT_COLORS["tcp"], values("tcp_wire_mbps_mean"))), 65, "Mbit/s", 20.0)
+                                      ("TCP background", PLOT_COLORS["tcp"], values("tcp_wire_mbps_mean"))), 65, "Mbit/s", bottleneck_mbps)
     panel("Bottleneck use and foreground share", (("Bottleneck utilisation", PLOT_COLORS["utilisation"], values("bottleneck_utilization_percent_mean")),
                                                     ("Foreground share", PLOT_COLORS["foreground"], [[row["foreground_share_mean"] * 100 for row in summaries if row["mode"] == mode and row["background_congestion"] == background] for mode, background in scenarios])), 250, "percent", 100.0)
     panel("Maximum sender cwnd (diagnostic)", (("MoQ foreground", PLOT_COLORS["foreground"], values("foreground_cwnd_bytes_max")),
@@ -429,6 +430,7 @@ def timeline_summary(case, metadata):
         "mode": metadata["mode"],
         "tcp_ecn": metadata.get("tcp_ecn", "not-ect"),
         "background_congestion": metadata["background_congestion"],
+        "bottleneck_mbps": metadata["bottleneck_mbps"],
         "repetition": metadata["repetition"],
         "bins": len(rows),
         "foreground_wire_mbps_mean": mean("foreground_wire_mbps"),

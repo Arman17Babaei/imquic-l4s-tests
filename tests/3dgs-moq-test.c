@@ -22,12 +22,16 @@ static volatile gint stop_requested, failed, publishing;
 static imquic_connection *connection;
 static uint64_t publish_request_id, publish_track_alias = 2;
 static uint64_t received_objects, received_bytes;
+static uint64_t received_gaussians, first_arrival_us, last_arrival_us;
 static uint64_t queued_objects, queued_bytes;
 static uint64_t source_objects, source_bytes;
 static uint64_t outer_object_ids[3];
 static uint32_t deadline_ms;
-static const char *bundle_path, *metrics_path, *result_path;
-static FILE *received_bundle;
+static gint64 subscriber_started_us, subscriber_started_real_us;
+static volatile gint accepting_objects;
+static GMutex receive_lock;
+static const char *bundle_path, *metrics_path, *arrival_path, *result_path;
+static FILE *received_bundle, *arrival_log;
 static imquic_moq_namespace moq_namespace;
 static imquic_moq_track moq_track;
 
@@ -66,7 +70,11 @@ static void connection_failed(void *user_data) {
 }
 
 static void connection_gone(imquic_connection *conn, uint64_t code, const char *reason) {
-	(void)conn; (void)code; (void)reason;
+	(void)code; (void)reason;
+	if(conn == connection) {
+		imquic_connection_unref(conn);
+		connection = NULL;
+	}
 	g_atomic_int_set(&stop_requested, 1);
 }
 
@@ -78,6 +86,16 @@ static void new_connection(imquic_connection *conn, void *user_data) {
 
 static void moq_ready(imquic_connection *conn) {
 	if(connection == NULL) connection = conn;
+}
+
+static void close_active_connection(const char *reason) {
+	imquic_connection *active = connection;
+	if(active == NULL)
+		return;
+	imquic_close_connection(active, 0, reason);
+	gint64 deadline = g_get_monotonic_time() + G_USEC_PER_SEC;
+	while(connection != NULL && g_get_monotonic_time() < deadline)
+		g_usleep(1000);
 }
 
 static void publish_accepted(imquic_connection *conn, uint64_t id,
@@ -119,11 +137,9 @@ static void subscriber_ready(imquic_connection *conn) {
 static void incoming_subscribe(imquic_connection *conn, uint64_t id,
 		imquic_moq_namespace *tns, imquic_moq_track *tn,
 		imquic_moq_request_parameters *parameters) {
-	char track[128];
-	const char *track_name = imquic_moq_track_str(tn, track, sizeof(track));
 	(void)parameters;
 	if(!imquic_moq_namespace_equals(tns, &moq_namespace) ||
-			track_name == NULL || strcmp(track_name, TRACK_NAME)) {
+			!imquic_moq_track_equals(tn, &moq_track)) {
 		imquic_moq_reject_subscribe(conn, id, IMQUIC_MOQ_REQERR_DOES_NOT_EXIST,
 			"unknown 3dgs track", 0, NULL);
 		return;
@@ -148,11 +164,9 @@ static void incoming_publish(imquic_connection *conn, uint64_t id,
 		imquic_moq_namespace *tns, imquic_moq_track *tn,
 		uint64_t alias, imquic_moq_request_parameters *parameters,
 		GList *track_properties) {
-	char track[128];
-	const char *track_name = imquic_moq_track_str(tn, track, sizeof(track));
 	(void)parameters; (void)track_properties; (void)alias;
 	if(!imquic_moq_namespace_equals(tns, &moq_namespace) ||
-			track_name == NULL || strcmp(track_name, TRACK_NAME)) {
+			!imquic_moq_track_equals(tn, &moq_track)) {
 		imquic_moq_reject_publish(conn, id, IMQUIC_MOQ_REQERR_DOES_NOT_EXIST,
 			"unknown 3dgs track", 0, NULL);
 		return;
@@ -174,23 +188,70 @@ static int write_bundle_header(FILE *stream, uint32_t count, uint64_t bytes) {
 
 static void incoming_object(imquic_connection *conn, imquic_moq_object *object) {
 	(void)conn;
-	if(received_bundle == NULL || object->payload == NULL || object->payload_len == 0) {
+	g_mutex_lock(&receive_lock);
+	if(!g_atomic_int_get(&accepting_objects)) {
+		g_mutex_unlock(&receive_lock);
+		return;
+	}
+
+	gint64 now = g_get_monotonic_time();
+	gint64 arrival_time_us = now - subscriber_started_us;
+	if(arrival_time_us < 0 || arrival_time_us > (gint64)deadline_ms * 1000) {
+		g_mutex_unlock(&receive_lock);
+		return;
+	}
+	if(received_bundle == NULL || arrival_log == NULL ||
+			object->payload == NULL || object->payload_len == 0) {
 		fail_case("invalid incoming 3dgs object");
+		g_mutex_unlock(&receive_lock);
 		return;
 	}
 	if(object->payload_len > UINT32_MAX) {
 		fail_case("incoming object exceeds bundle format");
+		g_mutex_unlock(&receive_lock);
 		return;
 	}
+	if(object->payload_len < 32 ||
+			load_u32_le(&object->payload[0]) != 0x47535033 ||
+			load_u32_le(&object->payload[4]) != 1) {
+		fail_case("incoming object has invalid embedded 3dgs header");
+		g_mutex_unlock(&receive_lock);
+		return;
+	}
+	uint32_t embedded_object_id = load_u32_le(&object->payload[16]);
+	uint32_t num_gaussians = load_u32_le(&object->payload[20]);
+	uint32_t subgroup_id = load_u32_le(&object->payload[28]);
+	if(num_gaussians == 0 || subgroup_id > 2) {
+		fail_case("incoming object has invalid embedded 3dgs metadata");
+		g_mutex_unlock(&receive_lock);
+		return;
+	}
+
+	uint64_t record_index = received_objects;
+	uint64_t cumulative_bytes = received_bytes + object->payload_len;
+	uint64_t cumulative_gaussians = received_gaussians + num_gaussians;
 	uint8_t length[4];
 	store_u32_le(length, (uint32_t)object->payload_len);
 	if(fwrite(length, 1, sizeof(length), received_bundle) != sizeof(length) ||
 			fwrite(object->payload, 1, object->payload_len, received_bundle) != object->payload_len) {
 		fail_case("could not write received bundle");
+		g_mutex_unlock(&receive_lock);
+		return;
+	}
+	if(fprintf(arrival_log,
+			"%" G_GINT64_FORMAT ",%" PRIu64 ",%zu,%" PRIu64 ",%u,%" PRIu64 ",%u,%u\n",
+			arrival_time_us, record_index, object->payload_len, cumulative_bytes,
+			num_gaussians, cumulative_gaussians, subgroup_id, embedded_object_id) < 0) {
+		fail_case("could not write object arrival timeline");
+		g_mutex_unlock(&receive_lock);
 		return;
 	}
 	received_objects++;
-	received_bytes += object->payload_len;
+	received_bytes = cumulative_bytes;
+	received_gaussians = cumulative_gaussians;
+	if(record_index == 0) first_arrival_us = (uint64_t)arrival_time_us;
+	last_arrival_us = (uint64_t)arrival_time_us;
+	g_mutex_unlock(&receive_lock);
 }
 
 static int parse_mode(const char *mode, imquic_congestion_controller *cc, imquic_ecn_mode *ecn) {
@@ -342,6 +403,7 @@ static int run_publisher(const char *bind_address, uint16_t port, const char *mo
 			fclose(result);
 		}
 	}
+	close_active_connection("3dgs publisher complete");
 	imquic_shutdown_endpoint(server);
 	imquic_deinit();
 	return g_atomic_int_get(&failed) ? 1 : 0;
@@ -352,7 +414,15 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 	imquic_ecn_mode ecn;
 	if(parse_mode(mode, &cc, &ecn) < 0 || imquic_init(NULL) < 0) return 1;
 	received_bundle = fopen(bundle_path, "wb+");
-	if(received_bundle == NULL || write_bundle_header(received_bundle, 0, 0) < 0) return 1;
+	arrival_log = arrival_path != NULL ? fopen(arrival_path, "w") : NULL;
+	if(received_bundle == NULL || arrival_log == NULL ||
+			write_bundle_header(received_bundle, 0, 0) < 0) {
+		if(received_bundle != NULL) fclose(received_bundle);
+		if(arrival_log != NULL) fclose(arrival_log);
+		return 1;
+	}
+	fputs("arrival_time_us,bundle_record_index,payload_bytes,cumulative_bytes,"
+		"num_gaussians,cumulative_gaussians,subgroup_id,object_id\n", arrival_log);
 	imquic_client *client = imquic_create_moq_client("3dgs-moq-subscriber",
 		IMQUIC_CONFIG_INIT, IMQUIC_CONFIG_TLS_CERT, CERT_PATH,
 		IMQUIC_CONFIG_TLS_KEY, KEY_PATH, IMQUIC_CONFIG_TLS_NO_VERIFY, TRUE,
@@ -360,7 +430,13 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 		IMQUIC_CONFIG_CONGESTION_CONTROL, cc, IMQUIC_CONFIG_ECN, ecn,
 		IMQUIC_CONFIG_RAW_QUIC, TRUE, IMQUIC_CONFIG_MOQ_VERSION,
 		IMQUIC_MOQ_VERSION_18, IMQUIC_CONFIG_DONE, NULL);
-	if(client == NULL) return 1;
+	if(client == NULL) {
+		fclose(received_bundle);
+		fclose(arrival_log);
+		received_bundle = NULL;
+		arrival_log = NULL;
+		return 1;
+	}
 	imquic_set_new_moq_connection_cb(client, new_connection);
 	imquic_set_moq_ready_cb(client, subscriber_ready);
 	imquic_set_incoming_object_cb(client, incoming_object);
@@ -368,28 +444,47 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 	imquic_set_publish_done_cb(client, publish_done);
 	imquic_set_connection_failed_cb(client, connection_failed);
 	imquic_set_moq_connection_gone_cb(client, connection_gone);
-	gint64 started = g_get_monotonic_time();
-	gint64 deadline = started + (gint64)deadline_ms * 1000;
+	subscriber_started_us = g_get_monotonic_time();
+	subscriber_started_real_us = g_get_real_time();
+	gint64 deadline = subscriber_started_us + (gint64)deadline_ms * 1000;
+	g_atomic_int_set(&accepting_objects, 1);
 	imquic_start_endpoint(client);
 	while(!g_atomic_int_get(&stop_requested) && g_get_monotonic_time() < deadline) g_usleep(1000);
+	g_atomic_int_set(&accepting_objects, 0);
+
+	/* Drain an object callback already inside the critical section before finalizing. */
+	g_mutex_lock(&receive_lock);
 	if(received_objects == 0) fail_case("subscriber received no 3dgs objects before deadline");
+	gint64 finalized_us = g_get_monotonic_time() - subscriber_started_us;
 	if(fseek(received_bundle, 0, SEEK_SET) != 0 ||
 			write_bundle_header(received_bundle, (uint32_t)received_objects, received_bytes) < 0)
 		fail_case("could not finalize received bundle header");
+	if(fflush(received_bundle) != 0 || fflush(arrival_log) != 0)
+		fail_case("could not flush received 3dgs artifacts");
+	g_mutex_unlock(&receive_lock);
 	fclose(received_bundle);
+	fclose(arrival_log);
 	received_bundle = NULL;
+	arrival_log = NULL;
 	if(result_path != NULL) {
 		FILE *result = fopen(result_path, "w");
 		if(result != NULL) {
 			fprintf(result,
 				"{\"received_objects\":%" PRIu64 ",\"received_bytes\":%" PRIu64
-				",\"deadline_ms\":%u,\"elapsed_ms\":%.3f,\"validated\":%s}\n",
-				received_objects, received_bytes, deadline_ms,
-				(g_get_monotonic_time() - started) / 1000.0,
+				",\"received_gaussians\":%" PRIu64 ",\"deadline_ms\":%u"
+				",\"first_object_time_us\":%" PRIu64 ",\"last_object_time_us\":%" PRIu64
+				",\"bundle_finalized_time_us\":%" G_GINT64_FORMAT
+				",\"started_epoch_us\":%" G_GINT64_FORMAT
+				",\"timeline_origin\":\"subscriber_endpoint_start\""
+				",\"elapsed_ms\":%.3f,\"validated\":%s}\n",
+				received_objects, received_bytes, received_gaussians, deadline_ms,
+				first_arrival_us, last_arrival_us, finalized_us, subscriber_started_real_us,
+				(g_get_monotonic_time() - subscriber_started_us) / 1000.0,
 				g_atomic_int_get(&failed) ? "false" : "true");
 			fclose(result);
 		}
 	}
+	close_active_connection("3dgs subscriber complete");
 	imquic_shutdown_endpoint(client);
 	imquic_deinit();
 	return g_atomic_int_get(&failed) ? 1 : 0;
@@ -399,7 +494,7 @@ int main(int argc, char **argv) {
 	if(argc != 9) {
 		fprintf(stderr,
 			"usage: %s publisher BIND PORT MODE BUNDLE DEADLINE_MS METRICS RESULT\n"
-			"       %s subscriber HOST PORT MODE OUTPUT_BUNDLE DEADLINE_MS - RESULT\n",
+			"       %s subscriber HOST PORT MODE OUTPUT_BUNDLE DEADLINE_MS ARRIVALS RESULT\n",
 			argv[0], argv[0]);
 		return 2;
 	}
@@ -410,11 +505,15 @@ int main(int argc, char **argv) {
 	bundle_path = argv[5];
 	deadline_ms = (uint32_t)strtoul(argv[6], NULL, 10);
 	if(deadline_ms == 0) return 2;
-	metrics_path = strcmp(argv[7], "-") ? argv[7] : NULL;
 	result_path = argv[8];
-	if(!strcmp(argv[1], "publisher"))
+	if(!strcmp(argv[1], "publisher")) {
+		metrics_path = strcmp(argv[7], "-") ? argv[7] : NULL;
 		return run_publisher(argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);
-	if(!strcmp(argv[1], "subscriber"))
+	}
+	if(!strcmp(argv[1], "subscriber")) {
+		arrival_path = strcmp(argv[7], "-") ? argv[7] : NULL;
+		if(arrival_path == NULL) return 2;
 		return run_subscriber(argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);
+	}
 	return 2;
 }

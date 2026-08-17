@@ -40,6 +40,25 @@ The publisher bounds IMQUIC's queued plus in-flight bytes to 4 MiB rather than
 loading the full scene into the transport immediately. This prevents an
 application queue several scenes deep from dominating the deadline result.
 
+Each subscriber also writes `arrival-timeline.csv`, with exactly one row per
+complete MoQ object accepted before the scene cutoff. `arrival_time_us` uses the
+subscriber's monotonic clock with endpoint start as time zero and is captured
+before local bundle disk I/O. Each row maps to the corresponding
+`received.bundle` record through `bundle_record_index` and records payload bytes,
+Gaussian count, cumulative bytes/Gaussians, subgroup ID, and embedded object ID.
+No per-splat timestamps are stored.
+
+The subscriber stops accepting objects at the scene deadline before finalizing
+the bundle, so a late callback cannot contaminate the preserved deadline-cut
+artifact. The runner validates that timeline indices and arrival times are
+monotonic and that its object, byte, and Gaussian totals agree with the endpoint
+and bundle results.
+
+This mapping is sufficient to reconstruct the exact bundle prefix available at
+any later presentation timestamp. It is intended to support offline rendering
+of a time-aligned degraded frame sequence for PSNR/SSIM/VMAF without putting
+CUDA or rendering work in the network experiment's timing path.
+
 ## Build
 
 The 3DGS C fixture is built outside the IMQUIC submodule and links against the
@@ -69,16 +88,49 @@ sudo python3 tools/l4s/run_3dgs_deadline.py \
   --repetitions 3
 ```
 
+For a capture-free shared-workload comparison using a bundle prepared on the
+host, run the `l4s-3dgs-shared-check` target in the Prague-kernel guest. It runs
+one 30-second Reno case and one 30-second Prague case against the same 150
+Mbit/s BBRv2 TCP flow on a 300 Mbit/s DualPI2 bottleneck:
+
+```sh
+make l4s-3dgs-shared-check \
+  L4S_RESULT_DIR=results/l4s/3dgs-shared \
+  THREEDGS_BUNDLE=/path/to/scene.bundle \
+  THREEDGS_BACKGROUND_MBPS=150
+```
+
+`THREEDGS_BACKGROUND_MBPS` defaults to 150. Use 0, 150, and 300 Mbit/s
+for the capture-free 0%, 50%, and 100% offered-background-load points on the
+target's fixed 300 Mbit/s bottleneck, with a distinct `L4S_RESULT_DIR` for each
+run.
+
+The shared-workload target uses an explicit L4S-favoring profile: a 15 ms
+DualPI2 Classic target, 16 ms controller update interval, 1 ms L4S step
+threshold, and 512 KiB HTB `burst`/`cburst`. At 300 Mbit/s, 512 KiB represents
+about 14 ms of traffic, close to the time-equivalent of the earlier 32 KiB
+burst at 20 Mbit/s. Every effective value is retained in per-case `tc` evidence
+and run provenance.
+
+This target deliberately does not start `tcpdump`, `dumpcap`, or `tshark` and
+does not create packet captures. It retains endpoint metrics, iperf3 JSON,
+before/after interface and DualPI2 counters, and per-object arrival timelines.
+The run root contains `splat-arrivals.svg`, comparing cumulative received
+splats and one-second splat arrival rates for Reno and Prague.
+
 For a transport-only guest without GPU access, add `--no-render`. The received
 bundles remain in each case and can be rendered later with the same source
 cache and trace.
 
-Each case stores the received bundle, endpoint logs/results, 10 ms IMQUIC
-transport metrics, switch pcaps, DualPI2 counters, metadata, rendered output,
-and a small `result.json`. `result.json` reports object/byte coverage and, when
-rendering is enabled, PSNR against a full-scene reference render of the same
-camera frame. The run root contains the source bundle, hashes/revisions,
-reference render, `provenance.json`, and aggregate `summary.json`.
+Each ordinary deadline case stores the received bundle, `arrival-timeline.csv`,
+endpoint logs/results, 10 ms IMQUIC transport metrics, DualPI2 counters,
+metadata, rendered output, and a small `result.json`. The capture-free shared
+target additionally stores iperf3 JSON and interface counters. `result.json` reports
+object/byte coverage, received Gaussian count, first/last object arrival times,
+the arrival timeline hash/summary and, when rendering is enabled, PSNR against
+a full-scene reference render of the same camera frame. The run root contains
+the source bundle, hashes/revisions, reference render, `provenance.json`, and
+aggregate `summary.json`.
 
 ## Scientific basis
 
@@ -91,3 +143,7 @@ design and object-priority motivation, see Z. Gurel, T. E. Civelek, A. Bodur,
 S. Bilgin, D. Yeniceri, and A. C. Begen, “Media over QUIC: Initial Testing,
 Findings and Results,” ACM MMSys 2023, DOI 10.1145/3587819.3593937. Deadline
 parameter semantics follow draft-ietf-moq-transport-18, Section 8.
+For full-reference time-aligned video-quality analysis, see C. G. Bampis,
+Z. Li, and A. C. Bovik, “SpatioTemporal Feature Integration and Model Fusion
+for Full Reference Video Quality Assessment,” IEEE Transactions on Circuits
+and Systems for Video Technology, 2019, DOI 10.1109/TCSVT.2018.2868262.

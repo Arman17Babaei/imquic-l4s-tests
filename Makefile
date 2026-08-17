@@ -2,8 +2,9 @@ IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 THREEDGS_DIR := $(CURDIR)/deps/3dgs_over_moq
 THREEDGS_FIXTURE := $(CURDIR)/build/imquic-3dgs-moq
+THREEDGS_BACKGROUND_MBPS ?= 150
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check build build-3dgs-fixture l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check build build-3dgs-fixture build-3dgs-fixture-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -43,7 +44,9 @@ build: init
 		if [ -d $(PICOQUIC_DIR)/_deps ] && [ -z "$$(find $(PICOQUIC_DIR)/_deps -mindepth 1 -maxdepth 1 -print -quit)" ]; then rmdir $(PICOQUIC_DIR)/_deps; fi; \
 		exit $$status
 
-build-3dgs-fixture: build
+build-3dgs-fixture: build build-3dgs-fixture-only
+
+build-3dgs-fixture-only:
 	mkdir -p $(CURDIR)/build
 	$${CC:-cc} -std=c11 -O2 -Wall -Wextra \
 		-I$(IMQUIC_DIR)/src \
@@ -96,6 +99,26 @@ l4s-3dgs-deadline-check: build-3dgs-fixture
 		--cache "$(THREEDGS_CACHE)" \
 		--trace "$(THREEDGS_TRACE)" \
 		--3dgs-dir "$(THREEDGS_DIR)" \
+		$(THREEDGS_ARGS)
+
+l4s-3dgs-shared-check: build-3dgs-fixture-only
+	@test -n "$(THREEDGS_BUNDLE)" || { echo "THREEDGS_BUNDLE is required" >&2; exit 2; }
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	python3 tools/l4s/run_3dgs_deadline.py \
+		--output "$(L4S_RESULT_DIR)" \
+		--source-bundle "$(THREEDGS_BUNDLE)" \
+		--deadlines-ms 30000 \
+		--modes reno,prague \
+		--repetitions 1 \
+		--bottleneck 300mbit \
+		--htb-burst 512k \
+		--dualpi2-target 15ms \
+		--dualpi2-tupdate 16ms \
+		--dualpi2-step-thresh 1ms \
+		--background-mbps $(THREEDGS_BACKGROUND_MBPS) \
+		--background-congestion bbr2 \
+		--background-warmup-seconds 2 \
+		--no-render \
 		$(THREEDGS_ARGS)
 
 moq-loopback-check:
