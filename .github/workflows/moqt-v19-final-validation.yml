@@ -1,0 +1,60 @@
+name: MOQT v19 final validation
+
+on:
+  pull_request:
+    branches:
+      - agent/moqt-v19-validation-final
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential cmake libglib2.0-dev \
+            libjansson-dev libssl-dev libtool pkg-config python3-matplotlib
+
+      - name: Initialize transport dependencies
+        run: |
+          git submodule sync
+          git submodule update --init deps/imquic deps/picoquic
+          test "$(git -C deps/imquic rev-parse HEAD)" = "048bb20b0a52b8abf299ad7d10341e8101cabe95"
+          grep -q 'IMQUIC_MOQ_VERSION_19' deps/imquic/src/imquic-moq.c
+          test "$(grep -c 'IMQUIC_MOQ_VERSION_19' tests/3dgs-moq-test.c)" -eq 2
+
+      - name: Run Python and analyzer tests
+        run: |
+          python3 -m unittest discover -s tests -v
+          make analyzer-check
+
+      - name: Build picoquic
+        run: |
+          PICOQUIC_DIR="$PWD/deps/picoquic"
+          cmake -S "$PICOQUIC_DIR" -B "$PICOQUIC_DIR/build" \
+            -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=Y
+          cmake --build "$PICOQUIC_DIR/build" \
+            --target picoquic-core picoquic-log picohttp-core -j2
+          for library in libpicoquic-core.a libpicoquic-log.a libpicohttp-core.a; do
+            ln -sf "build/$library" "$PICOQUIC_DIR/$library"
+          done
+          mkdir -p "$PICOQUIC_DIR/_deps"
+          ln -sfn ../build/_deps/picotls-build "$PICOQUIC_DIR/_deps/picotls-build"
+
+      - name: Build imquic and draft-19 fixture
+        run: |
+          PICOQUIC_DIR="$PWD/deps/picoquic"
+          IMQUIC_DIR="$PWD/deps/imquic"
+          (cd "$IMQUIC_DIR" && autoreconf -fi && \
+            ./configure --with-picoquic="$PICOQUIC_DIR" --enable-moq-examples && \
+            make -j2)
+          make build-3dgs-fixture-only
+
+      - name: Run MoQ loopback smoke test
+        run: make moq-loopback-check
