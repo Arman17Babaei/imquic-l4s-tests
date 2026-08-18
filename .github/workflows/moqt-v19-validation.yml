@@ -1,0 +1,84 @@
+name: Temporary MOQT v19 validation
+
+on:
+  push:
+    branches:
+      - agent/moqt-v19-validation
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          submodules: false
+
+      - name: Stage MOQT v19 candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          python3 - <<'PY'
+          from pathlib import Path
+          path = Path('tests/3dgs-moq-test.c')
+          text = path.read_text()
+          count = text.count('IMQUIC_MOQ_VERSION_18')
+          if count != 2:
+              raise SystemExit(f'expected exactly 2 draft-18 fixture references, found {count}')
+          path.write_text(text.replace('IMQUIC_MOQ_VERSION_18', 'IMQUIC_MOQ_VERSION_19'))
+          PY
+
+          git add tests/3dgs-moq-test.c
+          git update-index --add --cacheinfo 160000,0665c95aeebcccea04b3d983f61c471e62709cdd,deps/imquic
+          git diff --cached --check
+          git commit -m "feat: run 3DGS fixture on MOQT draft-19"
+
+      - name: Install build dependencies
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            autoconf automake build-essential cmake libglib2.0-dev \
+            libjansson-dev libssl-dev libtool pkg-config
+
+      - name: Initialize pinned dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          git submodule sync --recursive
+          git submodule update --init --recursive
+          test "$(git -C deps/imquic rev-parse HEAD)" = "0665c95aeebcccea04b3d983f61c471e62709cdd"
+          grep -q 'IMQUIC_MOQ_VERSION_19' deps/imquic/src/imquic-moq.c
+
+      - name: Run unit and analyzer tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s tests -v
+          make analyzer-check
+
+      - name: Build imquic and draft-19 3DGS fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          make build-3dgs-fixture JOBS=2
+
+      - name: Run MoQ loopback smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          make moq-loopback-check
+
+      - name: Publish validated candidate branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(grep -c 'IMQUIC_MOQ_VERSION_19' tests/3dgs-moq-test.c)" -eq 2
+          git diff --check HEAD^ HEAD
+          git push --force origin HEAD:refs/heads/agent/moqt-v19-validated
