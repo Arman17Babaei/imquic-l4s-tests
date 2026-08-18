@@ -17,13 +17,30 @@ jobs:
           fetch-depth: 0
           submodules: false
 
-      - name: Stage MOQT v19 candidate
+      - name: Stage, build, and validate candidate
         shell: bash
         run: |
-          set -euo pipefail
+          set -Eeo pipefail
+          log=/tmp/moqt-v19-validation.log
+          stage=setup
+          exec > >(tee -a "$log") 2>&1
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
+          report_failure() {
+            code=$?
+            set +e
+            printf 'status=failed\nstage=%s\nexit_code=%s\n\n--- log tail ---\n' "$stage" "$code" > validation-result.txt
+            tail -n 250 "$log" >> validation-result.txt
+            git add validation-result.txt
+            git commit -m "ci: record MOQT v19 validation failure" || true
+            git push --force origin HEAD:refs/heads/agent/moqt-v19-validation-result || true
+            exit "$code"
+          }
+          trap report_failure ERR
+
+          stage=stage-candidate
           python3 - <<'PY'
           from pathlib import Path
           path = Path('tests/3dgs-moq-test.c')
@@ -33,52 +50,41 @@ jobs:
               raise SystemExit(f'expected exactly 2 draft-18 fixture references, found {count}')
           path.write_text(text.replace('IMQUIC_MOQ_VERSION_18', 'IMQUIC_MOQ_VERSION_19'))
           PY
-
           git add tests/3dgs-moq-test.c
           git update-index --add --cacheinfo 160000,0665c95aeebcccea04b3d983f61c471e62709cdd,deps/imquic
           git diff --cached --check
           git commit -m "feat: run 3DGS fixture on MOQT draft-19"
+          candidate_sha="$(git rev-parse HEAD)"
 
-      - name: Install build dependencies
-        shell: bash
-        run: |
+          stage=install-dependencies
           sudo apt-get update
           sudo apt-get install -y \
             autoconf automake build-essential cmake libglib2.0-dev \
             libjansson-dev libssl-dev libtool pkg-config
 
-      - name: Initialize pinned dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
+          stage=init-submodules
           git submodule sync --recursive
           git submodule update --init --recursive
           test "$(git -C deps/imquic rev-parse HEAD)" = "0665c95aeebcccea04b3d983f61c471e62709cdd"
           grep -q 'IMQUIC_MOQ_VERSION_19' deps/imquic/src/imquic-moq.c
 
-      - name: Run unit and analyzer tests
-        shell: bash
-        run: |
-          set -euo pipefail
+          stage=unit-tests
           python3 -m unittest discover -s tests -v
           make analyzer-check
 
-      - name: Build imquic and draft-19 3DGS fixture
-        shell: bash
-        run: |
-          set -euo pipefail
+          stage=build
           make build-3dgs-fixture JOBS=2
 
-      - name: Run MoQ loopback smoke test
-        shell: bash
-        run: |
-          set -euo pipefail
+          stage=loopback
           make moq-loopback-check
 
-      - name: Publish validated candidate branch
-        shell: bash
-        run: |
-          set -euo pipefail
+          stage=final-checks
           test "$(grep -c 'IMQUIC_MOQ_VERSION_19' tests/3dgs-moq-test.c)" -eq 2
           git diff --check HEAD^ HEAD
-          git push --force origin HEAD:refs/heads/agent/moqt-v19-validated
+
+          trap - ERR
+          git push --force origin "$candidate_sha":refs/heads/agent/moqt-v19-validated
+          printf 'status=passed\nstage=complete\ncandidate_sha=%s\nimquic_sha=0665c95aeebcccea04b3d983f61c471e62709cdd\n' "$candidate_sha" > validation-result.txt
+          git add validation-result.txt
+          git commit -m "ci: record MOQT v19 validation success"
+          git push --force origin HEAD:refs/heads/agent/moqt-v19-validation-result
