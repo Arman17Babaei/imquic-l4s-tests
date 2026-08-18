@@ -4,7 +4,7 @@ THREEDGS_DIR := $(CURDIR)/deps/3dgs_over_moq
 THREEDGS_FIXTURE := $(CURDIR)/build/imquic-3dgs-moq
 THREEDGS_BACKGROUND_MBPS ?= 150
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check build build-3dgs-fixture build-3dgs-fixture-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check build build-3dgs-fixture build-3dgs-fixture-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -120,6 +120,18 @@ l4s-3dgs-shared-check: build-3dgs-fixture-only
 		--background-warmup-seconds 2 \
 		--no-render \
 		$(THREEDGS_ARGS)
+
+l4s-3dgs-priority-split-check: build-3dgs-fixture-only
+	@test -n "$(THREEDGS_BUNDLE)" || { echo "THREEDGS_BUNDLE is required" >&2; exit 2; }
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	modprobe sch_dualpi2
+	python3 tools/l4s/run_3dgs_priority_split.py \
+		--output "$(L4S_RESULT_DIR)" \
+		--source-bundle "$(THREEDGS_BUNDLE)" \
+		--importance native-tier \
+		--deadline-ms 30000 \
+		--repetitions 3 \
+		$(THREEDGS_PRIORITY_ARGS)
 
 moq-loopback-check:
 	python3 tools/l4s/run_sustained_moq_loopback.py
