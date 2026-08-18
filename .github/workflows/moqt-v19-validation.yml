@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - agent/moqt-v19-validation
+  pull_request:
+    branches:
+      - agent/moqt-v19-validation
 
 permissions:
   contents: write
