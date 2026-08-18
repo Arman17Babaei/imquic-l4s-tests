@@ -320,7 +320,7 @@ static int run_publisher(const char *bind_address, uint16_t port, const char *mo
 		IMQUIC_CONFIG_TLS_KEY, KEY_PATH, IMQUIC_CONFIG_LOCAL_BIND, bind_address,
 		IMQUIC_CONFIG_LOCAL_PORT, port, IMQUIC_CONFIG_CONGESTION_CONTROL, cc,
 		IMQUIC_CONFIG_ECN, ecn, IMQUIC_CONFIG_RAW_QUIC, TRUE,
-		IMQUIC_CONFIG_MOQ_VERSION, IMQUIC_MOQ_VERSION_18, IMQUIC_CONFIG_DONE, NULL);
+		IMQUIC_CONFIG_MOQ_VERSION, IMQUIC_MOQ_VERSION_19, IMQUIC_CONFIG_DONE, NULL);
 	if(server == NULL) return 1;
 	imquic_set_new_moq_connection_cb(server, new_connection);
 	imquic_set_moq_ready_cb(server, moq_ready);
@@ -429,7 +429,7 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 		IMQUIC_CONFIG_REMOTE_HOST, host, IMQUIC_CONFIG_REMOTE_PORT, port,
 		IMQUIC_CONFIG_CONGESTION_CONTROL, cc, IMQUIC_CONFIG_ECN, ecn,
 		IMQUIC_CONFIG_RAW_QUIC, TRUE, IMQUIC_CONFIG_MOQ_VERSION,
-		IMQUIC_MOQ_VERSION_18, IMQUIC_CONFIG_DONE, NULL);
+		IMQUIC_MOQ_VERSION_19, IMQUIC_CONFIG_DONE, NULL);
 	if(client == NULL) {
 		fclose(received_bundle);
 		fclose(arrival_log);
