@@ -9,4 +9,4 @@
 [submodule "deps/3dgs_over_moq"]
 	path = deps/3dgs_over_moq
 	url = https://github.com/Arman17Babaei/3dgs_over_moq.git
-	branch = main
+	branch = agent/sgss-wiewport-foundation
