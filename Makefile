@@ -3,11 +3,51 @@ PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 THREEDGS_DIR := $(CURDIR)/deps/3dgs_over_moq
 THREEDGS_FIXTURE := $(CURDIR)/build/imquic-3dgs-moq
 THREEDGS_BACKGROUND_MBPS ?= 150
+DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check build build-3dgs-fixture build-3dgs-fixture-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
 
 init:
 	git submodule update --init
+
+# Optional CUDA path: deliberately excluded from normal init/build.
+3dgs-training-init:
+	git -C $(THREEDGS_DIR) submodule update --init deps/dynamic-lapis-gs
+	git -C $(THREEDGS_DIR)/deps/dynamic-lapis-gs submodule update --init --recursive
+
+3dgs-static-export:
+	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/export_static_ply.py \
+		--input $(CURDIR)/data/point_cloud.ply \
+		--output $(CURDIR)/results/3dgs/media/point-cloud
+
+3dgs-static-export-check:
+	PYTHONPATH=$(THREEDGS_DIR)/tools $(DYNAMIC_LAPIS_PYTHON) -m unittest discover \
+		-s $(THREEDGS_DIR)/tools -p 'test_export_static_ply.py' -v
+
+3dgs-static-verify:
+	node $(THREEDGS_DIR)/tools/verify_static_bundle.mjs \
+		$(CURDIR)/results/3dgs/media/point-cloud/manifest.json
+
+3dgs-native-loopback-check: build-3dgs-native-only
+	SGSS_IMQUIC_PUBLISHER=$(CURDIR)/build/sgss-imquic-publisher \
+	SGSS_IMQUIC_SUBSCRIBER=$(CURDIR)/build/sgss-imquic-subscriber \
+		node $(THREEDGS_DIR)/native/sgss-moq-client/native_loopback.mjs \
+		$(CURDIR)/results/3dgs/media/point-cloud
+
+3dgs-training-stage:
+	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/dynamic_lapis_8i.py stage --scene loot
+	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/dynamic_lapis_8i.py stage --scene redandblack
+
+3dgs-training-acceptance: 3dgs-training-init
+	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/dynamic_lapis_8i.py all --scene loot
+	node $(THREEDGS_DIR)/tools/verify_dynamic_bundle.mjs $(CURDIR)/results/3dgs/dynamic-lapis/media/loot/manifest.json
+	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/dynamic_lapis_8i.py all --scene redandblack
+	node $(THREEDGS_DIR)/tools/verify_dynamic_bundle.mjs $(CURDIR)/results/3dgs/dynamic-lapis/media/redandblack/manifest.json
+
+3dgs-training-full: 3dgs-training-init
+	@test -n "$(SCENE)" || { echo "SCENE=loot or SCENE=redandblack is required" >&2; exit 2; }
+	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/dynamic_lapis_8i.py all --scene "$(SCENE)" --full
+	node $(THREEDGS_DIR)/tools/verify_dynamic_bundle.mjs $(CURDIR)/results/3dgs/dynamic-lapis/media/$(SCENE)/manifest.json
 
 analyzer-check:
 	python3 tools/l4s/analyze_mininet_benchmark.py --self-test
@@ -53,6 +93,23 @@ build-3dgs-fixture-only:
 		$$(pkg-config --cflags glib-2.0 libssl libcrypto jansson) \
 		tests/3dgs-moq-test.c -o $(THREEDGS_FIXTURE) \
 		-L$(IMQUIC_DIR)/src/.libs -limquic \
+		$$(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
+		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
+
+build-3dgs-native: build build-3dgs-native-only
+
+build-3dgs-native-only:
+	mkdir -p $(CURDIR)/build
+	$${CC:-cc} -std=c11 -O2 -Wall -Wextra -I$(IMQUIC_DIR)/src \
+		$$(pkg-config --cflags glib-2.0 libssl libcrypto jansson) \
+		$(THREEDGS_DIR)/native/sgss-moq-client/imquic_subscriber.c \
+		-o $(CURDIR)/build/sgss-imquic-subscriber -L$(IMQUIC_DIR)/src/.libs -limquic \
+		$$(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
+		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
+	$${CC:-cc} -std=c11 -O2 -Wall -Wextra -I$(IMQUIC_DIR)/src \
+		$$(pkg-config --cflags glib-2.0 libssl libcrypto jansson) \
+		$(THREEDGS_DIR)/native/sgss-moq-client/imquic_publisher.c \
+		-o $(CURDIR)/build/sgss-imquic-publisher -L$(IMQUIC_DIR)/src/.libs -limquic \
 		$$(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
 		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
 
@@ -132,6 +189,24 @@ l4s-3dgs-priority-split-check: build-3dgs-fixture-only
 		--deadline-ms 30000 \
 		--repetitions 3 \
 		$(THREEDGS_PRIORITY_ARGS)
+
+l4s-3dgs-native-guest-check: build-3dgs-native-only
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	@test -n "$(THREEDGS_MEDIA_ARCHIVE)" || { echo "THREEDGS_MEDIA_ARCHIVE is required" >&2; exit 2; }
+	@test -x "$(THREEDGS_NODE)" || { echo "THREEDGS_NODE is required and must be executable" >&2; exit 2; }
+	@test -n "$(THREEDGS_NODE_MODULES_ARCHIVE)" || { echo "THREEDGS_NODE_MODULES_ARCHIVE is required" >&2; exit 2; }
+	rm -rf $(CURDIR)/results/3dgs/qemu-input
+	mkdir -p $(CURDIR)/results/3dgs/qemu-input
+	tar -xzf "$(THREEDGS_MEDIA_ARCHIVE)" -C $(CURDIR)/results/3dgs/qemu-input
+	rm -rf $(THREEDGS_DIR)/native/sgss-moq-client/node_modules
+	tar -xzf "$(THREEDGS_NODE_MODULES_ARCHIVE)" -C $(THREEDGS_DIR)/native/sgss-moq-client
+	PATH="$(abspath $(dir $(THREEDGS_NODE))):$(PATH)" python3 tools/l4s/run_3dgs_native_guest.py \
+		--bundle $(CURDIR)/results/3dgs/qemu-input/point-cloud \
+		--output "$(L4S_RESULT_DIR)" $(THREEDGS_NATIVE_ARGS)
+
+l4s-3dgs-native-qemu-check:
+	python3 tools/l4s/run_qemu_3dgs_native.py --bundle $(CURDIR)/results/3dgs/media/point-cloud \
+		$(THREEDGS_QEMU_ARGS)
 
 moq-loopback-check:
 	python3 tools/l4s/run_sustained_moq_loopback.py
