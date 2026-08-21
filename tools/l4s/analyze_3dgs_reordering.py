@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import hashlib
 import ipaddress
@@ -108,16 +109,13 @@ def parse_tshark_rows(rows: list[dict[str, str]]) -> list[Packet]:
                 time_s=float(row["frame.time_epoch"]),
                 source_port=source_port,
                 payload_bytes=max(0, udp_length - 8),
-                fingerprint=_fingerprint(
-                    row["udp.payload"], source_port, udp_length
-                ),
+                fingerprint=_fingerprint(row["udp.payload"], source_port, udp_length),
             )
         )
     return _assign_occurrences(packets)
 
 
 def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
-    """Read Ethernet/IPv4/UDP packets from a classic pcap without tshark."""
     source_address = ipaddress.IPv4Address(server_ip).packed
     packets: list[Packet] = []
     with path.open("rb") as stream:
@@ -137,7 +135,6 @@ def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
         link_type = struct.unpack(f"{endian}I", global_rest[16:20])[0]
         if link_type != 1:
             raise ValueError(f"{path}: expected Ethernet link type, got {link_type}")
-
         while True:
             packet_header = stream.read(16)
             if not packet_header:
@@ -148,9 +145,9 @@ def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
                 f"{endian}IIII", packet_header
             )
             frame = stream.read(captured_length)
-            if len(frame) != captured_length or len(frame) < 14:
-                if len(frame) != captured_length:
-                    raise ValueError(f"{path}: truncated packet data")
+            if len(frame) != captured_length:
+                raise ValueError(f"{path}: truncated packet data")
+            if len(frame) < 14:
                 continue
             offset = 14
             ether_type = struct.unpack("!H", frame[12:14])[0]
@@ -249,25 +246,35 @@ def analyze_packet_order(
     provider_egress: list[Packet],
     downstream_egress: list[Packet],
 ) -> dict[str, object]:
-    """Measure provider-created Base/Prague versus Enhancement/Reno inversions."""
-    import bisect
+    """Measure queue overlap, overtaking, and downstream preservation.
 
+    An *opportunity* exists for pair (R, B) when Classic Enhancement packet R
+    entered the provider before Base/Prague packet B and R was still resident
+    at the provider when B arrived: R_in < B_in < R_out.
+
+    An *inversion* additionally requires B_out < R_out. Every inversion is
+    therefore a successful use of a measured provider overlap opportunity.
+    """
     ingress_map = _packet_map(ingress)
     provider_map = _packet_map(provider_egress)
     downstream_map = _packet_map(downstream_egress)
     common_provider = set(ingress_map) & set(provider_map)
     common_all = common_provider & set(downstream_map)
     ordered = sorted(common_provider, key=lambda key: ingress_map[key].time_s)
-
     reno_keys = [key for key in ordered if ingress_map[key].source_port == RENO_PORT]
     prague_keys = [key for key in ordered if ingress_map[key].source_port == PRAGUE_PORT]
 
     reno_egress_times = sorted(provider_map[key].time_s for key in reno_keys)
     count_tree = _Fenwick(len(reno_egress_times))
     byte_tree = _Fenwick(len(reno_egress_times))
-    per_prague_counts: list[int] = []
-    per_prague_bytes: list[int] = []
+    opportunity_pairs = 0
+    opportunity_byte_pairs = 0
+    per_prague_opportunity_counts: list[int] = []
+    per_prague_opportunity_bytes: list[int] = []
     inversion_pairs = 0
+    per_prague_inversion_counts: list[int] = []
+    per_prague_inversion_bytes: list[int] = []
+
     for key in ordered:
         packet = ingress_map[key]
         if packet.source_port == RENO_PORT:
@@ -275,14 +282,53 @@ def analyze_packet_order(
             count_tree.add(rank, 1)
             byte_tree.add(rank, packet.payload_bytes)
             continue
-        split = bisect.bisect_right(reno_egress_times, provider_map[key].time_s)
-        overtaken_count = count_tree.total() - count_tree.prefix_sum(split)
-        overtaken_bytes = byte_tree.total() - byte_tree.prefix_sum(split)
-        inversion_pairs += overtaken_count
-        if overtaken_count:
-            per_prague_counts.append(overtaken_count)
-            per_prague_bytes.append(overtaken_bytes)
 
+        # All Reno packets currently in the tree entered before this Base packet.
+        # Those whose provider egress is later than Base ingress are still resident.
+        opportunity_split = bisect.bisect_right(
+            reno_egress_times, ingress_map[key].time_s
+        )
+        opportunity_count = count_tree.total() - count_tree.prefix_sum(
+            opportunity_split
+        )
+        opportunity_bytes = byte_tree.total() - byte_tree.prefix_sum(
+            opportunity_split
+        )
+        opportunity_pairs += opportunity_count
+        opportunity_byte_pairs += opportunity_bytes
+        if opportunity_count:
+            per_prague_opportunity_counts.append(opportunity_count)
+            per_prague_opportunity_bytes.append(opportunity_bytes)
+
+        # Successful inversion: Base leaves before the resident Reno packet.
+        inversion_split = bisect.bisect_right(
+            reno_egress_times, provider_map[key].time_s
+        )
+        inversion_count = count_tree.total() - count_tree.prefix_sum(
+            inversion_split
+        )
+        inversion_bytes = byte_tree.total() - byte_tree.prefix_sum(
+            inversion_split
+        )
+        inversion_pairs += inversion_count
+        if inversion_count:
+            per_prague_inversion_counts.append(inversion_count)
+            per_prague_inversion_bytes.append(inversion_bytes)
+
+    prague_ingress_times = sorted(ingress_map[key].time_s for key in prague_keys)
+    unique_opportunity_reno = []
+    for key in reno_keys:
+        r_in = ingress_map[key].time_s
+        r_out = provider_map[key].time_s
+        candidate = bisect.bisect_right(prague_ingress_times, r_in)
+        if candidate < len(prague_ingress_times) and prague_ingress_times[candidate] < r_out:
+            unique_opportunity_reno.append(key)
+    unique_opportunity_bytes = sum(
+        ingress_map[key].payload_bytes for key in unique_opportunity_reno
+    )
+
+    # Select one concrete later-ingress Base witness for each Reno packet that
+    # was actually overtaken, for downstream persistence measurements.
     witness_by_reno: dict[tuple[str, int], tuple[str, int]] = {}
     min_prague_key: tuple[str, int] | None = None
     min_prague_egress = math.inf
@@ -300,7 +346,9 @@ def analyze_packet_order(
         ):
             witness_by_reno[key] = min_prague_key
 
-    unique_overtaken_bytes = sum(ingress_map[key].payload_bytes for key in witness_by_reno)
+    unique_overtaken_bytes = sum(
+        ingress_map[key].payload_bytes for key in witness_by_reno
+    )
     reno_payload_bytes = sum(ingress_map[key].payload_bytes for key in reno_keys)
 
     preserved = 0
@@ -312,8 +360,12 @@ def analyze_packet_order(
         if r_key not in downstream_map or p_key not in downstream_map:
             continue
         downstream_observed += 1
-        provider_gap = (provider_map[r_key].time_s - provider_map[p_key].time_s) * 1000.0
-        downstream_gap = (downstream_map[r_key].time_s - downstream_map[p_key].time_s) * 1000.0
+        provider_gap = (
+            provider_map[r_key].time_s - provider_map[p_key].time_s
+        ) * 1000.0
+        downstream_gap = (
+            downstream_map[r_key].time_s - downstream_map[p_key].time_s
+        ) * 1000.0
         provider_gaps_ms.append(provider_gap)
         downstream_gaps_ms.append(downstream_gap)
         if downstream_gap > 0:
@@ -339,35 +391,71 @@ def analyze_packet_order(
             "all_three_matched_packets": len(common_all),
             "reno_provider_matched_packets": len(reno_keys),
             "prague_provider_matched_packets": len(prague_keys),
-            "provider_match_fraction": len(common_provider) / len(ingress) if ingress else 0.0,
-            "all_three_match_fraction": len(common_all) / len(common_provider) if common_provider else 0.0,
+            "provider_match_fraction": (
+                len(common_provider) / len(ingress) if ingress else 0.0
+            ),
+            "all_three_match_fraction": (
+                len(common_all) / len(common_provider) if common_provider else 0.0
+            ),
         },
         "provider_sojourn_ms": {
             "classic_enhancement_reno": _summary(reno_sojourn),
             "base_prague": _summary(prague_sojourn),
         },
+        "provider_opportunity": {
+            "opportunity_pairs": opportunity_pairs,
+            "opportunity_payload_byte_pairs": opportunity_byte_pairs,
+            "base_packets_with_opportunity": len(per_prague_opportunity_counts),
+            "fraction_base_packets_with_opportunity": (
+                len(per_prague_opportunity_counts) / len(prague_keys)
+                if prague_keys else 0.0
+            ),
+            "unique_classic_enhancement_packets_with_opportunity": len(
+                unique_opportunity_reno
+            ),
+            "unique_classic_enhancement_payload_bytes_with_opportunity": (
+                unique_opportunity_bytes
+            ),
+            "resident_classic_packets_per_base_packet": _summary(
+                [float(value) for value in per_prague_opportunity_counts]
+            ),
+            "resident_classic_payload_bytes_per_base_packet": _summary(
+                [float(value) for value in per_prague_opportunity_bytes]
+            ),
+        },
         "provider_reordering": {
             "inversion_pairs": inversion_pairs,
-            "prague_packets_with_overtake": len(per_prague_bytes),
+            "prague_packets_with_overtake": len(per_prague_inversion_bytes),
             "fraction_prague_packets_with_overtake": (
-                len(per_prague_bytes) / len(prague_keys) if prague_keys else 0.0
+                len(per_prague_inversion_bytes) / len(prague_keys)
+                if prague_keys else 0.0
             ),
             "unique_reno_packets_overtaken": len(witness_by_reno),
             "unique_reno_payload_bytes_overtaken": unique_overtaken_bytes,
             "fraction_reno_payload_bytes_overtaken": (
-                unique_overtaken_bytes / reno_payload_bytes if reno_payload_bytes else 0.0
+                unique_overtaken_bytes / reno_payload_bytes
+                if reno_payload_bytes else 0.0
+            ),
+            "inversion_success_fraction_of_opportunities": (
+                inversion_pairs / opportunity_pairs if opportunity_pairs else None
+            ),
+            "unique_overtaken_fraction_of_opportunity_bytes": (
+                unique_overtaken_bytes / unique_opportunity_bytes
+                if unique_opportunity_bytes else None
             ),
             "overtaken_packets_per_prague_packet": _summary(
-                [float(value) for value in per_prague_counts]
+                [float(value) for value in per_prague_inversion_counts]
             ),
             "overtaken_payload_bytes_per_prague_packet": _summary(
-                [float(value) for value in per_prague_bytes]
+                [float(value) for value in per_prague_inversion_bytes]
             ),
         },
         "downstream_persistence": {
             "unique_overtaken_reno_witness_pairs_observed_downstream": downstream_observed,
             "witness_pairs_preserved": preserved,
-            "preservation_fraction": preserved / downstream_observed if downstream_observed else 0.0,
+            "preservation_fraction": (
+                preserved / downstream_observed if downstream_observed else 0.0
+            ),
             "provider_witness_gap_ms": _summary(provider_gaps_ms),
             "downstream_witness_gap_ms": _summary(downstream_gaps_ms),
             "gap_amplification_ratio": _summary(amplification),
@@ -383,13 +471,13 @@ def evaluate_acceptance(
     minimum_provider_match_fraction: float,
     minimum_downstream_match_fraction: float,
 ) -> dict[str, object]:
-    """Validate measurement quality without predetermining the hypothesis result."""
+    """Validate measurement quality without predetermining hypothesis outcome."""
     counts = result["capture_counts"]
+    opportunity = result["provider_opportunity"]
     reorder = result["provider_reordering"]
     persistence = result["downstream_persistence"]
     cross_class_applicable = 0.0 < requested_l4s_fraction < 1.0
     failures: list[str] = []
-
     if requested_l4s_fraction < 1.0 and counts["reno_provider_matched_packets"] == 0:
         failures.append("no matched Classic Enhancement/Reno packets")
     if requested_l4s_fraction > 0.0 and counts["prague_provider_matched_packets"] == 0:
@@ -402,29 +490,38 @@ def evaluate_acceptance(
         if int(stats.get("socket_drops") or 0) != 0:
             failures.append(f"compact capture socket drops observed at {label}")
 
-    mechanism_observed = bool(cross_class_applicable and reorder["inversion_pairs"] > 0)
+    opportunity_observed = bool(
+        cross_class_applicable and opportunity["opportunity_pairs"] > 0
+    )
+    mechanism_observed = bool(
+        opportunity_observed and reorder["inversion_pairs"] > 0
+    )
     downstream_witness_observed = bool(
         mechanism_observed
         and persistence["unique_overtaken_reno_witness_pairs_observed_downstream"] > 0
     )
+    if not cross_class_applicable:
+        outcome = "cross-class reordering not applicable"
+    elif not opportunity_observed:
+        outcome = "no provider overlap opportunity observed"
+    elif mechanism_observed:
+        outcome = "provider reordering observed"
+    else:
+        outcome = "provider overlap existed but no reordering observed"
     return {
         "status": "pass" if not failures else "fail",
         "failures": failures,
         "requested_l4s_byte_fraction": requested_l4s_fraction,
         "cross_class_reordering_applicable": cross_class_applicable,
+        "opportunity_observed": opportunity_observed,
         "mechanism_observed": mechanism_observed,
         "downstream_witness_observed": downstream_witness_observed,
-        "hypothesis_outcome": (
-            "provider reordering observed"
-            if mechanism_observed
-            else "no provider reordering observed"
-            if cross_class_applicable
-            else "cross-class reordering not applicable"
-        ),
+        "hypothesis_outcome": outcome,
         "minimum_provider_match_fraction": minimum_provider_match_fraction,
         "minimum_downstream_match_fraction": minimum_downstream_match_fraction,
         "interpretation": (
-            "status validates the measurement only; absence of an inversion is a valid negative result"
+            "status validates measurement quality only; opportunity and mechanism "
+            "fields describe the experimental outcome"
         ),
     }
 
@@ -518,7 +615,6 @@ def main() -> None:
     parser.add_argument("--minimum-provider-match-fraction", type=float, default=0.95)
     parser.add_argument("--minimum-downstream-match-fraction", type=float, default=0.95)
     args = parser.parse_args()
-
     for value in (
         args.minimum_provider_match_fraction,
         args.minimum_downstream_match_fraction,
@@ -531,7 +627,6 @@ def main() -> None:
     )
     if not cases:
         raise SystemExit(f"no l4s-* case directories under {args.root}")
-
     results = [
         analyze_case(
             case,
@@ -541,12 +636,16 @@ def main() -> None:
         )
         for case in cases
     ]
-    summary = {
-        "scenario": "3dgs-partial-l4s-post-send-reordering-v2",
-        "cases": results,
-    }
     (args.root / "reordering-analysis.json").write_text(
-        json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        json.dumps(
+            {
+                "scenario": "3dgs-partial-l4s-post-send-reordering-v2",
+                "cases": results,
+            },
+            indent=2,
+            sort_keys=True,
+        ) + "\n",
+        encoding="utf-8",
     )
     invalid = [
         result["case"] for result in results
