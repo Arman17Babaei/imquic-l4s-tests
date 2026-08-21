@@ -14,4 +14,5 @@ ${CC:-cc} -std=c11 -O2 -Wall -Wextra \
   $(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
   -Wl,-rpath,'$ORIGIN/../deps/imquic/src/.libs'
 
+"$OUTPUT" schedule-self-test
 echo "$OUTPUT"
