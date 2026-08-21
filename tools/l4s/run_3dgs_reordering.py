@@ -123,12 +123,35 @@ def _classic_fifo(interface: str, args) -> None:
     )
 
 
-def _configure_fixed_delay(interface: str, one_way_ms: float) -> None:
-    """Install propagation delay only; no rate limit is applied here."""
-    _reset(interface)
+def _run_in_node(node, command: list[str], *, check: bool) -> None:
+    """Run a command in a Mininet node's network namespace."""
+    process = node.popen(
+        command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    stdout, stderr = process.communicate()
+    if check and process.returncode:
+        raise subprocess.CalledProcessError(
+            process.returncode,
+            command,
+            output=stdout,
+            stderr=stderr,
+        )
+
+
+def _configure_fixed_delay(node, interface: str, one_way_ms: float) -> None:
+    """Install propagation delay on an endpoint interface in its namespace."""
+    _run_in_node(
+        node,
+        ["tc", "qdisc", "del", "dev", interface, "root"],
+        check=False,
+    )
     if one_way_ms <= 0:
         return
-    subprocess.run(
+    _run_in_node(
+        node,
         [
             "tc", "qdisc", "add", "dev", interface, "root", "netem",
             "delay", f"{one_way_ms:g}ms", "limit", "100000",
@@ -805,9 +828,9 @@ def main() -> None:
 
         # base_rtt_ms is split equally between media data and ACK directions.
         one_way_ms = args.base_rtt_ms / 2.0
-        _configure_fixed_delay(server_egress, one_way_ms)
-        _configure_fixed_delay(client_egress, one_way_ms)
-        _configure_fixed_delay(background_egress, one_way_ms)
+        _configure_fixed_delay(server, server_egress, one_way_ms)
+        _configure_fixed_delay(client, client_egress, one_way_ms)
+        _configure_fixed_delay(background_sink, background_egress, one_way_ms)
 
         offload_evidence = {}
         if args.capture_mode != "none":
