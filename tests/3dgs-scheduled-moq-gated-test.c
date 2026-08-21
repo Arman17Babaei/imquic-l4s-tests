@@ -395,7 +395,9 @@ static int run_gated_publisher_v2(
 		} else {
 			record->admitted = TRUE;
 			if(admission != NULL) {
-				gint64 admission_time_us = g_get_monotonic_time() - started;
+				/* Record when eligibility was evaluated, before bundle I/O and
+				 * queueing can cross a later record's release boundary. */
+				gint64 admission_time_us = now - started;
 				fprintf(
 					admission,
 					"%" PRIu64 ",%" G_GINT64_FORMAT ",%d,%" PRIu64

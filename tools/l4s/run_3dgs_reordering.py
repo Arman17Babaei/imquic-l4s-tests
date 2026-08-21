@@ -526,13 +526,16 @@ def _run_case(
         for name in launch_order:
             config = PATHS[name]
             path_root = case / name
+            subscriber_command = [
+                str(BINARY), "subscriber", server.IP(), str(config["port"]),
+                config["mode"], str(path_root / "received.bundle"),
+                str(subscriber_deadline_ms), str(path_root / "arrival-timeline.csv"),
+                str(path_root / "subscriber-result.json"),
+            ]
+            if int(manifest[config["manifest_key"]]["objects"]) == 0:
+                subscriber_command.append("allow-empty")
             subscribers[name] = client.popen(
-                [
-                    str(BINARY), "subscriber", server.IP(), str(config["port"]),
-                    config["mode"], str(path_root / "received.bundle"),
-                    str(subscriber_deadline_ms), str(path_root / "arrival-timeline.csv"),
-                    str(path_root / "subscriber-result.json"),
-                ],
+                subscriber_command,
                 cwd=str(ROOT / "deps" / "imquic" / "src"),
                 stdout=subscriber_logs[name],
                 stderr=subprocess.STDOUT,
@@ -561,7 +564,12 @@ def _run_case(
         workload_start_epoch_us = (
             time.time_ns() // 1000 + int(args.workload_start_lead_ms * 1000)
         )
-        go_path.write_text(f"{workload_start_epoch_us}\n", encoding="utf-8")
+        # Publish the gate atomically.  Publishers poll this path concurrently,
+        # so write_text() could expose a transient zero-length file and make a
+        # publisher reject an otherwise valid gate.
+        go_pending_path = go_path.with_suffix(f"{go_path.suffix}.pending")
+        go_pending_path.write_text(f"{workload_start_epoch_us}\n", encoding="utf-8")
+        go_pending_path.replace(go_path)
 
         timeout = (args.deadline_ms + args.subscriber_guard_ms) / 1000.0 + 30
         status = {
@@ -715,7 +723,7 @@ def main() -> None:
     parser.add_argument("--base-rtt-ms", type=float, default=20.0)
     parser.add_argument("--dualpi2-target", default="15ms")
     parser.add_argument("--dualpi2-tupdate", default="16ms")
-    parser.add_argument("--dualpi2-step", default="1ms")
+    parser.add_argument("--dualpi2-step", default="5ms")
     parser.add_argument("--dc-background-mbps", type=float, default=280.0)
     parser.add_argument(
         "--dc-background-cc", choices=("reno", "cubic"), default="reno"

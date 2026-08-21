@@ -45,6 +45,11 @@ def main() -> None:
     parser.add_argument("--guest-timeout", type=int, default=1800)
     parser.add_argument("--destination-prefix", default="qemu-3dgs-reordering")
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument(
+        "--isolate-fractions",
+        action="store_true",
+        help="run each Prague-share cell in a fresh runner/Mininet process",
+    )
     parser.add_argument("reordering_args", nargs=argparse.REMAINDER)
     args = parser.parse_args()
 
@@ -83,7 +88,11 @@ def main() -> None:
         sys.executable,
         str(ROOT / "tools/l4s/run_qemu_timeseries_test.py"),
         "--make-target",
-        "l4s-3dgs-reordering-check",
+        (
+            "l4s-3dgs-reordering-matrix-check"
+            if args.isolate_fractions
+            else "l4s-3dgs-reordering-check"
+        ),
         "--guest-result-name",
         "3dgs-reordering",
         "--guest-result-root",

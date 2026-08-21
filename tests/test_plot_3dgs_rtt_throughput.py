@@ -9,6 +9,7 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools" / "l4s"
 sys.path.insert(0, str(TOOLS))
 
 from plot_3dgs_rtt_throughput import payload_goodput, smoothed_rtt
+from plot_3dgs_reordering_matrix import overtaking_metrics
 
 
 class Plot3dgsRttThroughputTests(unittest.TestCase):
@@ -32,6 +33,17 @@ class Plot3dgsRttThroughputTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(smoothed_rtt(metrics), [(0.0, 20.0), (0.5, 25.0)])
+
+    def test_overtaking_metrics_include_zero_overtake_l4s_packets(self):
+        mean, total = overtaking_metrics({
+            "capture_counts": {"prague_provider_matched_packets": 10},
+            "provider_reordering": {
+                "prague_packets_with_overtake": 4,
+                "overtaken_payload_bytes_per_prague_packet": {"mean": 250.0},
+            },
+        })
+        self.assertEqual(total, 1000.0)
+        self.assertEqual(mean, 100.0)
 
 
 if __name__ == "__main__":

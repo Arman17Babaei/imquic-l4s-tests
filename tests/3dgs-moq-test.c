@@ -19,6 +19,7 @@
 #define METRIC_INTERVAL_US (10 * 1000)
 
 static volatile gint stop_requested, failed, publishing;
+static gboolean allow_empty;
 static imquic_connection *connection;
 static uint64_t publish_request_id, publish_track_alias = 2;
 static uint64_t received_objects, received_bytes;
@@ -454,7 +455,8 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 
 	/* Drain an object callback already inside the critical section before finalizing. */
 	g_mutex_lock(&receive_lock);
-	if(received_objects == 0) fail_case("subscriber received no 3dgs objects before deadline");
+	if(received_objects == 0 && !allow_empty)
+		fail_case("subscriber received no 3dgs objects before deadline");
 	gint64 finalized_us = g_get_monotonic_time() - subscriber_started_us;
 	if(fseek(received_bundle, 0, SEEK_SET) != 0 ||
 			write_bundle_header(received_bundle, (uint32_t)received_objects, received_bytes) < 0)
@@ -491,10 +493,10 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 }
 
 int main(int argc, char **argv) {
-	if(argc != 9) {
+	if(argc != 9 && argc != 10) {
 		fprintf(stderr,
 			"usage: %s publisher BIND PORT MODE BUNDLE DEADLINE_MS METRICS RESULT\n"
-			"       %s subscriber HOST PORT MODE OUTPUT_BUNDLE DEADLINE_MS ARRIVALS RESULT\n",
+			"       %s subscriber HOST PORT MODE OUTPUT_BUNDLE DEADLINE_MS ARRIVALS RESULT [allow-empty]\n",
 			argv[0], argv[0]);
 		return 2;
 	}
@@ -507,10 +509,15 @@ int main(int argc, char **argv) {
 	if(deadline_ms == 0) return 2;
 	result_path = argv[8];
 	if(!strcmp(argv[1], "publisher")) {
+		if(argc != 9) return 2;
 		metrics_path = strcmp(argv[7], "-") ? argv[7] : NULL;
 		return run_publisher(argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);
 	}
 	if(!strcmp(argv[1], "subscriber")) {
+		if(argc == 10) {
+			if(strcmp(argv[9], "allow-empty")) return 2;
+			allow_empty = TRUE;
+		}
 		arrival_path = strcmp(argv[7], "-") ? argv[7] : NULL;
 		if(arrival_path == NULL) return 2;
 		return run_subscriber(argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);

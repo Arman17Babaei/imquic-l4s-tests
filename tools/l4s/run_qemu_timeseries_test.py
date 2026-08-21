@@ -353,8 +353,11 @@ autoreconf -fi >/dev/null
 make -j{args.cpus} >/dev/null
 make check
 cd {shlex.quote(guest_root)}
+set +e
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}
+make_status=$?
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S chown -R {shlex.quote(args.user)}:{shlex.quote(args.user)} {shlex.quote(guest_result)}
+exit $make_status
 '''
             try:
                 ssh_command(port, args.user, args.password, provision,
