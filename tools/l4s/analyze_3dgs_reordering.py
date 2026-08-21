@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Analyze packet-order correction in the partial-L4S 3DGS experiment."""
+"""Analyze Base/Prague overtaking of Classic Enhancement/Reno packets."""
 
 from __future__ import annotations
 
@@ -44,6 +44,15 @@ def _percentile(values: list[float], q: float) -> float | None:
         return ordered[lower]
     fraction = position - lower
     return ordered[lower] * (1.0 - fraction) + ordered[upper] * fraction
+
+
+def _summary(values: list[float]) -> dict[str, float | None]:
+    return {
+        "mean": statistics.fmean(values) if values else None,
+        "p50": _percentile(values, 0.50),
+        "p95": _percentile(values, 0.95),
+        "max": max(values) if values else None,
+    }
 
 
 def _fingerprint(payload_hex: str, source_port: int, udp_length: int) -> str:
@@ -94,23 +103,21 @@ def parse_tshark_rows(rows: list[dict[str, str]]) -> list[Packet]:
         if source_port not in (RENO_PORT, PRAGUE_PORT):
             continue
         udp_length = int(row["udp.length"])
-        payload_bytes = max(0, udp_length - 8)
-        fingerprint = _fingerprint(
-            row["udp.payload"], source_port=source_port, udp_length=udp_length
-        )
         packets.append(
             Packet(
                 time_s=float(row["frame.time_epoch"]),
                 source_port=source_port,
-                payload_bytes=payload_bytes,
-                fingerprint=fingerprint,
+                payload_bytes=max(0, udp_length - 8),
+                fingerprint=_fingerprint(
+                    row["udp.payload"], source_port, udp_length
+                ),
             )
         )
     return _assign_occurrences(packets)
 
 
 def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
-    """Read the runner's classic-pcap Ethernet/IPv4/UDP captures directly."""
+    """Read Ethernet/IPv4/UDP packets from a classic pcap without tshark."""
     source_address = ipaddress.IPv4Address(server_ip).packed
     packets: list[Packet] = []
     with path.open("rb") as stream:
@@ -141,37 +148,33 @@ def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
                 f"{endian}IIII", packet_header
             )
             frame = stream.read(captured_length)
-            if len(frame) != captured_length:
-                raise ValueError(f"{path}: truncated packet data")
-            if len(frame) < 14:
+            if len(frame) != captured_length or len(frame) < 14:
+                if len(frame) != captured_length:
+                    raise ValueError(f"{path}: truncated packet data")
                 continue
-            ethernet_offset = 14
+            offset = 14
             ether_type = struct.unpack("!H", frame[12:14])[0]
             while ether_type in (0x8100, 0x88A8):
-                if len(frame) < ethernet_offset + 4:
+                if len(frame) < offset + 4:
                     break
-                ether_type = struct.unpack(
-                    "!H", frame[ethernet_offset + 2:ethernet_offset + 4]
-                )[0]
-                ethernet_offset += 4
-            if ether_type != 0x0800 or len(frame) < ethernet_offset + 20:
+                ether_type = struct.unpack("!H", frame[offset + 2:offset + 4])[0]
+                offset += 4
+            if ether_type != 0x0800 or len(frame) < offset + 20:
                 continue
-            version_ihl = frame[ethernet_offset]
+            version_ihl = frame[offset]
             if version_ihl >> 4 != 4:
                 continue
             ip_header_length = (version_ihl & 0x0F) * 4
-            if ip_header_length < 20 or len(frame) < ethernet_offset + ip_header_length:
+            if ip_header_length < 20 or len(frame) < offset + ip_header_length:
                 continue
-            if frame[ethernet_offset + 9] != 17:
+            if frame[offset + 9] != 17:
                 continue
-            if frame[ethernet_offset + 12:ethernet_offset + 16] != source_address:
+            if frame[offset + 12:offset + 16] != source_address:
                 continue
-            fragment = struct.unpack(
-                "!H", frame[ethernet_offset + 6:ethernet_offset + 8]
-            )[0]
+            fragment = struct.unpack("!H", frame[offset + 6:offset + 8])[0]
             if fragment & 0x1FFF:
                 continue
-            udp_offset = ethernet_offset + ip_header_length
+            udp_offset = offset + ip_header_length
             if len(frame) < udp_offset + 8:
                 continue
             source_port, _, udp_length, _ = struct.unpack(
@@ -195,7 +198,6 @@ def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
 
 
 def read_packet_log(path: Path) -> list[Packet]:
-    """Read a compact packet-order CSV produced by capture_udp_order.py."""
     packets: list[Packet] = []
     with path.open("r", encoding="utf-8", newline="") as stream:
         for row in csv.DictReader(stream):
@@ -212,12 +214,12 @@ def read_packet_log(path: Path) -> list[Packet]:
 
 
 def _packet_map(packets: list[Packet]) -> dict[tuple[str, int], Packet]:
-    mapped: dict[tuple[str, int], Packet] = {}
+    result: dict[tuple[str, int], Packet] = {}
     for packet in packets:
-        if packet.key in mapped:
-            raise ValueError(f"duplicate packet key after occurrence assignment: {packet.key}")
-        mapped[packet.key] = packet
-    return mapped
+        if packet.key in result:
+            raise ValueError(f"duplicate packet key: {packet.key}")
+        result[packet.key] = packet
+    return result
 
 
 class _Fenwick:
@@ -231,7 +233,6 @@ class _Fenwick:
             index += index & -index
 
     def prefix_sum(self, end: int) -> int:
-        """Return sum over [0, end)."""
         total = 0
         index = end
         while index > 0:
@@ -248,30 +249,18 @@ def analyze_packet_order(
     provider_egress: list[Packet],
     downstream_egress: list[Packet],
 ) -> dict[str, object]:
-    """Find Reno->Prague order inversions created inside the provider switch.
-
-    An inversion is a pair (Reno R, Prague P) where R reaches provider ingress
-    before P, but P leaves provider egress before R. The implementation is
-    O(n log n): a Fenwick tree counts per-Prague overtaken Reno traffic, while
-    a reverse scan assigns one concrete Prague witness to every Reno packet
-    that was overtaken at least once.
-    """
+    """Measure provider-created Base/Prague versus Enhancement/Reno inversions."""
     import bisect
 
     ingress_map = _packet_map(ingress)
     provider_map = _packet_map(provider_egress)
     downstream_map = _packet_map(downstream_egress)
-
     common_provider = set(ingress_map) & set(provider_map)
     common_all = common_provider & set(downstream_map)
     ordered = sorted(common_provider, key=lambda key: ingress_map[key].time_s)
 
-    reno_keys = [
-        key for key in ordered if ingress_map[key].source_port == RENO_PORT
-    ]
-    prague_keys = [
-        key for key in ordered if ingress_map[key].source_port == PRAGUE_PORT
-    ]
+    reno_keys = [key for key in ordered if ingress_map[key].source_port == RENO_PORT]
+    prague_keys = [key for key in ordered if ingress_map[key].source_port == PRAGUE_PORT]
 
     reno_egress_times = sorted(provider_map[key].time_s for key in reno_keys)
     count_tree = _Fenwick(len(reno_egress_times))
@@ -286,11 +275,7 @@ def analyze_packet_order(
             count_tree.add(rank, 1)
             byte_tree.add(rank, packet.payload_bytes)
             continue
-        if packet.source_port != PRAGUE_PORT:
-            continue
-        split = bisect.bisect_right(
-            reno_egress_times, provider_map[key].time_s
-        )
+        split = bisect.bisect_right(reno_egress_times, provider_map[key].time_s)
         overtaken_count = count_tree.total() - count_tree.prefix_sum(split)
         overtaken_bytes = byte_tree.total() - byte_tree.prefix_sum(split)
         inversion_pairs += overtaken_count
@@ -315,34 +300,35 @@ def analyze_packet_order(
         ):
             witness_by_reno[key] = min_prague_key
 
-    unique_overtaken_bytes = sum(
-        ingress_map[key].payload_bytes for key in witness_by_reno
-    )
-    reno_payload_bytes = sum(
-        ingress_map[key].payload_bytes for key in reno_keys
-    )
+    unique_overtaken_bytes = sum(ingress_map[key].payload_bytes for key in witness_by_reno)
+    reno_payload_bytes = sum(ingress_map[key].payload_bytes for key in reno_keys)
 
     preserved = 0
-    witness_pairs_observed_downstream = 0
+    downstream_observed = 0
     provider_gaps_ms: list[float] = []
     downstream_gaps_ms: list[float] = []
     amplification: list[float] = []
     for r_key, p_key in witness_by_reno.items():
         if r_key not in downstream_map or p_key not in downstream_map:
             continue
-        witness_pairs_observed_downstream += 1
-        provider_gap = (
-            provider_map[r_key].time_s - provider_map[p_key].time_s
-        ) * 1000.0
-        downstream_gap = (
-            downstream_map[r_key].time_s - downstream_map[p_key].time_s
-        ) * 1000.0
+        downstream_observed += 1
+        provider_gap = (provider_map[r_key].time_s - provider_map[p_key].time_s) * 1000.0
+        downstream_gap = (downstream_map[r_key].time_s - downstream_map[p_key].time_s) * 1000.0
         provider_gaps_ms.append(provider_gap)
         downstream_gaps_ms.append(downstream_gap)
         if downstream_gap > 0:
             preserved += 1
         if provider_gap > 0.001 and downstream_gap > 0:
             amplification.append(downstream_gap / provider_gap)
+
+    reno_sojourn = [
+        (provider_map[key].time_s - ingress_map[key].time_s) * 1000.0
+        for key in reno_keys
+    ]
+    prague_sojourn = [
+        (provider_map[key].time_s - ingress_map[key].time_s) * 1000.0
+        for key in prague_keys
+    ]
 
     return {
         "capture_counts": {
@@ -353,12 +339,12 @@ def analyze_packet_order(
             "all_three_matched_packets": len(common_all),
             "reno_provider_matched_packets": len(reno_keys),
             "prague_provider_matched_packets": len(prague_keys),
-            "provider_match_fraction": (
-                len(common_provider) / len(ingress) if ingress else 0.0
-            ),
-            "all_three_match_fraction": (
-                len(common_all) / len(common_provider) if common_provider else 0.0
-            ),
+            "provider_match_fraction": len(common_provider) / len(ingress) if ingress else 0.0,
+            "all_three_match_fraction": len(common_all) / len(common_provider) if common_provider else 0.0,
+        },
+        "provider_sojourn_ms": {
+            "classic_enhancement_reno": _summary(reno_sojourn),
+            "base_prague": _summary(prague_sojourn),
         },
         "provider_reordering": {
             "inversion_pairs": inversion_pairs,
@@ -369,52 +355,22 @@ def analyze_packet_order(
             "unique_reno_packets_overtaken": len(witness_by_reno),
             "unique_reno_payload_bytes_overtaken": unique_overtaken_bytes,
             "fraction_reno_payload_bytes_overtaken": (
-                unique_overtaken_bytes / reno_payload_bytes
-                if reno_payload_bytes else 0.0
+                unique_overtaken_bytes / reno_payload_bytes if reno_payload_bytes else 0.0
             ),
-            "overtaken_packets_per_prague_packet": {
-                "mean": statistics.fmean(per_prague_counts)
-                if per_prague_counts else 0.0,
-                "p50": _percentile([float(v) for v in per_prague_counts], 0.50),
-                "p95": _percentile([float(v) for v in per_prague_counts], 0.95),
-                "max": max(per_prague_counts, default=0),
-            },
-            "overtaken_payload_bytes_per_prague_packet": {
-                "mean": statistics.fmean(per_prague_bytes)
-                if per_prague_bytes else 0.0,
-                "p50": _percentile([float(v) for v in per_prague_bytes], 0.50),
-                "p95": _percentile([float(v) for v in per_prague_bytes], 0.95),
-                "max": max(per_prague_bytes, default=0),
-            },
+            "overtaken_packets_per_prague_packet": _summary(
+                [float(value) for value in per_prague_counts]
+            ),
+            "overtaken_payload_bytes_per_prague_packet": _summary(
+                [float(value) for value in per_prague_bytes]
+            ),
         },
         "downstream_persistence": {
-            "unique_overtaken_reno_witness_pairs_observed_downstream":
-                witness_pairs_observed_downstream,
+            "unique_overtaken_reno_witness_pairs_observed_downstream": downstream_observed,
             "witness_pairs_preserved": preserved,
-            "preservation_fraction": (
-                preserved / witness_pairs_observed_downstream
-                if witness_pairs_observed_downstream else 0.0
-            ),
-            "provider_witness_gap_ms": {
-                "p50": _percentile(provider_gaps_ms, 0.50),
-                "p95": _percentile(provider_gaps_ms, 0.95),
-                "max": max(provider_gaps_ms, default=None),
-            },
-            "downstream_witness_gap_ms": {
-                "p50": _percentile(downstream_gaps_ms, 0.50),
-                "p95": _percentile(downstream_gaps_ms, 0.95),
-                "max": max(downstream_gaps_ms, default=None),
-            },
-            "gap_amplification_ratio": {
-                "p50": _percentile(amplification, 0.50),
-                "p95": _percentile(amplification, 0.95),
-                "max": max(amplification, default=None),
-            },
-            "interpretation": (
-                "Each overtaken Reno packet is paired with one later-ingress "
-                "Prague packet that demonstrably exited the provider first. "
-                "Preservation tests that concrete inversion at the downstream egress."
-            ),
+            "preservation_fraction": preserved / downstream_observed if downstream_observed else 0.0,
+            "provider_witness_gap_ms": _summary(provider_gaps_ms),
+            "downstream_witness_gap_ms": _summary(downstream_gaps_ms),
+            "gap_amplification_ratio": _summary(amplification),
         },
     }
 
@@ -427,43 +383,49 @@ def evaluate_acceptance(
     minimum_provider_match_fraction: float,
     minimum_downstream_match_fraction: float,
 ) -> dict[str, object]:
+    """Validate measurement quality without predetermining the hypothesis result."""
     counts = result["capture_counts"]
     reorder = result["provider_reordering"]
     persistence = result["downstream_persistence"]
     cross_class_applicable = 0.0 < requested_l4s_fraction < 1.0
-    failures = []
+    failures: list[str] = []
+
     if requested_l4s_fraction < 1.0 and counts["reno_provider_matched_packets"] == 0:
-        failures.append("no matched Reno packets")
+        failures.append("no matched Classic Enhancement/Reno packets")
     if requested_l4s_fraction > 0.0 and counts["prague_provider_matched_packets"] == 0:
-        failures.append("no matched Prague packets")
+        failures.append("no matched Base/Prague packets")
     if counts["provider_match_fraction"] < minimum_provider_match_fraction:
         failures.append("provider packet match fraction below threshold")
     if counts["all_three_match_fraction"] < minimum_downstream_match_fraction:
         failures.append("downstream packet match fraction below threshold")
-    if cross_class_applicable and reorder["inversion_pairs"] == 0:
-        failures.append("no provider-created Reno/Prague inversion observed")
-    if (
-        cross_class_applicable
-        and persistence[
-            "unique_overtaken_reno_witness_pairs_observed_downstream"
-        ] == 0
-    ):
-        failures.append("no concrete inversion witness observed downstream")
     for label, stats in capture_stats.items():
         if int(stats.get("socket_drops") or 0) != 0:
             failures.append(f"compact capture socket drops observed at {label}")
+
+    mechanism_observed = bool(cross_class_applicable and reorder["inversion_pairs"] > 0)
+    downstream_witness_observed = bool(
+        mechanism_observed
+        and persistence["unique_overtaken_reno_witness_pairs_observed_downstream"] > 0
+    )
     return {
         "status": "pass" if not failures else "fail",
         "failures": failures,
         "requested_l4s_byte_fraction": requested_l4s_fraction,
         "cross_class_reordering_applicable": cross_class_applicable,
-        "interpretation": (
-            "mixed Reno/Prague reordering acceptance"
+        "mechanism_observed": mechanism_observed,
+        "downstream_witness_observed": downstream_witness_observed,
+        "hypothesis_outcome": (
+            "provider reordering observed"
+            if mechanism_observed
+            else "no provider reordering observed"
             if cross_class_applicable
-            else "single-transport endpoint control; cross-class reordering is not applicable"
+            else "cross-class reordering not applicable"
         ),
         "minimum_provider_match_fraction": minimum_provider_match_fraction,
         "minimum_downstream_match_fraction": minimum_downstream_match_fraction,
+        "interpretation": (
+            "status validates the measurement only; absence of an inversion is a valid negative result"
+        ),
     }
 
 
@@ -491,7 +453,7 @@ def analyze_case(
     }
     if all(path.is_file() for path in compact_paths.values()):
         paths = compact_paths
-        reader = lambda path: read_packet_log(path)
+        reader = read_packet_log
         capture_format = "packet-order-csv-v1"
     elif all(path.is_file() for path in pcap_paths.values()):
         paths = pcap_paths
@@ -502,34 +464,39 @@ def analyze_case(
         reader = lambda path: read_capture(path, server_ip=server_ip)
         capture_format = "pcap"
     else:
-        expected = [
-            *compact_paths.values(), *pcap_paths.values(), *legacy_paths.values()
-        ]
-        raise FileNotFoundError(
-            "missing complete packet-order evidence; expected either compact "
-            "logs or legacy pcaps: " + ", ".join(str(path) for path in expected)
-        )
+        raise FileNotFoundError(f"{case}: missing complete packet-order evidence")
+
     result = analyze_packet_order(
         reader(paths["provider_ingress"]),
         reader(paths["provider_egress"]),
         reader(paths["downstream_egress"]),
     )
     result["capture_format"] = capture_format
-    capture_stats = {}
+    capture_stats: dict[str, dict[str, object]] = {}
     if capture_format == "packet-order-csv-v1":
         for label, path in paths.items():
             stats_path = path.with_suffix(".stats.json")
             if not stats_path.is_file():
                 raise FileNotFoundError(f"missing compact capture stats: {stats_path}")
-            capture_stats[label] = json.loads(
-                stats_path.read_text(encoding="utf-8")
-            )
+            capture_stats[label] = json.loads(stats_path.read_text(encoding="utf-8"))
         result["capture_stats"] = capture_stats
+
     result["case"] = case.name
-    case_metadata = json.loads((case / "result.json").read_text(encoding="utf-8"))
-    requested_l4s_fraction = float(
-        case_metadata["requested_l4s_byte_fraction"]
-    )
+    metadata = json.loads((case / "result.json").read_text(encoding="utf-8"))
+    requested_l4s_fraction = float(metadata["requested_l4s_byte_fraction"])
+    result["experiment"] = {
+        "requested_enhancement_l4s_fraction": metadata.get(
+            "requested_enhancement_l4s_fraction"
+        ),
+        "actual_enhancement_l4s_fraction": metadata.get(
+            "actual_enhancement_l4s_fraction"
+        ),
+        "actual_total_l4s_byte_fraction": metadata.get(
+            "actual_total_l4s_byte_fraction"
+        ),
+        "base_byte_fraction": metadata.get("base_byte_fraction"),
+        "downstream_mode": metadata.get("downstream_mode"),
+    }
     result["acceptance"] = evaluate_acceptance(
         result,
         requested_l4s_fraction=requested_l4s_fraction,
@@ -552,18 +519,19 @@ def main() -> None:
     parser.add_argument("--minimum-downstream-match-fraction", type=float, default=0.95)
     args = parser.parse_args()
 
-    cases = sorted(
-        path for path in args.root.iterdir()
-        if path.is_dir() and path.name.startswith("l4s-")
-    )
-    if not cases:
-        raise SystemExit(f"no l4s-* case directories under {args.root}")
     for value in (
         args.minimum_provider_match_fraction,
         args.minimum_downstream_match_fraction,
     ):
         if not 0.0 <= value <= 1.0:
             parser.error("match fractions must be in [0,1]")
+    cases = sorted(
+        path for path in args.root.iterdir()
+        if path.is_dir() and path.name.startswith("l4s-")
+    )
+    if not cases:
+        raise SystemExit(f"no l4s-* case directories under {args.root}")
+
     results = [
         analyze_case(
             case,
@@ -574,15 +542,18 @@ def main() -> None:
         for case in cases
     ]
     summary = {
-        "scenario": "3dgs-partial-l4s-post-send-reordering",
+        "scenario": "3dgs-partial-l4s-post-send-reordering-v2",
         "cases": results,
     }
     (args.root / "reordering-analysis.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    failed = [result["case"] for result in results if result["acceptance"]["status"] != "pass"]
-    if failed:
-        raise SystemExit(f"reordering acceptance failed for: {', '.join(failed)}")
+    invalid = [
+        result["case"] for result in results
+        if result["acceptance"]["status"] != "pass"
+    ]
+    if invalid:
+        raise SystemExit(f"measurement validity failed for: {', '.join(invalid)}")
 
 
 if __name__ == "__main__":
