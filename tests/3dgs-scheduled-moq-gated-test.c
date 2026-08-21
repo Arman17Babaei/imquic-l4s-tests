@@ -361,8 +361,8 @@ static int run_gated_publisher_v2(
 		imquic_transport_metrics transport = {0};
 		if(connection == NULL ||
 				imquic_get_transport_metrics(connection, &transport) < 0 ||
-				transport.cwnd_bytes == 0 ||
-				transport.bytes_in_flight >= transport.cwnd_bytes ||
+				transport.congestion_window_bytes == 0 ||
+				transport.bytes_in_flight >= transport.congestion_window_bytes ||
 				transport.queued_stream_bytes >= queue_threshold) {
 			g_usleep(1000);
 			continue;
@@ -418,7 +418,7 @@ static int run_gated_publisher_v2(
 						length,
 						transport.queued_stream_bytes,
 						transport.bytes_in_flight,
-						transport.cwnd_bytes,
+						transport.congestion_window_bytes,
 						queue_threshold);
 				}
 			}
