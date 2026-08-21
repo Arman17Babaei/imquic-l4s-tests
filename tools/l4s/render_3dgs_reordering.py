@@ -199,6 +199,7 @@ def render_references(
     height: int,
     frame_step: int,
     gaussian_budget: int,
+    max_gaussians_per_pass: int | None,
 ) -> tuple[dict[int, Path], list[dict]]:
     from streaming.transport.client.pipeline import RenderPipeline
     from streaming.transport.client.viewport.trace import load_trace
@@ -212,6 +213,7 @@ def render_references(
         image_width=width,
         image_height=height,
         render_enabled=True,
+        max_gaussians_per_pass=max_gaussians_per_pass,
     )
     paths: dict[int, Path] = {}
     for frame_index in range(0, len(frames), frame_step):
@@ -247,6 +249,7 @@ def render_case(
     height: int,
     frame_step: int,
     gaussian_budget: int,
+    max_gaussians_per_pass: int | None,
     evaluation_lag_ms: float,
     gif_duration_ms: int | None,
 ) -> dict[str, object]:
@@ -279,6 +282,7 @@ def render_case(
         image_width=width,
         image_height=height,
         render_enabled=True,
+        max_gaussians_per_pass=max_gaussians_per_pass,
     )
 
     timeline_index = 0
@@ -381,6 +385,11 @@ def render_case(
         "gif_duration_ms": sum(encoded_gif_durations),
         "gif_timebase_ms": 10,
         "gaussian_budget": gaussian_budget,
+        "max_gaussians_per_pass": max_gaussians_per_pass,
+        "compositing": (
+            "track-batched-expected-depth"
+            if max_gaussians_per_pass is not None else "single-pass"
+        ),
     }
     (output / "summary.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -404,6 +413,14 @@ def main() -> None:
         "--gaussian-budget", type=int, default=5_000_000,
         help="fixed offline per-frame budget (default exceeds this scene)",
     )
+    parser.add_argument(
+        "--max-gaussians-per-pass",
+        type=int,
+        help=(
+            "retain the full frame selection but rasterize complete tracks in "
+            "bounded passes and composite them by expected depth"
+        ),
+    )
     parser.add_argument("--evaluation-lag-ms", type=float, default=0.0)
     parser.add_argument(
         "--gif-duration-ms", type=int,
@@ -417,6 +434,8 @@ def main() -> None:
         parser.error("--frame-step must be positive")
     if args.gaussian_budget <= 0:
         parser.error("--gaussian-budget must be positive")
+    if args.max_gaussians_per_pass is not None and args.max_gaussians_per_pass <= 0:
+        parser.error("--max-gaussians-per-pass must be positive")
     if args.evaluation_lag_ms < 0:
         parser.error("--evaluation-lag-ms must be non-negative")
     if args.gif_duration_ms is not None and args.gif_duration_ms <= 0:
@@ -440,6 +459,7 @@ def main() -> None:
         height=args.height,
         frame_step=args.frame_step,
         gaussian_budget=args.gaussian_budget,
+        max_gaussians_per_pass=args.max_gaussians_per_pass,
     )
 
     cases = sorted(
@@ -459,6 +479,7 @@ def main() -> None:
             height=args.height,
             frame_step=args.frame_step,
             gaussian_budget=args.gaussian_budget,
+            max_gaussians_per_pass=args.max_gaussians_per_pass,
             evaluation_lag_ms=args.evaluation_lag_ms,
             gif_duration_ms=args.gif_duration_ms,
         )
@@ -471,6 +492,11 @@ def main() -> None:
                 "evaluation_lag_ms": args.evaluation_lag_ms,
                 "frame_step": args.frame_step,
                 "gaussian_budget": args.gaussian_budget,
+                "max_gaussians_per_pass": args.max_gaussians_per_pass,
+                "compositing": (
+                    "track-batched-expected-depth"
+                    if args.max_gaussians_per_pass is not None else "single-pass"
+                ),
                 "cases": results,
             },
             indent=2,
