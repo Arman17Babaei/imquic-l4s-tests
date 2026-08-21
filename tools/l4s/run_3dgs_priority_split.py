@@ -110,7 +110,8 @@ def write_combined_timeline(
             raise RuntimeError(f"duplicate source object identity in priority manifest: {identity}")
         manifest_by_identity[identity] = object_row
 
-    for name, config in PATHS.items():
+    for name in path_results:
+        config = PATHS[name]
         result = path_results[name]
         subscriber = result["subscriber"]
         start_epoch_us = int(subscriber["started_epoch_us"])

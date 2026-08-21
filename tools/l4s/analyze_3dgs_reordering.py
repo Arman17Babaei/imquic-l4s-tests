@@ -6,11 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import ipaddress
 import json
 import math
-import shutil
 import statistics
-import subprocess
+import struct
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -59,6 +59,16 @@ def _fingerprint(payload_hex: str, source_port: int, udp_length: int) -> str:
     return digest.hexdigest()
 
 
+def _fingerprint_bytes(payload: bytes, source_port: int, udp_length: int) -> str:
+    digest = hashlib.sha256()
+    digest.update(str(source_port).encode("ascii"))
+    digest.update(b"|")
+    digest.update(str(udp_length).encode("ascii"))
+    digest.update(b"|")
+    digest.update(payload)
+    return digest.hexdigest()
+
+
 def _assign_occurrences(rows: list[Packet]) -> list[Packet]:
     seen: dict[str, int] = {}
     result: list[Packet] = []
@@ -100,34 +110,105 @@ def parse_tshark_rows(rows: list[dict[str, str]]) -> list[Packet]:
 
 
 def read_capture(path: Path, *, server_ip: str = "10.0.0.1") -> list[Packet]:
-    if shutil.which("tshark") is None:
-        raise RuntimeError("tshark is required to analyze packet captures")
-    command = [
-        "tshark", "-r", str(path),
-        "-Y",
-        (
-            f"ip.src == {server_ip} && udp && "
-            f"(udp.srcport == {RENO_PORT} || udp.srcport == {PRAGUE_PORT})"
-        ),
-        "-T", "fields",
-        "-E", "header=y",
-        "-E", "separator=,",
-        "-E", "quote=d",
-        "-E", "occurrence=f",
-        "-e", "frame.time_epoch",
-        "-e", "udp.srcport",
-        "-e", "udp.length",
-        "-e", "udp.payload",
-    ]
-    output = subprocess.run(
-        command,
-        check=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    ).stdout
-    reader = csv.DictReader(output.splitlines())
-    return parse_tshark_rows(list(reader))
+    """Read the runner's classic-pcap Ethernet/IPv4/UDP captures directly."""
+    source_address = ipaddress.IPv4Address(server_ip).packed
+    packets: list[Packet] = []
+    with path.open("rb") as stream:
+        magic = stream.read(4)
+        formats = {
+            b"\xd4\xc3\xb2\xa1": ("<", 1_000_000.0),
+            b"\xa1\xb2\xc3\xd4": (">", 1_000_000.0),
+            b"\x4d\x3c\xb2\xa1": ("<", 1_000_000_000.0),
+            b"\xa1\xb2\x3c\x4d": (">", 1_000_000_000.0),
+        }
+        if magic not in formats:
+            raise ValueError(f"{path}: unsupported pcap magic {magic.hex()}")
+        endian, timestamp_scale = formats[magic]
+        global_rest = stream.read(20)
+        if len(global_rest) != 20:
+            raise ValueError(f"{path}: truncated pcap header")
+        link_type = struct.unpack(f"{endian}I", global_rest[16:20])[0]
+        if link_type != 1:
+            raise ValueError(f"{path}: expected Ethernet link type, got {link_type}")
+
+        while True:
+            packet_header = stream.read(16)
+            if not packet_header:
+                break
+            if len(packet_header) != 16:
+                raise ValueError(f"{path}: truncated packet header")
+            seconds, fraction, captured_length, _ = struct.unpack(
+                f"{endian}IIII", packet_header
+            )
+            frame = stream.read(captured_length)
+            if len(frame) != captured_length:
+                raise ValueError(f"{path}: truncated packet data")
+            if len(frame) < 14:
+                continue
+            ethernet_offset = 14
+            ether_type = struct.unpack("!H", frame[12:14])[0]
+            while ether_type in (0x8100, 0x88A8):
+                if len(frame) < ethernet_offset + 4:
+                    break
+                ether_type = struct.unpack(
+                    "!H", frame[ethernet_offset + 2:ethernet_offset + 4]
+                )[0]
+                ethernet_offset += 4
+            if ether_type != 0x0800 or len(frame) < ethernet_offset + 20:
+                continue
+            version_ihl = frame[ethernet_offset]
+            if version_ihl >> 4 != 4:
+                continue
+            ip_header_length = (version_ihl & 0x0F) * 4
+            if ip_header_length < 20 or len(frame) < ethernet_offset + ip_header_length:
+                continue
+            if frame[ethernet_offset + 9] != 17:
+                continue
+            if frame[ethernet_offset + 12:ethernet_offset + 16] != source_address:
+                continue
+            fragment = struct.unpack(
+                "!H", frame[ethernet_offset + 6:ethernet_offset + 8]
+            )[0]
+            if fragment & 0x1FFF:
+                continue
+            udp_offset = ethernet_offset + ip_header_length
+            if len(frame) < udp_offset + 8:
+                continue
+            source_port, _, udp_length, _ = struct.unpack(
+                "!HHHH", frame[udp_offset:udp_offset + 8]
+            )
+            if source_port not in (RENO_PORT, PRAGUE_PORT) or udp_length < 8:
+                continue
+            udp_end = udp_offset + udp_length
+            if udp_end > len(frame):
+                continue
+            payload = frame[udp_offset + 8:udp_end]
+            packets.append(
+                Packet(
+                    time_s=seconds + fraction / timestamp_scale,
+                    source_port=source_port,
+                    payload_bytes=len(payload),
+                    fingerprint=_fingerprint_bytes(payload, source_port, udp_length),
+                )
+            )
+    return _assign_occurrences(packets)
+
+
+def read_packet_log(path: Path) -> list[Packet]:
+    """Read a compact packet-order CSV produced by capture_udp_order.py."""
+    packets: list[Packet] = []
+    with path.open("r", encoding="utf-8", newline="") as stream:
+        for row in csv.DictReader(stream):
+            packets.append(
+                Packet(
+                    time_s=float(row["time_s"]),
+                    source_port=int(row["source_port"]),
+                    payload_bytes=int(row["payload_bytes"]),
+                    fingerprint=row["fingerprint"],
+                    occurrence=int(row["occurrence"]),
+                )
+            )
+    return sorted(packets, key=lambda packet: packet.time_s)
 
 
 def _packet_map(packets: list[Packet]) -> dict[tuple[str, int], Packet]:
@@ -332,27 +413,130 @@ def analyze_packet_order(
             "interpretation": (
                 "Each overtaken Reno packet is paired with one later-ingress "
                 "Prague packet that demonstrably exited the provider first. "
-                "Preservation tests that concrete inversion at the Classic egress."
+                "Preservation tests that concrete inversion at the downstream egress."
             ),
         },
     }
 
 
-def analyze_case(case: Path, *, server_ip: str) -> dict[str, object]:
-    paths = {
-        "l4s_ingress": case / "l4s_ingress.pcap",
-        "l4s_egress": case / "l4s_egress.pcap",
-        "classic_egress": case / "classic_egress.pcap",
+def evaluate_acceptance(
+    result: dict[str, object],
+    *,
+    requested_l4s_fraction: float,
+    capture_stats: dict[str, dict[str, object]],
+    minimum_provider_match_fraction: float,
+    minimum_downstream_match_fraction: float,
+) -> dict[str, object]:
+    counts = result["capture_counts"]
+    reorder = result["provider_reordering"]
+    persistence = result["downstream_persistence"]
+    cross_class_applicable = 0.0 < requested_l4s_fraction < 1.0
+    failures = []
+    if requested_l4s_fraction < 1.0 and counts["reno_provider_matched_packets"] == 0:
+        failures.append("no matched Reno packets")
+    if requested_l4s_fraction > 0.0 and counts["prague_provider_matched_packets"] == 0:
+        failures.append("no matched Prague packets")
+    if counts["provider_match_fraction"] < minimum_provider_match_fraction:
+        failures.append("provider packet match fraction below threshold")
+    if counts["all_three_match_fraction"] < minimum_downstream_match_fraction:
+        failures.append("downstream packet match fraction below threshold")
+    if cross_class_applicable and reorder["inversion_pairs"] == 0:
+        failures.append("no provider-created Reno/Prague inversion observed")
+    if (
+        cross_class_applicable
+        and persistence[
+            "unique_overtaken_reno_witness_pairs_observed_downstream"
+        ] == 0
+    ):
+        failures.append("no concrete inversion witness observed downstream")
+    for label, stats in capture_stats.items():
+        if int(stats.get("socket_drops") or 0) != 0:
+            failures.append(f"compact capture socket drops observed at {label}")
+    return {
+        "status": "pass" if not failures else "fail",
+        "failures": failures,
+        "requested_l4s_byte_fraction": requested_l4s_fraction,
+        "cross_class_reordering_applicable": cross_class_applicable,
+        "interpretation": (
+            "mixed Reno/Prague reordering acceptance"
+            if cross_class_applicable
+            else "single-transport endpoint control; cross-class reordering is not applicable"
+        ),
+        "minimum_provider_match_fraction": minimum_provider_match_fraction,
+        "minimum_downstream_match_fraction": minimum_downstream_match_fraction,
     }
-    missing = [str(path) for path in paths.values() if not path.is_file()]
-    if missing:
-        raise FileNotFoundError(f"missing packet captures: {', '.join(missing)}")
+
+
+def analyze_case(
+    case: Path,
+    *,
+    server_ip: str,
+    minimum_provider_match_fraction: float = 0.95,
+    minimum_downstream_match_fraction: float = 0.95,
+) -> dict[str, object]:
+    compact_paths = {
+        "provider_ingress": case / "provider_ingress.packet-order.csv",
+        "provider_egress": case / "provider_egress.packet-order.csv",
+        "downstream_egress": case / "downstream_egress.packet-order.csv",
+    }
+    pcap_paths = {
+        "provider_ingress": case / "provider_ingress.pcap",
+        "provider_egress": case / "provider_egress.pcap",
+        "downstream_egress": case / "downstream_egress.pcap",
+    }
+    legacy_paths = {
+        "provider_ingress": case / "l4s_ingress.pcap",
+        "provider_egress": case / "l4s_egress.pcap",
+        "downstream_egress": case / "classic_egress.pcap",
+    }
+    if all(path.is_file() for path in compact_paths.values()):
+        paths = compact_paths
+        reader = lambda path: read_packet_log(path)
+        capture_format = "packet-order-csv-v1"
+    elif all(path.is_file() for path in pcap_paths.values()):
+        paths = pcap_paths
+        reader = lambda path: read_capture(path, server_ip=server_ip)
+        capture_format = "pcap"
+    elif all(path.is_file() for path in legacy_paths.values()):
+        paths = legacy_paths
+        reader = lambda path: read_capture(path, server_ip=server_ip)
+        capture_format = "pcap"
+    else:
+        expected = [
+            *compact_paths.values(), *pcap_paths.values(), *legacy_paths.values()
+        ]
+        raise FileNotFoundError(
+            "missing complete packet-order evidence; expected either compact "
+            "logs or legacy pcaps: " + ", ".join(str(path) for path in expected)
+        )
     result = analyze_packet_order(
-        read_capture(paths["l4s_ingress"], server_ip=server_ip),
-        read_capture(paths["l4s_egress"], server_ip=server_ip),
-        read_capture(paths["classic_egress"], server_ip=server_ip),
+        reader(paths["provider_ingress"]),
+        reader(paths["provider_egress"]),
+        reader(paths["downstream_egress"]),
     )
+    result["capture_format"] = capture_format
+    capture_stats = {}
+    if capture_format == "packet-order-csv-v1":
+        for label, path in paths.items():
+            stats_path = path.with_suffix(".stats.json")
+            if not stats_path.is_file():
+                raise FileNotFoundError(f"missing compact capture stats: {stats_path}")
+            capture_stats[label] = json.loads(
+                stats_path.read_text(encoding="utf-8")
+            )
+        result["capture_stats"] = capture_stats
     result["case"] = case.name
+    case_metadata = json.loads((case / "result.json").read_text(encoding="utf-8"))
+    requested_l4s_fraction = float(
+        case_metadata["requested_l4s_byte_fraction"]
+    )
+    result["acceptance"] = evaluate_acceptance(
+        result,
+        requested_l4s_fraction=requested_l4s_fraction,
+        capture_stats=capture_stats,
+        minimum_provider_match_fraction=minimum_provider_match_fraction,
+        minimum_downstream_match_fraction=minimum_downstream_match_fraction,
+    )
     destination = case / "reordering-analysis.json"
     destination.write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -364,6 +548,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path)
     parser.add_argument("--server-ip", default="10.0.0.1")
+    parser.add_argument("--minimum-provider-match-fraction", type=float, default=0.95)
+    parser.add_argument("--minimum-downstream-match-fraction", type=float, default=0.95)
     args = parser.parse_args()
 
     cases = sorted(
@@ -372,7 +558,21 @@ def main() -> None:
     )
     if not cases:
         raise SystemExit(f"no l4s-* case directories under {args.root}")
-    results = [analyze_case(case, server_ip=args.server_ip) for case in cases]
+    for value in (
+        args.minimum_provider_match_fraction,
+        args.minimum_downstream_match_fraction,
+    ):
+        if not 0.0 <= value <= 1.0:
+            parser.error("match fractions must be in [0,1]")
+    results = [
+        analyze_case(
+            case,
+            server_ip=args.server_ip,
+            minimum_provider_match_fraction=args.minimum_provider_match_fraction,
+            minimum_downstream_match_fraction=args.minimum_downstream_match_fraction,
+        )
+        for case in cases
+    ]
     summary = {
         "scenario": "3dgs-partial-l4s-post-send-reordering",
         "cases": results,
@@ -380,6 +580,9 @@ def main() -> None:
     (args.root / "reordering-analysis.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+    failed = [result["case"] for result in results if result["acceptance"]["status"] != "pass"]
+    if failed:
+        raise SystemExit(f"reordering acceptance failed for: {', '.join(failed)}")
 
 
 if __name__ == "__main__":

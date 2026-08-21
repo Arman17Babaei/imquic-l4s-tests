@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import csv
 import json
 import math
+import runpy
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from split_3dgs_priority import _ranking, object_importance
 from three_dgs_bundle import (
@@ -27,6 +29,36 @@ def _object_key(row: dict[str, object]) -> tuple[object, ...]:
     )
 
 
+def manifest_importance_ranks(
+    manifest: Mapping[str, object],
+) -> dict[tuple[object, ...], int]:
+    """Return the manifest's unique global importance rank for every object."""
+    ranks: dict[tuple[object, ...], int] = {}
+    used: set[int] = set()
+    for raw in manifest["objects"]:  # type: ignore[index]
+        row = dict(raw)  # type: ignore[arg-type]
+        key = _object_key(row)
+        rank = int(row["importance_rank"])
+        if key in ranks:
+            raise ValueError(f"duplicate object identity in priority manifest: {key}")
+        if rank in used:
+            raise ValueError(f"duplicate importance rank in priority manifest: {rank}")
+        ranks[key] = rank
+        used.add(rank)
+    return ranks
+
+
+def _rank_for_payload(
+    payload: bytes,
+    importance_ranks: Mapping[tuple[object, ...], int],
+) -> int:
+    row = object_importance(payload)
+    key = _object_key(row)
+    if key not in importance_ranks:
+        raise ValueError(f"bundle object missing from priority manifest: {key}")
+    return int(importance_ranks[key])
+
+
 def split_by_l4s_fraction(
     source: Path,
     output_dir: Path,
@@ -40,8 +72,8 @@ def split_by_l4s_fraction(
     Reno/Classic. Object payloads are not re-chunked. Within each output bundle,
     source order is preserved so path assignment is the only ordering change.
     """
-    if not 0.0 < l4s_fraction < 1.0:
-        raise ValueError("l4s_fraction must be strictly between 0 and 1")
+    if not 0.0 <= l4s_fraction <= 1.0:
+        raise ValueError("l4s_fraction must be in [0, 1]")
     if importance not in ("native-tier", "opacity", "scale", "opacity-scale"):
         raise ValueError("unsupported importance mode")
 
@@ -75,12 +107,17 @@ def split_by_l4s_fraction(
         prefix_bytes.append(prefix_bytes[-1] + int(rows[index]["payload_bytes"]))
 
     target_bytes = total_bytes * l4s_fraction
-    # Keep both paths non-empty. Pick the rank-prefix whose byte volume is
-    # closest to the requested L4S fraction.
-    high_count = min(
-        range(1, len(rows)),
-        key=lambda count: (abs(prefix_bytes[count] - target_bytes), count),
-    )
+    if l4s_fraction == 0.0:
+        high_count = 0
+    elif l4s_fraction == 1.0:
+        high_count = len(rows)
+    else:
+        # Interior fractions keep both paths non-empty. Pick the rank-prefix
+        # whose byte volume is closest to the requested L4S fraction.
+        high_count = min(
+            range(1, len(rows)),
+            key=lambda count: (abs(prefix_bytes[count] - target_bytes), count),
+        )
     high_indices = set(ranked[:high_count])
     low_indices = set(range(len(rows))) - high_indices
 
@@ -127,7 +164,8 @@ def split_by_l4s_fraction(
         "importance_definition": definition,
         "split_rule": (
             "ranked prefix nearest requested payload-byte fraction -> Prague/L4S; "
-            "remainder -> Reno/Classic"
+            "remainder -> Reno/Classic; endpoints assign the complete scene "
+            "to one transport"
         ),
         "requested_l4s_byte_fraction": l4s_fraction,
         "actual_l4s_byte_fraction": actual_fraction,
@@ -186,20 +224,28 @@ def derive_first_visible_track_order(
 
     import numpy as np  # type: ignore
     import torch  # type: ignore
-    from streaming.transport.client.viewport.frustum import (  # type: ignore
-        check_aabb_frustum,
-        extract_frustum,
-        projection_matrix_from_fov,
-        scene_far_from_bboxes,
+    # Importing streaming.transport.client executes the live MoQ client package
+    # initializer and loads libmoq.so. Demand freezing only needs the pure
+    # viewport math, so load that source module without importing its parent.
+    frustum = runpy.run_path(
+        str(
+            Path(dependency)
+            / "src/streaming/transport/client/viewport/frustum.py"
+        )
     )
-    from streaming.transport.client.viewport.trace import load_trace  # type: ignore
+    check_aabb_frustum = frustum["check_aabb_frustum"]
+    extract_frustum = frustum["extract_frustum"]
+    projection_matrix_from_fov = frustum["projection_matrix_from_fov"]
+    scene_far_from_bboxes = frustum["scene_far_from_bboxes"]
 
     data = torch.load(cache_path, weights_only=False, map_location="cpu")
     manifest = data.get("manifest")
     if manifest is None:
         raise RuntimeError(f"{cache_path}: cache does not contain manifest")
     tracks = list(manifest.tracks)
-    frames = load_trace(trace_path)
+    frames = json.loads(Path(trace_path).read_text(encoding="utf-8"))
+    if isinstance(frames, dict) and "frames" in frames:
+        frames = frames["frames"]
     if not frames:
         raise RuntimeError(f"{trace_path}: trace has no frames")
 
@@ -354,12 +400,15 @@ def write_trace_release_schedule(
     initial_release_ms: float = 0.0,
     time_scale: float = 1.0,
     fallback_spacing_ms: float = 100.0,
+    importance_ranks: Mapping[tuple[object, ...], int],
 ) -> dict[str, object]:
-    """Release each track at its frozen first-visible trace timestamp.
+    """Record viewport eligibility and global rank for every bundle object.
 
-    The trace is inspected only before the network experiment. The resulting
-    per-record integer schedule is then fixed on disk and reused verbatim for
-    all repetitions and transport configurations.
+    Base and Enhancement objects become eligible at their track's frozen
+    first-visible time. The resulting per-record
+    ``release_ms importance_rank`` schedule is fixed on disk and reused
+    verbatim. The publisher chooses the lowest rank among all eligible records;
+    file order is not admission order.
     """
     if initial_release_ms < 0 or time_scale <= 0 or fallback_spacing_ms < 0:
         raise ValueError("invalid trace release timing")
@@ -401,18 +450,31 @@ def write_trace_release_schedule(
     ]
     if release_rows != sorted(release_rows):
         raise ValueError("trace-derived release times are not non-decreasing")
+    rank_rows = [
+        _rank_for_payload(payload, importance_ranks)
+        for _, _, payload, _ in records
+    ]
+    if len(set(rank_rows)) != len(rank_rows):
+        raise ValueError("bundle schedule contains duplicate importance ranks")
 
     schedule_path = Path(schedule_path)
     schedule_path.parent.mkdir(parents=True, exist_ok=True)
     schedule_path.write_text(
-        "".join(f"{release_ms}\n" for release_ms in release_rows),
+        "".join(
+            f"{release_ms} {importance_rank}\n"
+            for release_ms, importance_rank in zip(release_rows, rank_rows)
+        ),
         encoding="utf-8",
     )
     return {
         "path": str(schedule_path),
         "sha256": sha256_file(schedule_path),
         "records": len(release_rows),
-        "timing": "frozen first-visible bicycle-trace timestamps",
+        "format": "release_ms importance_rank",
+        "admission_policy": "lowest importance rank among currently eligible records",
+        "timing": "all objects at frozen first-visible track timestamps",
+        "viewport_gated_subgroups": [0, 1, 2],
+        "immediately_eligible_subgroups": [],
         "initial_release_ms": initial_release_ms,
         "time_scale": time_scale,
         "fallback_spacing_ms": fallback_spacing_ms,
@@ -420,16 +482,65 @@ def write_trace_release_schedule(
     }
 
 
-def write_immediate_release_schedule(
-    bundle_path: Path,
+def validate_admission_order(
     schedule_path: Path,
+    admission_path: Path,
 ) -> dict[str, object]:
-    count = sum(1 for _ in read_bundle(bundle_path))
-    schedule_path = Path(schedule_path)
-    schedule_path.parent.mkdir(parents=True, exist_ok=True)
-    schedule_path.write_text("0\n" * count, encoding="utf-8")
+    """Prove every logged admission selected the best currently eligible rank."""
+    schedule: list[tuple[int, int]] = []
+    for line_number, line in enumerate(
+        Path(schedule_path).read_text(encoding="utf-8").splitlines(), start=1
+    ):
+        fields = line.split()
+        if len(fields) != 2:
+            raise ValueError(f"{schedule_path}:{line_number}: invalid schedule row")
+        release_ms, importance_rank = map(int, fields)
+        if release_ms < 0 or importance_rank < 0:
+            raise ValueError(f"{schedule_path}:{line_number}: negative schedule value")
+        schedule.append((release_ms, importance_rank))
+
+    admitted: set[int] = set()
+    with Path(admission_path).open(encoding="utf-8", newline="") as stream:
+        rows = list(csv.DictReader(stream))
+    required = {
+        "admission_index", "time_us", "bundle_record_index", "release_ms",
+        "importance_rank", "subgroup_id", "payload_bytes",
+    }
+    if not rows or set(rows[0]) != required:
+        raise ValueError(f"{admission_path}: invalid or empty admission log")
+
+    for expected_index, row in enumerate(rows):
+        admission_index = int(row["admission_index"])
+        time_us = int(row["time_us"])
+        record_index = int(row["bundle_record_index"])
+        release_ms = int(row["release_ms"])
+        importance_rank = int(row["importance_rank"])
+        if admission_index != expected_index:
+            raise ValueError(f"{admission_path}: non-sequential admission index")
+        if not 0 <= record_index < len(schedule) or record_index in admitted:
+            raise ValueError(f"{admission_path}: invalid repeated bundle record index")
+        if schedule[record_index] != (release_ms, importance_rank):
+            raise ValueError(f"{admission_path}: admission does not match schedule")
+        elapsed_ms = time_us // 1000
+        eligible = [
+            (rank, index)
+            for index, (release, rank) in enumerate(schedule)
+            if index not in admitted and release <= elapsed_ms
+        ]
+        if not eligible:
+            raise ValueError(f"{admission_path}: object admitted before eligibility")
+        expected_rank, expected_record = min(eligible)
+        if (importance_rank, record_index) != (expected_rank, expected_record):
+            raise ValueError(
+                f"{admission_path}: rank {importance_rank} record {record_index} "
+                f"admitted instead of eligible rank {expected_rank} "
+                f"record {expected_record}"
+            )
+        admitted.add(record_index)
+
     return {
-        "path": str(schedule_path),
-        "sha256": sha256_file(schedule_path),
-        "records": count,
+        "validated": True,
+        "admission_policy": "lowest importance rank among currently eligible records",
+        "scheduled_records": len(schedule),
+        "admitted_records": len(admitted),
     }

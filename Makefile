@@ -5,7 +5,7 @@ THREEDGS_FIXTURE := $(CURDIR)/build/imquic-3dgs-moq
 THREEDGS_BACKGROUND_MBPS ?= 150
 DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -189,6 +189,19 @@ l4s-3dgs-priority-split-check: build-3dgs-fixture-only
 		--deadline-ms 30000 \
 		--repetitions 3 \
 		$(THREEDGS_PRIORITY_ARGS)
+
+l4s-3dgs-reordering-check: build-3dgs-fixture-only
+	@test -n "$(THREEDGS_BUNDLE)" || { echo "THREEDGS_BUNDLE is required" >&2; exit 2; }
+	@test -n "$(THREEDGS_FROZEN_DEMAND)" || { echo "THREEDGS_FROZEN_DEMAND is required" >&2; exit 2; }
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	modprobe sch_dualpi2
+	sh tools/l4s/build_3dgs_scheduled_fixture.sh
+	python3 tools/l4s/run_3dgs_reordering.py \
+		--output "$(L4S_RESULT_DIR)" \
+		--source-bundle "$(THREEDGS_BUNDLE)" \
+		--frozen-demand "$(THREEDGS_FROZEN_DEMAND)" \
+		$(THREEDGS_REORDERING_ARGS)
+	python3 tools/l4s/analyze_3dgs_reordering.py "$(L4S_RESULT_DIR)"
 
 l4s-3dgs-native-guest-check: build-3dgs-native-only
 	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }

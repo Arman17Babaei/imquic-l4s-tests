@@ -6,6 +6,11 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import logging
+import statistics
+import sys
+import time
+import types
 from pathlib import Path
 from typing import Iterator
 
@@ -13,6 +18,75 @@ import numpy as np
 from PIL import Image
 
 from three_dgs_bundle import _activate_dependency, image_psnr, read_bundle, require_dependency
+
+
+def activate_render_dependency(dependency: Path) -> None:
+    """Activate render-only client modules without loading the MoQ runtime."""
+    _activate_dependency(dependency)
+    package_name = "streaming.transport.client"
+    if package_name in sys.modules:
+        return
+    package = types.ModuleType(package_name)
+    package.__package__ = package_name
+    package.__path__ = [
+        str(Path(dependency) / "src/streaming/transport/client")
+    ]
+    sys.modules[package_name] = package
+
+
+def gif_frame_durations_ms(
+    frames: list[dict], frame_indices: list[int], fixed_duration_ms: int | None
+) -> list[int]:
+    if fixed_duration_ms is not None:
+        return [fixed_duration_ms] * len(frame_indices)
+    if not frame_indices:
+        return []
+    timestamps = [float(frames[index]["timestamp_ms"]) for index in frame_indices]
+    differences = [
+        max(1, int(round(later - earlier)))
+        for earlier, later in zip(timestamps, timestamps[1:])
+    ]
+    final_duration = (
+        max(1, int(round(statistics.median(differences))))
+        if differences else 40
+    )
+    return [*differences, final_duration]
+
+
+def quantize_gif_durations_ms(durations_ms: list[int]) -> list[int]:
+    """Quantize timings to GIF's 10 ms clock without cumulative drift."""
+    quantized: list[int] = []
+    source_total = 0
+    encoded_total = 0
+    for duration_ms in durations_ms:
+        source_total += duration_ms
+        target_total = max(10, int(round(source_total / 10.0)) * 10)
+        encoded_duration = max(10, target_total - encoded_total)
+        quantized.append(encoded_duration)
+        encoded_total += encoded_duration
+    return quantized
+
+
+def wait_for_png(path: Path, *, timeout_s: float = 30.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if path.is_file():
+            try:
+                with Image.open(path) as image:
+                    image.verify()
+                return
+            except (OSError, SyntaxError):
+                pass
+        time.sleep(0.01)
+    raise RuntimeError(f"renderer did not produce {path}")
+
+
+def configure_render_logging() -> None:
+    import structlog
+
+    structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(logging.WARNING)
+    )
 
 
 class BundleCursor:
@@ -124,6 +198,7 @@ def render_references(
     width: int,
     height: int,
     frame_step: int,
+    gaussian_budget: int,
 ) -> tuple[dict[int, Path], list[dict]]:
     from streaming.transport.client.pipeline import RenderPipeline
     from streaming.transport.client.viewport.trace import load_trace
@@ -141,6 +216,9 @@ def render_references(
     paths: dict[int, Path] = {}
     for frame_index in range(0, len(frames), frame_step):
         frame = frames[frame_index]
+        # Offline quality must not depend on the live client's adaptive
+        # performance budget or on the speed of the rendering GPU.
+        pipeline._gaussian_budget = gaussian_budget
         pipeline.render_frame(
             frame_idx=frame_index,
             view_matrix=frame["view_matrix"],
@@ -150,8 +228,7 @@ def render_references(
             clusters_received=0,
         )
         png = output / "frames" / "png" / f"frame_{frame_index:04d}.png"
-        if not png.is_file():
-            raise RuntimeError(f"reference renderer did not produce {png}")
+        wait_for_png(png)
         paths[frame_index] = png
     pipeline.close()
     return paths, frames
@@ -169,24 +246,28 @@ def render_case(
     width: int,
     height: int,
     frame_step: int,
+    gaussian_budget: int,
     evaluation_lag_ms: float,
-    gif_duration_ms: int,
+    gif_duration_ms: int | None,
 ) -> dict[str, object]:
     from streaming.transport.client.cache import SplatCache
     from streaming.transport.client.pipeline import RenderPipeline
     from streaming.transport.protocol import decode_cluster
 
-    high_result = json.loads(
-        (case / "high-prague" / "publisher-result.json").read_text(encoding="utf-8")
+    case_result = json.loads((case / "result.json").read_text(encoding="utf-8"))
+    publisher_starts = case_result["publisher_start_epoch_us"]
+    anchor_path = (
+        "high-prague" if "high-prague" in publisher_starts else "low-reno"
     )
-    publisher_epoch_us = int(high_result["publisher_started_epoch_us"])
+    publisher_epoch_us = int(publisher_starts[anchor_path])
     initial_ms = float(frozen_demand["initial_base_release_ms"])
     time_scale = float(frozen_demand["demand_time_scale"])
 
     timeline = read_combined_timeline(case / "combined-arrival-timeline.csv")
+    timeline_paths = sorted({str(row["path"]) for row in timeline})
     cursors = {
-        "high-prague": BundleCursor(case / "high-prague" / "received.bundle"),
-        "low-reno": BundleCursor(case / "low-reno" / "received.bundle"),
+        name: BundleCursor(case / name / "received.bundle")
+        for name in timeline_paths
     }
     candidate_cache = SplatCache()
     output = case / f"render-lag-{evaluation_lag_ms:g}ms"
@@ -206,6 +287,7 @@ def render_case(
     received_gaussians = 0
     rows: list[dict[str, object]] = []
     rendered_paths: list[Path] = []
+    rendered_frame_indices: list[int] = []
 
     for frame_index in range(0, len(frames), frame_step):
         frame = frames[frame_index]
@@ -226,7 +308,8 @@ def render_case(
             received_gaussians += int(arrival["num_gaussians"])
             timeline_index += 1
 
-        pipeline.render_frame(
+        pipeline._gaussian_budget = gaussian_budget
+        rendered = pipeline.render_frame(
             frame_idx=frame_index,
             view_matrix=frame["view_matrix"],
             fov=frame["fov"],
@@ -235,9 +318,13 @@ def render_case(
             clusters_received=received_objects,
         )
         candidate_png = output / "frames" / "png" / f"frame_{frame_index:04d}.png"
-        if not candidate_png.is_file():
-            raise RuntimeError(f"candidate renderer did not produce {candidate_png}")
+        if rendered is None:
+            candidate_png.parent.mkdir(parents=True, exist_ok=True)
+            Image.new("RGB", (width, height), color="black").save(candidate_png)
+        else:
+            wait_for_png(candidate_png)
         rendered_paths.append(candidate_png)
+        rendered_frame_indices.append(frame_index)
         reference_png = reference_paths[frame_index]
         rows.append(
             {
@@ -262,13 +349,17 @@ def render_case(
         writer.writerows(rows)
 
     gif_path = output / "trace.gif"
+    gif_durations = gif_frame_durations_ms(
+        frames, rendered_frame_indices, gif_duration_ms
+    )
+    encoded_gif_durations = quantize_gif_durations_ms(gif_durations)
     if rendered_paths:
         images = [Image.open(path).convert("RGB") for path in rendered_paths]
         images[0].save(
             gif_path,
             save_all=True,
             append_images=images[1:],
-            duration=gif_duration_ms,
+            duration=encoded_gif_durations,
             loop=0,
         )
         for image in images:
@@ -285,6 +376,11 @@ def render_case(
         "mean_psnr_db": float(np.mean(psnrs)) if psnrs else None,
         "frame_quality_csv": str(metrics_path),
         "gif": str(gif_path) if gif_path.is_file() else None,
+        "gif_timing": "fixed" if gif_duration_ms is not None else "trace timestamps",
+        "gif_source_duration_ms": sum(gif_durations),
+        "gif_duration_ms": sum(encoded_gif_durations),
+        "gif_timebase_ms": 10,
+        "gaussian_budget": gaussian_budget,
     }
     (output / "summary.json").write_text(
         json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -304,23 +400,33 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--frame-step", type=int, default=1)
+    parser.add_argument(
+        "--gaussian-budget", type=int, default=5_000_000,
+        help="fixed offline per-frame budget (default exceeds this scene)",
+    )
     parser.add_argument("--evaluation-lag-ms", type=float, default=0.0)
-    parser.add_argument("--gif-duration-ms", type=int, default=40)
+    parser.add_argument(
+        "--gif-duration-ms", type=int,
+        help="fixed frame duration; by default preserve sampled trace timestamps",
+    )
     parser.add_argument("--allow-unpinned-3dgs", action="store_true")
     args = parser.parse_args()
+    configure_render_logging()
 
     if args.frame_step <= 0:
         parser.error("--frame-step must be positive")
+    if args.gaussian_budget <= 0:
+        parser.error("--gaussian-budget must be positive")
     if args.evaluation_lag_ms < 0:
         parser.error("--evaluation-lag-ms must be non-negative")
-    if args.gif_duration_ms <= 0:
+    if args.gif_duration_ms is not None and args.gif_duration_ms <= 0:
         parser.error("--gif-duration-ms must be positive")
     for path in (args.root, args.source_bundle, args.cache, args.trace, args.three_dgs_dir):
         if not path.exists():
             raise SystemExit(f"missing required path: {path}")
 
     require_dependency(args.three_dgs_dir, allow_unpinned=args.allow_unpinned_3dgs)
-    _activate_dependency(args.three_dgs_dir)
+    activate_render_dependency(args.three_dgs_dir)
     frozen_demand = json.loads(
         (args.root / "inputs" / "frozen-demand-order.json").read_text(encoding="utf-8")
     )
@@ -333,6 +439,7 @@ def main() -> None:
         width=args.width,
         height=args.height,
         frame_step=args.frame_step,
+        gaussian_budget=args.gaussian_budget,
     )
 
     cases = sorted(
@@ -351,6 +458,7 @@ def main() -> None:
             width=args.width,
             height=args.height,
             frame_step=args.frame_step,
+            gaussian_budget=args.gaussian_budget,
             evaluation_lag_ms=args.evaluation_lag_ms,
             gif_duration_ms=args.gif_duration_ms,
         )
@@ -362,6 +470,7 @@ def main() -> None:
                 "scenario": "3dgs-partial-l4s-post-send-reordering",
                 "evaluation_lag_ms": args.evaluation_lag_ms,
                 "frame_step": args.frame_step,
+                "gaussian_budget": args.gaussian_budget,
                 "cases": results,
             },
             indent=2,

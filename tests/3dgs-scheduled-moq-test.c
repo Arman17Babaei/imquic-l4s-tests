@@ -2,9 +2,18 @@
 #include "3dgs-moq-test.c"
 #undef main
 
-static const char *release_schedule_path;
+static const char *release_schedule_path, *admission_path;
 
-static int read_release_ms(FILE *schedule, uint64_t *release_ms) {
+typedef struct scheduled_record {
+	long payload_offset;
+	uint32_t payload_length;
+	uint64_t release_ms;
+	uint64_t importance_rank;
+	gboolean admitted;
+} scheduled_record;
+
+static int read_schedule_entry(FILE *schedule, uint64_t *release_ms,
+		uint64_t *importance_rank) {
 	char line[128];
 	if(fgets(line, sizeof(line), schedule) == NULL)
 		return -1;
@@ -12,11 +21,19 @@ static int read_release_ms(FILE *schedule, uint64_t *release_ms) {
 	unsigned long long value = strtoull(line, &end, 10);
 	if(end == line)
 		return -1;
+	*release_ms = (uint64_t)value;
+	while(*end == ' ' || *end == '\t')
+		end++;
+	char *rank_end = NULL;
+	value = strtoull(end, &rank_end, 10);
+	if(rank_end == end)
+		return -1;
+	*importance_rank = (uint64_t)value;
+	end = rank_end;
 	while(*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')
 		end++;
 	if(*end != '\0')
 		return -1;
-	*release_ms = (uint64_t)value;
 	return 0;
 }
 
@@ -29,6 +46,110 @@ static int schedule_has_extra_values(FILE *schedule) {
 		if(*cursor != '\0')
 			return 1;
 	}
+	return 0;
+}
+
+static int index_scheduled_records(FILE *source, FILE *schedule,
+		scheduled_record **records_out) {
+	if(source_objects == 0) {
+		if(schedule_has_extra_values(schedule))
+			return -1;
+		*records_out = NULL;
+		return 0;
+	}
+	scheduled_record *records = calloc((size_t)source_objects, sizeof(*records));
+	if(records == NULL)
+		return -1;
+	uint64_t indexed_bytes = 0;
+	for(uint64_t i = 0; i < source_objects; i++) {
+		uint8_t encoded_len[4];
+		if(read_exact(source, encoded_len, sizeof(encoded_len)) < 0)
+			goto fail;
+		uint32_t length = load_u32_le(encoded_len);
+		if(length == 0 || length > MAX_RECORD_BYTES)
+			goto fail;
+		long offset = ftell(source);
+		if(offset < 0 || fseek(source, (long)length, SEEK_CUR) != 0)
+			goto fail;
+		records[i].payload_offset = offset;
+		records[i].payload_length = length;
+		if(read_schedule_entry(schedule, &records[i].release_ms,
+				&records[i].importance_rank) < 0)
+			goto fail;
+		for(uint64_t prior = 0; prior < i; prior++) {
+			if(records[prior].importance_rank == records[i].importance_rank)
+				goto fail;
+		}
+		indexed_bytes += length;
+	}
+	if(indexed_bytes != source_bytes || fgetc(source) != EOF ||
+			schedule_has_extra_values(schedule))
+		goto fail;
+	*records_out = records;
+	return 0;
+
+fail:
+	free(records);
+	return -1;
+}
+
+static int select_scheduled_record(scheduled_record *records,
+		uint64_t count, uint64_t elapsed_ms, uint64_t *next_release_ms) {
+	int best = -1;
+	uint64_t next_release = UINT64_MAX;
+	for(uint64_t i = 0; i < count; i++) {
+		if(records[i].admitted)
+			continue;
+		if(records[i].release_ms > elapsed_ms) {
+			if(records[i].release_ms < next_release)
+				next_release = records[i].release_ms;
+			continue;
+		}
+		if(best < 0 || records[i].importance_rank < records[best].importance_rank ||
+				(records[i].importance_rank == records[best].importance_rank &&
+				 i < (uint64_t)best))
+			best = (int)i;
+	}
+	*next_release_ms = next_release;
+	if(best >= 0)
+		return best;
+	return next_release == UINT64_MAX ? -2 : -1;
+}
+
+static int read_scheduled_payload(FILE *source, const scheduled_record *record,
+		uint8_t **payload) {
+	if(fseek(source, record->payload_offset, SEEK_SET) != 0)
+		return -1;
+	*payload = malloc(record->payload_length);
+	if(*payload == NULL || read_exact(source, *payload, record->payload_length) < 0) {
+		free(*payload);
+		*payload = NULL;
+		return -1;
+	}
+	return 0;
+}
+
+static int schedule_self_test(void) {
+	scheduled_record records[] = {
+		{.release_ms = 0, .importance_rank = 5},
+		{.release_ms = 10, .importance_rank = 0},
+		{.release_ms = 0, .importance_rank = 2},
+	};
+	uint64_t next_release = UINT64_MAX;
+	int selected = select_scheduled_record(records, 3, 0, &next_release);
+	if(selected != 2)
+		return 1;
+	records[selected].admitted = TRUE;
+	selected = select_scheduled_record(records, 3, 0, &next_release);
+	if(selected != 0)
+		return 1;
+	records[selected].admitted = TRUE;
+	selected = select_scheduled_record(records, 3, 0, &next_release);
+	if(selected != -1 || next_release != 10)
+		return 1;
+	selected = select_scheduled_record(records, 3, 10, &next_release);
+	if(selected != 1)
+		return 1;
 	return 0;
 }
 
@@ -59,13 +180,25 @@ static int run_scheduled_publisher(
 	while(!g_atomic_int_get(&stop_requested) && !g_atomic_int_get(&publishing))
 		g_usleep(1000);
 
-	FILE *source = NULL, *metrics = NULL, *schedule = NULL;
+	FILE *source = NULL, *metrics = NULL, *schedule = NULL, *admission = NULL;
+	scheduled_record *records = NULL;
 	if(!g_atomic_int_get(&failed) && open_source_bundle(&source) < 0)
 		fail_case("could not open source scene bundle");
 	if(!g_atomic_int_get(&failed)) {
 		schedule = fopen(release_schedule_path, "r");
 		if(schedule == NULL)
 			fail_case("could not open release schedule");
+	}
+	if(!g_atomic_int_get(&failed) &&
+			index_scheduled_records(source, schedule, &records) < 0)
+		fail_case("invalid source bundle or eligibility/rank schedule");
+	if(!g_atomic_int_get(&failed) && admission_path != NULL) {
+		admission = fopen(admission_path, "w");
+		if(admission == NULL)
+			fail_case("could not open admission-order log");
+		else
+			fputs("admission_index,time_us,bundle_record_index,release_ms,"
+				"importance_rank,subgroup_id,payload_bytes\n", admission);
 	}
 	if(metrics_path != NULL) {
 		metrics = fopen(metrics_path, "w");
@@ -79,13 +212,8 @@ static int run_scheduled_publisher(
 	gint64 started_real_us = g_get_real_time();
 	gint64 deadline = started + (gint64)deadline_ms * 1000;
 	gint64 next_metric = started;
-	gboolean source_done = FALSE;
-	uint64_t next_release_ms = 0;
+	gboolean source_done = source_objects == 0;
 	uint64_t scheduled_records = 0;
-	if(!g_atomic_int_get(&failed) && source_objects > 0) {
-		if(read_release_ms(schedule, &next_release_ms) < 0)
-			fail_case("release schedule has fewer rows than source bundle");
-	}
 
 	while(!g_atomic_int_get(&stop_requested) &&
 			!g_atomic_int_get(&failed) &&
@@ -106,8 +234,16 @@ static int run_scheduled_publisher(
 			continue;
 		}
 
-		gint64 release_at = started + (gint64)next_release_ms * 1000;
-		if(now < release_at) {
+		uint64_t elapsed_ms = (uint64_t)((now - started) / 1000);
+		uint64_t next_release_ms = UINT64_MAX;
+		int selected = select_scheduled_record(
+			records, source_objects, elapsed_ms, &next_release_ms);
+		if(selected == -2) {
+			source_done = TRUE;
+			continue;
+		}
+		if(selected < 0) {
+			gint64 release_at = started + (gint64)next_release_ms * 1000;
 			gint64 sleep_us = release_at - now;
 			g_usleep((gulong)(sleep_us > 1000 ? 1000 : sleep_us));
 			continue;
@@ -122,10 +258,10 @@ static int run_scheduled_publisher(
 		}
 
 		uint8_t *payload = NULL;
-		uint32_t length = 0;
-		int read_status = read_record(source, &payload, &length);
-		if(read_status != 0) {
-			fail_case("source bundle ended before declared object count");
+		scheduled_record *record = &records[selected];
+		uint32_t length = record->payload_length;
+		if(read_scheduled_payload(source, record, &payload) < 0) {
+			fail_case("could not read indexed source bundle record");
 			break;
 		}
 		uint64_t subgroup_id = embedded_subgroup(payload, length);
@@ -144,6 +280,13 @@ static int run_scheduled_publisher(
 		if(imquic_moq_send_object(connection, &object) < 0)
 			fail_case("could not queue scheduled 3dgs object");
 		else {
+			record->admitted = TRUE;
+			if(admission != NULL) {
+				fprintf(admission, "%" PRIu64 ",%" G_GINT64_FORMAT ",%d,%" PRIu64
+					",%" PRIu64 ",%" PRIu64 ",%u\n",
+					scheduled_records, g_get_monotonic_time() - started, selected,
+					record->release_ms, record->importance_rank, subgroup_id, length);
+			}
 			queued_objects++;
 			queued_bytes += length;
 		}
@@ -152,10 +295,6 @@ static int run_scheduled_publisher(
 
 		if(scheduled_records >= source_objects) {
 			source_done = TRUE;
-			if(schedule_has_extra_values(schedule))
-				fail_case("release schedule has more rows than source bundle");
-		} else if(read_release_ms(schedule, &next_release_ms) < 0) {
-			fail_case("release schedule has fewer rows than source bundle");
 		}
 	}
 
@@ -170,6 +309,9 @@ static int run_scheduled_publisher(
 		fclose(metrics);
 	if(schedule != NULL)
 		fclose(schedule);
+	if(admission != NULL)
+		fclose(admission);
+	free(records);
 
 	if(result_path != NULL) {
 		FILE *result = fopen(result_path, "w");
@@ -179,7 +321,9 @@ static int run_scheduled_publisher(
 				",\"queued_objects\":%" PRIu64 ",\"queued_bytes\":%" PRIu64
 				",\"deadline_ms\":%u,\"source_fully_queued\":%s"
 				",\"publisher_started_epoch_us\":%" G_GINT64_FORMAT
-				",\"scheduled\":true,\"validated\":%s}\n",
+				",\"scheduled\":true,\"scheduling_policy\":"
+				"\"lowest-importance-rank-among-currently-eligible\","
+				"\"validated\":%s}\n",
 				source_objects, source_bytes, queued_objects, queued_bytes, deadline_ms,
 				source_done ? "true" : "false", started_real_us,
 				g_atomic_int_get(&failed) ? "false" : "true");
@@ -194,7 +338,9 @@ static int run_scheduled_publisher(
 }
 
 int main(int argc, char **argv) {
-	if(argc == 10 && !strcmp(argv[1], "publisher-scheduled")) {
+	if(argc == 2 && !strcmp(argv[1], "schedule-self-test"))
+		return schedule_self_test();
+	if(argc == 11 && !strcmp(argv[1], "publisher-scheduled")) {
 		moq_namespace.buffer = (uint8_t *)NAMESPACE_NAME;
 		moq_namespace.length = strlen(NAMESPACE_NAME);
 		moq_track.buffer = (uint8_t *)TRACK_NAME;
@@ -206,6 +352,7 @@ int main(int argc, char **argv) {
 		metrics_path = strcmp(argv[7], "-") ? argv[7] : NULL;
 		result_path = argv[8];
 		release_schedule_path = argv[9];
+		admission_path = argv[10];
 		return run_scheduled_publisher(
 			argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);
 	}
