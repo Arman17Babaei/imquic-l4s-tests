@@ -253,6 +253,7 @@ static int run_gated_publisher_v2(
 	FILE *metrics = NULL;
 	FILE *schedule = NULL;
 	FILE *admission = NULL;
+	FILE *admission_gate = NULL;
 	scheduled_record_v2 *records = NULL;
 
 	if(!g_atomic_int_get(&failed) && open_source_bundle(&source) < 0)
@@ -273,10 +274,24 @@ static int run_gated_publisher_v2(
 		} else {
 			fputs(
 				"admission_index,time_us,bundle_record_index,release_ms,"
-				"importance_rank,subgroup_id,payload_bytes,"
-				"queued_stream_bytes_before,bytes_in_flight_before,"
-				"cwnd_bytes_before,queue_threshold_bytes\n",
+				"importance_rank,subgroup_id,payload_bytes\n",
 				admission);
+			char *gate_path = g_strdup_printf("%s.gate.csv", admission_path_v2);
+			if(gate_path == NULL) {
+				fail_case("could not allocate admission-gate path");
+			} else {
+				admission_gate = fopen(gate_path, "w");
+				g_free(gate_path);
+				if(admission_gate == NULL) {
+					fail_case("could not open admission-gate log");
+				} else {
+					fputs(
+						"admission_index,time_us,bundle_record_index,payload_bytes,"
+						"queued_stream_bytes_before,bytes_in_flight_before,"
+						"cwnd_bytes_before,queue_threshold_bytes\n",
+						admission_gate);
+				}
+			}
 		}
 	}
 
@@ -380,22 +395,32 @@ static int run_gated_publisher_v2(
 		} else {
 			record->admitted = TRUE;
 			if(admission != NULL) {
+				gint64 admission_time_us = g_get_monotonic_time() - started;
 				fprintf(
 					admission,
 					"%" PRIu64 ",%" G_GINT64_FORMAT ",%d,%" PRIu64
-					",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64
-					",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+					",%" PRIu64 ",%" PRIu64 ",%u\n",
 					scheduled_records,
-					g_get_monotonic_time() - started,
+					admission_time_us,
 					selected,
 					record->release_ms,
 					record->importance_rank,
 					subgroup_id,
-					length,
-					transport.queued_stream_bytes,
-					transport.bytes_in_flight,
-					transport.cwnd_bytes,
-					queue_threshold);
+					length);
+				if(admission_gate != NULL) {
+					fprintf(
+						admission_gate,
+						"%" PRIu64 ",%" G_GINT64_FORMAT ",%d,%u,%" PRIu64
+						",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+						scheduled_records,
+						admission_time_us,
+						selected,
+						length,
+						transport.queued_stream_bytes,
+						transport.bytes_in_flight,
+						transport.cwnd_bytes,
+						queue_threshold);
+				}
 			}
 			queued_objects++;
 			queued_bytes += length;
@@ -424,6 +449,8 @@ static int run_gated_publisher_v2(
 		fclose(schedule);
 	if(admission != NULL)
 		fclose(admission);
+	if(admission_gate != NULL)
+		fclose(admission_gate);
 	free(records);
 
 	if(result_path != NULL) {
