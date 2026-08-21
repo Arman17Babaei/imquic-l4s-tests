@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run one or more 3DGS reordering cases in the validated QEMU guest."""
+"""Run the reviewed 3DGS post-send reordering experiment in QEMU."""
 
 from __future__ import annotations
 
@@ -30,8 +30,12 @@ def main() -> None:
     parser.add_argument("--source-bundle", type=Path, required=True)
     parser.add_argument("--frozen-demand", type=Path, required=True)
     parser.add_argument(
-        "--l4s-fractions", type=_fractions, default="0.25",
-        help="comma-separated Prague/L4S payload fractions in [0,1]",
+        "--enhancement-l4s-fractions", "--l4s-fractions",
+        dest="enhancement_l4s_fractions", type=_fractions, default="0,0.5,1",
+        help=(
+            "fraction of Enhancement payload placed on Prague; Base always uses "
+            "its own Prague connection (deprecated alias: --l4s-fractions)"
+        ),
     )
     parser.add_argument("--repetitions", type=int, default=1)
     parser.add_argument("--deadline-ms", type=int, default=30000)
@@ -50,7 +54,7 @@ def main() -> None:
         parser.error("repetitions and deadline must be positive")
 
     experiment_args = [
-        "--l4s-fractions", args.l4s_fractions,
+        "--enhancement-l4s-fractions", args.enhancement_l4s_fractions,
         "--repetitions", str(args.repetitions),
         "--deadline-ms", str(args.deadline_ms),
         *[value for value in args.reordering_args if value != "--"],
