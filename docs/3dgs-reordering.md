@@ -1,318 +1,279 @@
-# Partial-L4S post-send correction experiment
+# Two-connection L4S spectrum experiment for 3DGS
 
 ## Research question
 
-This experiment tests a narrow transport hypothesis rather than ordinary L4S
-latency reduction:
+This experiment tests whether giving progressively more of a 3DGS workload L4S
+service always improves rendered quality, or whether retaining some lower-ranked
+traffic in the Classic queue can create useful post-send reordering opportunities
+for later, higher-ranked data.
 
-> Can a provider-side DualQ bottleneck correct an application decision *after*
-> speculative Enhancement has already been sent, by allowing later-generated
-> Base traffic to overtake it before a slower downstream Classic bottleneck;
-> and can that corrected order improve rendered SSIM enough to compensate for
-> the extra Enhancement delay?
-
-The primary topology is deliberately a **partial L4S deployment**:
+The hypothesis is intentionally application-level:
 
 ```text
-server
-  |
-  v
-s1: HTB + DualPI2                 provider / aggregation bottleneck
-  |
-  v
-s2: HTB + pfifo                   slower downstream Classic bottleneck
-  |
-  v
-client
+more L4S
+  -> less queueing for more objects
+  -> but less Classic residence / less opportunity for later objects to overtake
+  -> final frame availability changes
+  -> SSIM can improve or degrade
 ```
 
-A background receiver branches from `s2`. A controlled Classic TCP flow from
-the server to that receiver traverses the `s1` provider egress but does not
-traverse `s2 -> client`. It can therefore build aggregation pressure at DualPI2
-without itself occupying the later client FIFO.
+The experiment therefore sweeps a continuous transport split instead of defining
+one subgroup as permanently "Base".
 
-The experiment is designed around the causal sequence
+## Exactly two media connections
+
+Every case establishes the same two QUIC/MoQ connections before the workload
+starts:
 
 ```text
-old-track Enhancement admitted/sent
-        ->
-later bicycle-trace demand event occurs
-        ->
-new-track Base becomes eligible
-        ->
-Base/Prague reaches s1 after some Enhancement/Reno packets
-        ->
-DualQ may emit Base first
-        ->
-s2 FIFO may preserve and enlarge the time value of that corrected order
-        ->
-more useful splats may be available at render time
+UDP 4444: Prague + ECT(1)
+UDP 4443: Reno + Not-ECT
 ```
 
-A run that observes no inversion is a valid negative result. The packet-order
-analyzer separates **measurement validity** from **hypothesis outcome**.
+This is true for every requested L4S fraction, including the endpoints.
 
-## Semantic traffic model
+At `--l4s-fractions 0`, the Prague connection is established but carries an
+empty scene bundle.
 
-The earlier implementation split the whole scene by a global ranked fraction.
-That was not coherent with the hypothesis: it could put Base objects on Reno,
-and its `1.0` endpoint collapsed the experiment to one Prague connection.
-Those two effects confounded semantic priority with connection count and
-independent congestion windows.
+At `--l4s-fractions 1`, the Reno connection is established but carries an empty
+scene bundle.
 
-The reviewed experiment instead uses the progressive structure already encoded
-by the 3DGS preprocessing:
+Intermediate fractions still use exactly those same two connections. There is
+never a third media connection.
 
-- subgroup `0` = **Base**;
-- subgroups `1` and `2` = **Enhancement**.
+## Ranking and the L4S spectrum
 
-Base is invariant throughout the sweep:
+Every whole 3DGS object is ranked by:
 
 ```text
-Base -> dedicated Prague / ECT(1) connection, UDP source port 4444
+(progressive layer/subgroup ascending,
+ mean encoded opacity descending,
+ stable source order)
 ```
 
-Only Enhancement treatment changes:
+The subgroup/layer dominates opacity. Mean opacity is only a within-layer
+ordering signal.
+
+The requested fraction `alpha` is a payload-byte target. The highest-ranked
+whole-object prefix whose byte volume is closest to that target is assigned to
+Prague; all remaining objects are assigned to Reno.
+
+Conceptually:
 
 ```text
-Classic Enhancement -> Reno / Not-ECT, source port 4443
-L4S Enhancement     -> Prague / ECT(1), source port 4445
+alpha = 0.00  -> all scene objects Reno
+alpha = 0.25  -> top ~25% of bytes by (layer, opacity) Prague
+alpha = 0.50  -> top ~50% Prague
+alpha = 0.75  -> top ~75% Prague
+alpha = 1.00  -> all scene objects Prague
 ```
 
-The main knob is therefore
+Because whole-object boundaries are preserved, the actual byte fraction is
+recorded and can differ slightly from the requested fraction.
 
-```text
---enhancement-l4s-fractions
-```
-
-and means **fraction of Enhancement payload bytes placed on L4S**, using whole
-MoQ objects. It is not the fraction of the complete scene that is Base/L4S.
-The manifest records both the requested and achieved Enhancement fraction and
-the resulting total L4S byte fraction.
-
-The two endpoint controls are especially important:
-
-| Enhancement L4S fraction | Base connection | Enhancement connection | Interpretation |
-| ---: | --- | --- | --- |
-| `0` | Prague | Reno | proposed mixed L4S/Classic treatment |
-| `1` | Prague | Prague | all-L4S media control |
-
-Both endpoints therefore retain **two media connections**. The comparison does
-not turn a two-cwnd experiment into a one-cwnd experiment.
-
-Intermediate fractions use three media connections because Prague requires
-ECT(1) treatment consistently on its L4S connection. They are useful for
-estimating a quality/delay curve, but the `0` versus `1` endpoint comparison is
-the cleanest causal test.
+No rule forces all subgroup-0 objects onto Prague. A cutoff is allowed to fall
+inside any layer. This is deliberate: the experiment must reveal a spectrum,
+not encode the conclusion in the transport assignment.
 
 ## Frozen bicycle demand
 
-The network run never makes a live viewport decision.
-
-A preparation step combines the bicycle camera trace with the scene track
-bounding boxes and records the first trace frame in which each track becomes
-visible. The result is frozen in:
+The bicycle camera trace is used before the network experiment to derive the
+first frame in which each track enters the viewport. That order and those
+timestamps are frozen to:
 
 ```text
 inputs/frozen-demand-order.json
 ```
 
-Every repetition reuses the same track order and timestamps.
+Every repetition then uses the same fixed workload.
 
-All objects belonging to a track become application-eligible at that track's
-frozen first-visible time. Within each transport path, the publisher always
-admits the best global importance rank among currently eligible objects.
-Nothing belonging to a future track can be admitted early.
+The trace controls **eligibility**: an object cannot be admitted before its
+track's frozen first-visible time.
 
-This produces the post-send condition naturally. While Enhancement belonging
-to an already-visible track is still being transmitted, the camera reaches a
-later trace event. The new track's subgroup-0 Base then becomes eligible on the
-dedicated Prague connection. An earlier Reno packet at `s1` followed by a later
-Base/Prague packet at `s1` is therefore genuine already-sent Enhancement versus
-later-generated Base.
+The `(layer, mean opacity)` rank controls **which currently eligible object is
+chosen next**.
 
-After a satisfactory demand file has been produced from the real bicycle cache,
-retain that exact JSON as the canonical hard-coded workload for all paper runs.
-Do not regenerate it between treatments.
+Thus a lower-ranked object from an already-visible track may be transmitted
+before a future higher-ranked object exists. When the camera advances and that
+new object becomes eligible, it can jump ahead of lower-ranked objects that are
+still in the application queue.
 
-## Synchronized workload start
-
-The media connections are created before the workload begins. Each scheduled
-publisher:
-
-1. establishes its QUIC/MoQ session;
-2. receives the subscription;
-3. indexes its bundle and frozen release schedule;
-4. writes a `publisher-ready` marker;
-5. waits behind a common gate.
-
-The experiment runner waits until every active media publisher is ready, writes
-a future absolute epoch into `workload-go.txt`, and releases all publishers at
-that epoch.
-
-The actual start timestamps are retained and checked. Defaults reject a case if
-publisher start skew exceeds 2 ms or if a publisher wakes more than 5 ms from
-the requested epoch.
-
-Offline SSIM uses the **common logical workload epoch**, not whichever process
-happened to wake first.
-
-## Sender-side queue control
-
-The old fixture allowed up to 4 MiB of queued/in-flight data *per connection*.
-That would give an intermediate three-connection case more sender buffering than
-either endpoint.
-
-The reviewed runner instead treats
+This creates the condition needed to separate sender-side rescheduling from
+post-send network correction:
 
 ```text
---application-queue-budget-bytes
+low-ranked object already left application
+        |
+        | later camera event
+        v
+higher-ranked object becomes eligible
+        |
+        +-- can preempt unsent application objects
+        |
+        +-- cannot retroactively reorder bytes already handed to QUIC/network
 ```
 
-as an aggregate experiment budget. A fixed share
+## Sender admission gate
+
+The publisher does not preload the whole workload into IMQUIC.
+
+For each connection independently:
+
+1. keep unsent objects in the experiment's application priority queue;
+2. find the highest-ranked currently eligible object assigned to that transport;
+3. read IMQUIC transport metrics;
+4. admit the object only if both conditions hold:
 
 ```text
---base-queue-budget-fraction
+bytes_in_flight < cwnd_bytes
 ```
 
-is reserved for Base/Prague in every case. The remaining Enhancement budget is
-divided only among the active Enhancement connections.
+and
 
-Consequently Base sender buffering is invariant across the sweep and total
-sender buffering does not increase merely because a third connection exists.
+```text
+queued_stream_bytes < min(object_payload_bytes, transport_queue_slack_bytes)
+```
 
-## Fixed RTT and queueing
+The default is:
 
-`--base-rtt-ms` controls a deterministic base RTT, default 20 ms. It is
-implemented as pure `netem` fixed delay at sender egress and receiver ACK
-egress, with no jitter and a deliberately large non-limiting `netem` queue.
-The background TCP return path receives the same fixed delay.
+```text
+--transport-queue-slack-bytes 4096
+```
 
-The actual research queues remain:
+This intentionally keeps only a few kilobytes of unsent QUIC data beyond the
+experiment scheduler's control.
 
-- `s1 -> s2`: HTB + DualPI2;
-- `s2 -> client`: HTB + finite `pfifo` in the primary treatment.
+The gate is object-granular, not intra-object preemption. Once an MoQ object is
+handed to IMQUIC, its remaining bytes are committed to that transport. New
+higher-ranked objects can preempt objects that remain in the application queue,
+not bytes already inside an admitted object.
 
-A separately known constant packet-processing component can be folded into the
-fixed RTT because it is invariant across treatments. Variable queueing is not
-folded into that term.
+Each path writes:
 
-DualPI2 and the downstream qdisc are deleted and recreated before **every case**
-so AQM controller state cannot leak between fractions or repetitions.
+```text
+admission-order.csv
+admission-order.csv.gate.csv
+transport-metrics.csv
+```
 
-The default downstream FIFO is 128 packets, roughly 31 ms of 1500-byte packet
-serialization at 50 Mbit/s. It is intentionally finite; the experiment should
-not rely on a multi-hundred-millisecond artificial buffer.
+The gate sidecar records, for every admission:
+
+```text
+queued_stream_bytes_before
+bytes_in_flight_before
+cwnd_bytes_before
+queue_threshold_bytes
+```
+
+so the sender behavior can be audited after the run.
+
+## Network topology
+
+The default path is:
+
+```text
+server
+  |
+  | fixed propagation delay
+  v
+s1: provider bottleneck
+    HTB + DualPI2
+  |
+  v
+s2: downstream bottleneck
+    HTB + pfifo
+  |
+  v
+client
+```
+
+A background sink also branches from `s2`. The optional background flow:
+
+```text
+server -> s1 -> s2 -> background_sink
+```
+
+shares the provider `s1` egress but does not traverse the client-facing `s2`
+qdisc. It therefore creates provider aggregation pressure independently of the
+later client bottleneck.
+
+## Where base RTT is applied
+
+`--base-rtt-ms` defaults to 20 ms.
+
+It is not implemented by either bottleneck queue. The runner applies pure
+`netem` delay as:
+
+```text
+server egress -> provider: base_rtt_ms / 2
+client egress -> downstream: base_rtt_ms / 2
+```
+
+For the default:
+
+```text
+forward fixed delay = 10 ms
+reverse ACK fixed delay = 10 ms
+configured base RTT ~= 20 ms
+```
+
+The provider DualPI2 and downstream FIFO then add queueing delay on top.
+
+The netem qdiscs have no configured rate limit and a deliberately large packet
+limit; they are intended to represent propagation only.
 
 ## Packet-order evidence
 
-By default the runner records compact kernel-timestamped packet identities at:
+Packet-order logs are taken at:
 
 1. provider ingress;
-2. provider egress after DualPI2;
-3. downstream client egress.
+2. provider egress;
+3. downstream client-facing egress.
 
-Only the two causal flows are used for inversion analysis:
+Only media UDP ports 4443 and 4444 are analyzed.
 
-```text
-4443 = Classic Enhancement / Reno
-4444 = Base / Prague
-```
+Relevant GRO/GSO/TSO/UDP segmentation offloads are disabled where supported so
+that an unchanged encrypted UDP datagram can be fingerprinted consistently
+across observation points.
 
-Enhancement-Prague on 4445 is intentionally excluded from cross-class inversion
-counts.
-
-Before capture, GRO/GSO/TSO/LRO and relevant UDP segmentation/offload features
-are disabled where supported on the media path. The final `ethtool -k` state is
-stored in provenance. This is necessary because the matcher uses unchanged
-encrypted UDP datagrams; host offload must not manufacture different packet
-boundaries at different observation points.
-
-An inversion is counted only when a specific Classic Enhancement/Reno datagram
-reaches provider ingress before a Base/Prague datagram, but the Base/Prague
-datagram leaves provider egress first.
-
-The analyzer reports:
-
-- Base and Classic-Enhancement provider sojourn distributions;
-- inversion-pair count;
-- unique earlier Classic Enhancement bytes overtaken by Base;
-- fraction of Base/Prague packets that overtake at least one earlier Classic
-  packet;
-- persistence of concrete inversion witnesses at the downstream egress;
-- provider versus downstream witness gaps and their ratio.
-
-Capture loss, poor packet matching, or a missing expected flow makes a
-measurement invalid. **Zero inversions do not.** This is essential for the
-no-background and fully-L4S negative controls.
-
-## SSIM evaluation
-
-`render_3dgs_reordering.py` replays the bicycle trace offline. At every sampled
-camera frame it inserts only objects whose measured arrival timestamps are at
-or before the logical frame deadline, renders the accumulated splats, and
-compares the result with a full-scene reference at the same camera pose.
-
-Outputs include:
-
-- `frame-quality.csv`;
-- per-frame SSIM and PSNR;
-- rendered PNGs;
-- `trace.gif`;
-- a per-case quality summary.
-
-The renderer uses a fixed Gaussian budget rather than an adaptive live GPU
-budget. `--evaluation-lag-ms` can evaluate explicit application deadlines such
-as 10, 20, or 50 ms after each trace timestamp.
-
-The causal chain to demonstrate is
+The analyzer distinguishes an **opportunity**:
 
 ```text
-Classic Enhancement residence at s1
-  -> Base/Prague overtakes already-sent Enhancement
-  -> corrected order survives s2 FIFO
-  -> Base-relevant objects arrive earlier at their camera frames
-  -> SSIM gain exceeds the Enhancement-delay penalty
+Reno enters provider
+  < Prague enters provider
+  < same Reno leaves provider
 ```
 
-If SSIM does not improve, or if improvement occurs without measured Base versus
-Classic-Enhancement inversions, the proposed mechanism is not supported by that
-case.
-
-## Primary experiment matrix
-
-Do not start with a large parameter sweep. Establish causality with these cases
-first, all using the same frozen bicycle workload.
-
-1. **Mixed endpoint**: Enhancement fraction `0`, downstream Classic FIFO.
-2. **All-L4S endpoint**: Enhancement fraction `1`, same topology and rates.
-3. **No provider pressure**: repeat the mixed endpoint with
-   `--dc-background-mbps 0`; provider-created overtaking should fall sharply.
-4. **No downstream narrowing**: set downstream capacity equal to or above the
-   provider capacity; downstream gap amplification should disappear.
-5. **Full-L4S path control**: replace the downstream FIFO with DualPI2 using
-   `--downstream-mode dualpi2`.
-
-Only after those cases behave coherently should intermediate Enhancement L4S
-fractions be used to look for an SSIM optimum.
-
-Recommended first sweep:
+from an actual **overtake**:
 
 ```text
-Enhancement L4S fraction: 0, 0.25, 0.5, 0.75, 1
-provider rate:            300 Mbit/s
-later bottleneck:          50 Mbit/s
-base RTT:                  20 ms
-DualPI2 Classic target:    15 ms
-DualPI2 L4S step:           1 ms
+Reno enters before Prague
+but Prague leaves before Reno
 ```
 
-The 280 Mbit/s provider aggregation background is a stress point, not a claim
-about normal datacenter utilization. Sweep it after establishing the mechanism.
+A valid run with zero overtakes remains a valid negative result.
 
-## Preparation and run
+## Quality evaluation
 
-Freeze bicycle demand once on a host with the scene cache:
+The offline renderer replays the bicycle trace and, at every frame, reconstructs
+only objects that had arrived by that logical time. It renders the partial scene
+and compares it with the full-scene reference at the same camera pose.
+
+The primary quality metric is SSIM; PSNR is also recorded.
+
+The main spectrum is therefore:
+
+```text
+requested L4S byte fraction
+  -> actual L4S byte fraction
+  -> Classic/L4S residence and overtaking
+  -> object arrival times
+  -> frame SSIM
+```
+
+## Recommended first run
+
+Prepare and freeze demand once:
 
 ```sh
 results/venvs/3dgs/bin/python tools/l4s/prepare_3dgs_reordering.py \
@@ -322,80 +283,82 @@ results/venvs/3dgs/bin/python tools/l4s/prepare_3dgs_reordering.py \
   --allow-unpinned-3dgs
 ```
 
-Run dependency-light semantics tests:
-
-```sh
-python3 -m unittest discover -s tests -p 'test_3dgs_reordering*.py' -v
-```
-
-Build the synchronized scheduled fixture:
-
-```sh
-sh tools/l4s/build_3dgs_scheduled_fixture.sh
-build/imquic-3dgs-moq-scheduled schedule-self-test
-```
-
-Run in the validated QEMU guest:
+Then run the spectrum in QEMU:
 
 ```sh
 python3 tools/l4s/run_qemu_3dgs_reordering.py \
   --source-bundle results/l4s/3dgs-preparation/scene.bundle \
   --frozen-demand results/l4s/3dgs-reordering-demand/frozen-demand-order.json \
-  --enhancement-l4s-fractions 0,0.25,0.5,0.75,1 \
-  --repetitions 3
+  --l4s-fractions 0,0.25,0.5,0.75,1 \
+  --repetitions 3 \
+  -- \
+  --transport-queue-slack-bytes 4096
 ```
 
-Direct Mininet invocation on a prepared guest is:
+The direct Mininet form is:
 
 ```sh
 sudo python3 tools/l4s/run_3dgs_reordering.py \
   --output results/l4s/3dgs-reordering \
   --source-bundle /path/to/scene.bundle \
   --frozen-demand /path/to/frozen-demand-order.json \
-  --enhancement-l4s-fractions 0,0.25,0.5,0.75,1 \
+  --l4s-fractions 0,0.25,0.5,0.75,1 \
+  --transport-queue-slack-bytes 4096 \
+  --base-rtt-ms 20 \
   --l4s-rate 300mbit \
   --classic-rate 50mbit \
-  --base-rtt-ms 20 \
   --dc-background-mbps 280 \
   --repetitions 3
 ```
 
-Analyze packet order:
+Analyze packet order with:
 
 ```sh
 python3 tools/l4s/analyze_3dgs_reordering.py \
   results/l4s/3dgs-reordering
 ```
 
-Render quality after copying results to the GPU host:
+Render quality with:
 
 ```sh
 python3 tools/l4s/render_3dgs_reordering.py \
   results/l4s/3dgs-reordering \
   --source-bundle /path/to/scene.bundle \
-  --cache /path/to/bicycle-cache.pt \
+  --cache /path/to/point_cloud.cache \
   --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
   --3dgs-dir deps/3dgs_over_moq \
   --allow-unpinned-3dgs \
-  --device cuda:0 \
-  --ssim-device cuda:0
+  --device cuda:0
+```
+
+## Important controls
+
+At minimum compare:
+
+1. the full `0 -> 1` L4S fraction spectrum;
+2. `--dc-background-mbps 0`;
+3. downstream rate equal to or above provider rate;
+4. `--downstream-mode dualpi2`;
+5. several sender slack values if the result appears sensitive to sender buffering.
+
+For the slack ablation, useful values are:
+
+```text
+512, 1500, 4096, 16384 bytes
 ```
 
 ## Scientific basis
 
 - K. De Schepper, O. Albisser, O. Tilmans, and B. Briscoe,
-  “Dual Queue Coupled AQM: Deployable Very Low Queuing Delay for All,” 2022.
-  The experiment relies on DualQ's separate Classic/L4S queues and
-  short-timescale scheduling isolation; it does not treat L4S as an application
-  priority service.
-- K. De Schepper et al., “PI²: A Linearized AQM for both Classic and Scalable
-  TCP,” ACM CoNEXT 2016. This is the control-law basis underlying DualPI2.
-- E. Artioli et al., “MoQSplat: Adaptive Progressive Streaming of 3D Gaussian
-  Splatting over MoQ,” IEEE MMSP 2026. The experiment reuses the scene's existing
-  progressive subgroup semantics instead of inventing a second Base metric.
-- B. Kerbl, G. Kopanas, T. Leimkühler, and G. Drettakis, “3D Gaussian Splatting
-  for Real-Time Radiance Field Rendering,” ACM TOG 42(4), 2023,
-  DOI 10.1145/3592433.
-- Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli, “Image Quality
-  Assessment: From Error Visibility to Structural Similarity,” IEEE TIP 13(4),
-  2004, DOI 10.1109/TIP.2003.819861. The offline quality evaluation uses SSIM.
+  "Dual Queue Coupled AQM: Deployable Very Low Queuing Delay for All", 2022.
+- K. De Schepper et al., "PI²: A Linearized AQM for both Classic and Scalable
+  TCP", ACM CoNEXT 2016.
+- J. Iyengar and I. Swett, RFC 9002, "QUIC Loss Detection and Congestion
+  Control", 2021.
+- A. Langley et al., "The QUIC Transport Protocol: Design and Internet-Scale
+  Deployment", ACM SIGCOMM 2017.
+- E. Artioli et al., "MoQSplat: Adaptive Progressive Streaming of 3D Gaussian
+  Splatting over MoQ", IEEE MMSP 2026.
+- Z. Wang, A. C. Bovik, H. R. Sheikh, and E. P. Simoncelli,
+  "Image Quality Assessment: From Error Visibility to Structural Similarity",
+  IEEE TIP 13(4), 2004, DOI 10.1109/TIP.2003.819861.
