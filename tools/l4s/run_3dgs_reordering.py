@@ -36,9 +36,8 @@ BINARY = ROOT / "build" / "imquic-3dgs-moq-scheduled"
 PACKET_LOGGER = ROOT / "tools" / "l4s" / "capture_udp_order.py"
 DEFAULT_3DGS = Path(os.environ.get("THREEDGS_DIR", ROOT / "deps" / "3dgs_over_moq"))
 
-# Keep the two causal flows on the historical ports used by the packet-order
-# analyzer. A third connection is used only for Enhancement that is deliberately
-# moved back into L4S during the sweep.
+# Base remains on a dedicated Prague connection throughout the experiment.
+# Enhancement is the only traffic whose transport class is swept.
 PATHS = {
     "low-reno": {
         "role": "enhancement_classic", "mode": "reno", "port": 4443,
@@ -120,9 +119,22 @@ def _classic_fifo(interface: str, args) -> None:
     )
 
 
+def _configure_fixed_delay(interface: str, one_way_ms: float) -> None:
+    """Install a pure fixed-delay qdisc with a deliberately non-limiting queue."""
+    _reset(interface)
+    if one_way_ms <= 0:
+        return
+    subprocess.run(
+        [
+            "tc", "qdisc", "add", "dev", interface, "root", "netem",
+            "delay", f"{one_way_ms:g}ms", "limit", "100000",
+        ],
+        check=True,
+    )
+
+
 def _configure_bottlenecks(provider_egress: str, downstream_egress: str, args) -> None:
-    # Reset for every case. DualPI2 controller state must not leak from one
-    # fraction/repetition into the next.
+    # Reset for every case. AQM controller state must never leak across cases.
     _dualpi2(provider_egress, args, rate=args.l4s_rate, burst=args.l4s_burst)
     if args.downstream_mode == "dualpi2":
         _dualpi2(
@@ -134,13 +146,7 @@ def _configure_bottlenecks(provider_egress: str, downstream_egress: str, args) -
 
 
 def _disable_offloads(interfaces: list[str]) -> dict[str, str]:
-    """Make packet fingerprints stable across capture points.
-
-    QUIC UDP GSO/GRO can otherwise expose different packet boundaries on the
-    three interfaces even though the network did not reorder anything.
-    Unsupported ethtool features are ignored, but the final feature state is
-    retained as evidence.
-    """
+    """Make encrypted UDP packet identities stable across capture points."""
     features = (
         "gro", "gso", "tso", "lro", "tx-udp-segmentation",
         "rx-udp-gro-forwarding",
@@ -152,17 +158,16 @@ def _disable_offloads(interfaces: list[str]) -> dict[str, str]:
                 ["ethtool", "-K", interface, feature, "off"],
                 check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
-        state = subprocess.run(
+        evidence[interface] = subprocess.run(
             ["ethtool", "-k", interface], check=False, text=True,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         ).stdout
-        evidence[interface] = state
     return evidence
 
 
 def _pcap_capture(interface: str, path: Path, *, server_ip: str):
-    # Only Base/Prague (4444) and Classic Enhancement/Reno (4443) are causal
-    # evidence. Enhancement/Prague (4445) is intentionally excluded.
+    # 4444 carries Base only and 4443 carries Classic Enhancement only.
+    # Enhancement-Prague (4445) is intentionally excluded from causal inversion counts.
     return subprocess.Popen(
         [
             "tcpdump", "-i", interface, "-s", "0", "-U", "-w", str(path),
@@ -280,12 +285,13 @@ def _write_combined_timeline(
             row["track_id"], row["group_id"],
             int(row["subgroup_id"]), int(row["object_id"]),
         )
+        if identity in manifest_by_identity:
+            raise RuntimeError(f"duplicate semantic manifest identity: {identity}")
         manifest_by_identity[identity] = row
 
     rows: list[dict[str, object]] = []
     for name, result in path_results.items():
-        subscriber = result["subscriber"]
-        subscriber_start = int(subscriber["started_epoch_us"])
+        subscriber_start = int(result["subscriber"]["started_epoch_us"])
         timeline_path = case / name / "arrival-timeline.csv"
         received_path = case / name / "received.bundle"
         missing = object()
@@ -369,11 +375,34 @@ def _wait_publishers_ready(
     raise RuntimeError(f"publishers not ready before timeout: {', '.join(missing)}")
 
 
+def _path_queue_budgets(active_paths: list[str], args) -> dict[str, int]:
+    """Hold Base buffering constant; divide only the Enhancement budget."""
+    base_budget = int(round(
+        args.application_queue_budget_bytes * args.base_queue_budget_fraction
+    ))
+    enhancement_budget = args.application_queue_budget_bytes - base_budget
+    enhancement_paths = [
+        name for name in active_paths if PATHS[name]["semantic_layer"] == "enhancement"
+    ]
+    if not enhancement_paths:
+        raise RuntimeError("experiment requires an active Enhancement connection")
+    if base_budget < 65536 or enhancement_budget < len(enhancement_paths) * 65536:
+        raise RuntimeError("semantic application queue budgets are too small")
+    budgets = {"high-prague": base_budget}
+    base_share = enhancement_budget // len(enhancement_paths)
+    remainder = enhancement_budget - base_share * len(enhancement_paths)
+    for index, name in enumerate(sorted(enhancement_paths)):
+        budgets[name] = base_share + (1 if index < remainder else 0)
+    if sum(budgets.values()) != args.application_queue_budget_bytes:
+        raise RuntimeError("per-path queue budgets do not sum to aggregate budget")
+    return budgets
+
+
 def _run_case(
     *, client, server, background_sink,
     provider_egress: str, downstream_egress: str,
     provider_ingress: str,
-    experiment_root: Path, split_root: Path, manifest: dict[str, object],
+    experiment_root: Path, manifest: dict[str, object],
     fraction: float, repetition: int, args,
 ) -> dict[str, object]:
     tag = f"{fraction:.4f}".rstrip("0").rstrip(".").replace(".", "p")
@@ -393,7 +422,6 @@ def _run_case(
         )
 
     save_tc_state("before")
-
     active_paths = [
         name for name, config in PATHS.items()
         if int(manifest[config["role"]]["objects"]) > 0
@@ -402,11 +430,7 @@ def _run_case(
         raise RuntimeError("Base/Prague path must always be active")
     if len(active_paths) < 2:
         raise RuntimeError("experiment requires a separate Enhancement connection")
-    if args.application_queue_budget_bytes < len(active_paths) * 65536:
-        raise RuntimeError(
-            "application queue budget is too small for the active connections"
-        )
-    per_path_queue_budget = args.application_queue_budget_bytes // len(active_paths)
+    queue_budgets = _path_queue_budgets(active_paths, args)
 
     captures = {}
     if args.capture_mode != "none":
@@ -430,6 +454,7 @@ def _run_case(
     streams = []
     publishers = {}
     subscribers = {}
+    subscriber_logs = {}
     ready_paths: dict[str, Path] = {}
     go_path = case / "workload-go.txt"
     workload_start_epoch_us = None
@@ -468,6 +493,7 @@ def _run_case(
             pub_log = (path_root / "publisher.log").open("w")
             sub_log = (path_root / "subscriber.log").open("w")
             streams += [pub_log, sub_log]
+            subscriber_logs[name] = sub_log
             ready_path = path_root / "publisher-ready"
             ready_paths[name] = ready_path
             path_input = manifest["path_inputs"][name]
@@ -480,7 +506,7 @@ def _run_case(
                     str(path_root / "publisher-result.json"),
                     str(path_input["schedule"]["path"]),
                     str(path_root / "admission-order.csv"),
-                    str(ready_path), str(go_path), str(per_path_queue_budget),
+                    str(ready_path), str(go_path), str(queue_budgets[name]),
                 ],
                 cwd=str(ROOT / "deps" / "imquic" / "src"),
                 stdout=pub_log, stderr=subprocess.STDOUT,
@@ -504,25 +530,17 @@ def _run_case(
                     str(path_root / "subscriber-result.json"),
                 ],
                 cwd=str(ROOT / "deps" / "imquic" / "src"),
-                stdout=next(
-                    stream for stream in streams
-                    if getattr(stream, "name", "") == str(path_root / "subscriber.log")
-                ),
-                stderr=subprocess.STDOUT,
+                stdout=subscriber_logs[name], stderr=subprocess.STDOUT,
             )
             processes.append(subscribers[name])
 
-        _wait_publishers_ready(
-            ready_paths, publishers, args.endpoint_ready_timeout_s
-        )
+        _wait_publishers_ready(ready_paths, publishers, args.endpoint_ready_timeout_s)
         workload_start_epoch_us = (
             time.time_ns() // 1000 + int(args.workload_start_lead_ms * 1000)
         )
         go_path.write_text(f"{workload_start_epoch_us}\n", encoding="utf-8")
 
-        timeout = (
-            args.deadline_ms + args.subscriber_guard_ms
-        ) / 1000.0 + 30
+        timeout = (args.deadline_ms + args.subscriber_guard_ms) / 1000.0 + 30
         status = {
             f"{name}-subscriber": process.wait(timeout=timeout)
             for name, process in subscribers.items()
@@ -557,8 +575,7 @@ def _run_case(
         )
         for name in active_paths
     }
-
-    publisher_starts = {
+    publisher_actual_starts = {
         name: int(path_results[name]["publisher"]["publisher_started_epoch_us"])
         for name in active_paths
     }
@@ -568,9 +585,11 @@ def _run_case(
     }
     if any(value != workload_start_epoch_us for value in requested_starts.values()):
         raise RuntimeError(f"{case.name}: publishers did not consume the same workload gate")
-    publisher_start_skew_us = max(publisher_starts.values()) - min(publisher_starts.values())
+    publisher_start_skew_us = max(publisher_actual_starts.values()) - min(
+        publisher_actual_starts.values()
+    )
     publisher_start_lateness_us = max(
-        abs(value - workload_start_epoch_us) for value in publisher_starts.values()
+        abs(value - workload_start_epoch_us) for value in publisher_actual_starts.values()
     )
     if publisher_start_skew_us > int(args.max_start_skew_ms * 1000):
         raise RuntimeError(
@@ -588,6 +607,7 @@ def _run_case(
         workload_start_epoch_us=workload_start_epoch_us,
     )
     balance = manifest["balance"]
+    logical_starts = {name: workload_start_epoch_us for name in active_paths}
     result = {
         "case": case.name,
         "repetition": repetition,
@@ -595,15 +615,18 @@ def _run_case(
         "requested_enhancement_l4s_fraction": fraction,
         "actual_enhancement_l4s_fraction": balance["actual_enhancement_l4s_fraction"],
         "actual_total_l4s_byte_fraction": balance["actual_total_l4s_byte_fraction"],
-        # Compatibility field consumed by the existing packet-order analyzer.
+        # Compatibility field consumed by the packet-order analyzer.
         "requested_l4s_byte_fraction": balance["actual_total_l4s_byte_fraction"],
         "base_byte_fraction": balance["base_byte_fraction"],
         "workload_start_epoch_us": workload_start_epoch_us,
-        "publisher_start_epoch_us": publisher_starts,
+        # The existing renderer consumes this field as its logical time origin.
+        "publisher_start_epoch_us": logical_starts,
+        "publisher_actual_start_epoch_us": publisher_actual_starts,
         "publisher_start_skew_us": publisher_start_skew_us,
         "publisher_start_lateness_us": publisher_start_lateness_us,
         "application_queue_budget_bytes": args.application_queue_budget_bytes,
-        "per_path_queue_budget_bytes": per_path_queue_budget,
+        "base_queue_budget_fraction": args.base_queue_budget_fraction,
+        "path_queue_budget_bytes": queue_budgets,
         "active_paths": active_paths,
         "combined_timeline": combined,
         "paths": {
@@ -623,6 +646,7 @@ def _run_case(
                     path_results[name]["bundle"]["payload_bytes"]
                     if name in path_results else 0
                 ),
+                "queue_budget_bytes": queue_budgets.get(name),
                 "admission_validation": admission_results.get(name),
             }
             for name in PATHS
@@ -678,6 +702,7 @@ def main() -> None:
         "--downstream-mode", choices=("classic", "dualpi2"), default="classic",
         help="client-facing qdisc on the second switch",
     )
+    parser.add_argument("--base-rtt-ms", type=float, default=20.0)
     parser.add_argument("--dualpi2-target", default="15ms")
     parser.add_argument("--dualpi2-tupdate", default="16ms")
     parser.add_argument("--dualpi2-step", default="1ms")
@@ -686,7 +711,11 @@ def main() -> None:
     parser.add_argument("--dc-background-warmup-s", type=float, default=2.0)
     parser.add_argument(
         "--application-queue-budget-bytes", type=int, default=4 * 1024 * 1024,
-        help="aggregate sender-side transport queue budget, divided across active media paths",
+        help="constant aggregate sender-side transport queue budget across cases",
+    )
+    parser.add_argument(
+        "--base-queue-budget-fraction", type=float, default=0.25,
+        help="fixed share of the aggregate sender queue reserved for Base/Prague",
     )
     parser.add_argument("--endpoint-ready-timeout-s", type=float, default=10.0)
     parser.add_argument("--workload-start-lead-ms", type=float, default=200.0)
@@ -732,6 +761,10 @@ def main() -> None:
         parser.error("repetitions and deadline must be positive")
     if args.subscriber_guard_ms <= 0 or args.application_queue_budget_bytes <= 0:
         parser.error("subscriber guard and application queue budget must be positive")
+    if not 0.0 < args.base_queue_budget_fraction < 1.0:
+        parser.error("--base-queue-budget-fraction must be strictly between 0 and 1")
+    if args.base_rtt_ms < 0:
+        parser.error("--base-rtt-ms must be non-negative")
     if args.endpoint_ready_timeout_s <= 0 or args.workload_start_lead_ms < 0:
         parser.error("invalid endpoint synchronization timing")
     if args.max_start_skew_ms < 0 or args.max_start_lateness_ms < 0:
@@ -766,13 +799,23 @@ def main() -> None:
         provider_egress = _interface(provider, downstream)
         downstream_ingress = _interface(downstream, provider)
         downstream_egress = _interface(downstream, client)
-        client_link = _interface(client, downstream)
+        client_egress = _interface(client, downstream)
+        background_egress = _interface(background_sink, downstream)
+
+        # The configured base RTT is pure fixed delay, equally split between
+        # forward sender egress and receiver ACK egress. Queueing is added only
+        # by the provider and downstream bottlenecks below.
+        one_way_ms = args.base_rtt_ms / 2.0
+        _configure_fixed_delay(server_egress, one_way_ms)
+        _configure_fixed_delay(client_egress, one_way_ms)
+        _configure_fixed_delay(background_egress, one_way_ms)
+
         offload_evidence = {}
         if args.capture_mode != "none":
             offload_evidence = _disable_offloads(
                 [
                     server_egress, provider_ingress, provider_egress,
-                    downstream_ingress, downstream_egress, client_link,
+                    downstream_ingress, downstream_egress, client_egress,
                 ]
             )
 
@@ -782,8 +825,8 @@ def main() -> None:
             scenario="3dgs-partial-l4s-post-send-reordering-v2",
             configuration={
                 "question": (
-                    "Can Base generated at a later bicycle-track demand event overtake "
-                    "already-admitted Enhancement in the provider DualQ, and can that "
+                    "Can Base generated at a later bicycle demand event overtake "
+                    "already-admitted Enhancement in provider DualQ, and can that "
                     "ordering improve frame SSIM after a slower Classic bottleneck?"
                 ),
                 "source_bundle": str(args.source_bundle.resolve()),
@@ -809,17 +852,23 @@ def main() -> None:
                     "lowest global importance rank among currently eligible objects, per path"
                 ),
                 "viewport_eligibility": (
-                    "all objects of a track become eligible at that track's frozen "
-                    "first-visible bicycle timestamp; later Base can therefore arrive "
-                    "while earlier-track Enhancement is already in flight"
+                    "all objects of a track become eligible at its frozen first-visible "
+                    "bicycle timestamp; old-track Enhancement can therefore already be "
+                    "in flight when a later track's Base becomes eligible"
                 ),
                 "application_queue_budget_bytes": args.application_queue_budget_bytes,
+                "base_queue_budget_fraction": args.base_queue_budget_fraction,
                 "publisher_gate": {
                     "ready_timeout_s": args.endpoint_ready_timeout_s,
                     "start_lead_ms": args.workload_start_lead_ms,
                     "max_start_skew_ms": args.max_start_skew_ms,
                     "max_start_lateness_ms": args.max_start_lateness_ms,
                 },
+                "base_rtt_ms": args.base_rtt_ms,
+                "fixed_delay_model": (
+                    "base RTT implemented as fixed netem delay at sender egress and "
+                    "receiver/background ACK egress; no jitter or rate limit in netem"
+                ),
                 "dc_background_mbps": args.dc_background_mbps,
                 "dc_background_cc": args.dc_background_cc,
                 "provider_dualpi2_rate": args.l4s_rate,
@@ -829,10 +878,9 @@ def main() -> None:
                 "dualpi2_target": args.dualpi2_target,
                 "dualpi2_tupdate": args.dualpi2_tupdate,
                 "dualpi2_step": args.dualpi2_step,
-                "fixed_wire_delay_ms": 0.0,
                 "processing_delay": (
-                    "not separately emulated; constant processing would cancel across cases; "
-                    "serialization is imposed by the configured HTB rates"
+                    "not separately emulated; a known constant processing component can "
+                    "be folded into base_rtt_ms and is invariant across treatments"
                 ),
                 "deadline_ms": args.deadline_ms,
                 "subscriber_guard_ms": args.subscriber_guard_ms,
@@ -840,7 +888,7 @@ def main() -> None:
                 "packet_order_capture": args.capture_mode,
                 "packet_order_scope": (
                     "Base/Prague port 4444 versus Classic Enhancement/Reno port 4443; "
-                    "Enhancement/Prague port 4445 is excluded from inversion counting"
+                    "Enhancement/Prague port 4445 excluded from inversion counting"
                 ),
                 "offload_control": offload_evidence,
             },
@@ -862,13 +910,16 @@ def main() -> None:
                 },
             },
             observed_network={
+                "server_fixed_delay_tc": detailed_tc_state(server_egress),
+                "client_fixed_delay_tc": detailed_tc_state(client_egress),
+                "background_fixed_delay_tc": detailed_tc_state(background_egress),
                 "provider_egress_tc": detailed_tc_state(provider_egress),
                 "downstream_egress_tc": detailed_tc_state(downstream_egress),
             },
         )
 
         for fraction in args.enhancement_l4s_fractions:
-            split_root, manifest = prepared[fraction]
+            _, manifest = prepared[fraction]
             for repetition in range(1, args.repetitions + 1):
                 results.append(
                     _run_case(
@@ -878,7 +929,6 @@ def main() -> None:
                         downstream_egress=downstream_egress,
                         provider_ingress=provider_ingress,
                         experiment_root=args.output,
-                        split_root=split_root,
                         manifest=manifest,
                         fraction=fraction,
                         repetition=repetition,
