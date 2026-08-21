@@ -4,7 +4,7 @@
 
 static const char *release_schedule_path_v2, *admission_path_v2;
 static const char *ready_path_v2, *go_path_v2;
-static uint64_t queue_budget_bytes_v2 = MAX_QUEUED_BYTES;
+static uint64_t transport_queue_slack_bytes_v2 = 4096;
 
 typedef struct scheduled_record_v2 {
 	long payload_offset;
@@ -41,7 +41,8 @@ static int schedule_has_extra_values_v2(FILE *schedule) {
 	char line[128];
 	while(fgets(line, sizeof(line), schedule) != NULL) {
 		char *cursor = line;
-		while(*cursor == ' ' || *cursor == '\t' || *cursor == '\r' || *cursor == '\n')
+		while(*cursor == ' ' || *cursor == '\t' ||
+				*cursor == '\r' || *cursor == '\n')
 			cursor++;
 		if(*cursor != '\0')
 			return 1;
@@ -57,7 +58,8 @@ static int index_scheduled_records_v2(FILE *source, FILE *schedule,
 		*records_out = NULL;
 		return 0;
 	}
-	scheduled_record_v2 *records = calloc((size_t)source_objects, sizeof(*records));
+	scheduled_record_v2 *records =
+		calloc((size_t)source_objects, sizeof(*records));
 	if(records == NULL)
 		return -1;
 	uint64_t indexed_bytes = 0;
@@ -74,7 +76,9 @@ static int index_scheduled_records_v2(FILE *source, FILE *schedule,
 		records[i].payload_offset = offset;
 		records[i].payload_length = length;
 		if(read_schedule_entry_v2(
-				schedule, &records[i].release_ms, &records[i].importance_rank) < 0)
+				schedule,
+				&records[i].release_ms,
+				&records[i].importance_rank) < 0)
 			goto fail;
 		for(uint64_t prior = 0; prior < i; prior++) {
 			if(records[prior].importance_rank == records[i].importance_rank)
@@ -105,7 +109,8 @@ static int select_scheduled_record_v2(scheduled_record_v2 *records,
 				next_release = records[i].release_ms;
 			continue;
 		}
-		if(best < 0 || records[i].importance_rank < records[best].importance_rank ||
+		if(best < 0 ||
+				records[i].importance_rank < records[best].importance_rank ||
 				(records[i].importance_rank == records[best].importance_rank &&
 				 i < (uint64_t)best))
 			best = (int)i;
@@ -116,12 +121,19 @@ static int select_scheduled_record_v2(scheduled_record_v2 *records,
 	return next_release == UINT64_MAX ? -2 : -1;
 }
 
+static uint64_t admission_threshold_v2(const scheduled_record_v2 *record) {
+	return record->payload_length < transport_queue_slack_bytes_v2
+		? record->payload_length
+		: transport_queue_slack_bytes_v2;
+}
+
 static int read_scheduled_payload_v2(FILE *source,
 		const scheduled_record_v2 *record, uint8_t **payload) {
 	if(fseek(source, record->payload_offset, SEEK_SET) != 0)
 		return -1;
 	*payload = malloc(record->payload_length);
-	if(*payload == NULL || read_exact(source, *payload, record->payload_length) < 0) {
+	if(*payload == NULL ||
+			read_exact(source, *payload, record->payload_length) < 0) {
 		free(*payload);
 		*payload = NULL;
 		return -1;
@@ -131,9 +143,9 @@ static int read_scheduled_payload_v2(FILE *source,
 
 static int schedule_self_test_v2(void) {
 	scheduled_record_v2 records[] = {
-		{.release_ms = 0, .importance_rank = 5},
-		{.release_ms = 10, .importance_rank = 0},
-		{.release_ms = 0, .importance_rank = 2},
+		{.payload_length = 1000, .release_ms = 0, .importance_rank = 5},
+		{.payload_length = 8000, .release_ms = 10, .importance_rank = 0},
+		{.payload_length = 2000, .release_ms = 0, .importance_rank = 2},
 	};
 	uint64_t next_release = UINT64_MAX;
 	int selected = select_scheduled_record_v2(records, 3, 0, &next_release);
@@ -148,7 +160,14 @@ static int schedule_self_test_v2(void) {
 	if(selected != -1 || next_release != 10)
 		return 1;
 	selected = select_scheduled_record_v2(records, 3, 10, &next_release);
-	return selected == 1 ? 0 : 1;
+	if(selected != 1)
+		return 1;
+	transport_queue_slack_bytes_v2 = 4096;
+	if(admission_threshold_v2(&records[0]) != 1000)
+		return 1;
+	if(admission_threshold_v2(&records[1]) != 4096)
+		return 1;
+	return 0;
 }
 
 static int write_ready_file_v2(void) {
@@ -161,7 +180,8 @@ static int write_ready_file_v2(void) {
 
 static int wait_for_go_epoch_v2(gint64 *requested_epoch_us) {
 	gint64 wait_deadline = g_get_monotonic_time() + 30 * G_USEC_PER_SEC;
-	while(!g_atomic_int_get(&stop_requested) && g_get_monotonic_time() < wait_deadline) {
+	while(!g_atomic_int_get(&stop_requested) &&
+			g_get_monotonic_time() < wait_deadline) {
 		FILE *go = fopen(go_path_v2, "r");
 		if(go == NULL) {
 			g_usleep(1000);
@@ -177,7 +197,8 @@ static int wait_for_go_epoch_v2(gint64 *requested_epoch_us) {
 		long long value = strtoll(line, &end, 10);
 		if(end == line || value <= 0)
 			return -1;
-		while(*end == ' ' || *end == '\t' || *end == '\r' || *end == '\n')
+		while(*end == ' ' || *end == '\t' ||
+				*end == '\r' || *end == '\n')
 			end++;
 		if(*end != '\0')
 			return -1;
@@ -200,12 +221,18 @@ static int run_gated_publisher_v2(
 	imquic_ecn_mode ecn;
 	if(parse_mode(mode, &cc, &ecn) < 0 || imquic_init(NULL) < 0)
 		return 1;
-	imquic_server *server = imquic_create_moq_server("3dgs-moq-gated-publisher",
-		IMQUIC_CONFIG_INIT, IMQUIC_CONFIG_TLS_CERT, CERT_PATH,
-		IMQUIC_CONFIG_TLS_KEY, KEY_PATH, IMQUIC_CONFIG_LOCAL_BIND, bind_address,
-		IMQUIC_CONFIG_LOCAL_PORT, port, IMQUIC_CONFIG_CONGESTION_CONTROL, cc,
-		IMQUIC_CONFIG_ECN, ecn, IMQUIC_CONFIG_RAW_QUIC, TRUE,
-		IMQUIC_CONFIG_MOQ_VERSION, IMQUIC_MOQ_VERSION_19, IMQUIC_CONFIG_DONE, NULL);
+	imquic_server *server = imquic_create_moq_server(
+		"3dgs-moq-gated-publisher",
+		IMQUIC_CONFIG_INIT,
+		IMQUIC_CONFIG_TLS_CERT, CERT_PATH,
+		IMQUIC_CONFIG_TLS_KEY, KEY_PATH,
+		IMQUIC_CONFIG_LOCAL_BIND, bind_address,
+		IMQUIC_CONFIG_LOCAL_PORT, port,
+		IMQUIC_CONFIG_CONGESTION_CONTROL, cc,
+		IMQUIC_CONFIG_ECN, ecn,
+		IMQUIC_CONFIG_RAW_QUIC, TRUE,
+		IMQUIC_CONFIG_MOQ_VERSION, IMQUIC_MOQ_VERSION_19,
+		IMQUIC_CONFIG_DONE, NULL);
 	if(server == NULL)
 		return 1;
 
@@ -218,11 +245,16 @@ static int run_gated_publisher_v2(
 	imquic_set_moq_connection_gone_cb(server, connection_gone);
 	imquic_start_endpoint(server);
 
-	while(!g_atomic_int_get(&stop_requested) && !g_atomic_int_get(&publishing))
+	while(!g_atomic_int_get(&stop_requested) &&
+			!g_atomic_int_get(&publishing))
 		g_usleep(1000);
 
-	FILE *source = NULL, *metrics = NULL, *schedule = NULL, *admission = NULL;
+	FILE *source = NULL;
+	FILE *metrics = NULL;
+	FILE *schedule = NULL;
+	FILE *admission = NULL;
 	scheduled_record_v2 *records = NULL;
+
 	if(!g_atomic_int_get(&failed) && open_source_bundle(&source) < 0)
 		fail_case("could not open source scene bundle");
 	if(!g_atomic_int_get(&failed)) {
@@ -233,26 +265,37 @@ static int run_gated_publisher_v2(
 	if(!g_atomic_int_get(&failed) &&
 			index_scheduled_records_v2(source, schedule, &records) < 0)
 		fail_case("invalid source bundle or eligibility/rank schedule");
+
 	if(!g_atomic_int_get(&failed) && admission_path_v2 != NULL) {
 		admission = fopen(admission_path_v2, "w");
-		if(admission == NULL)
+		if(admission == NULL) {
 			fail_case("could not open admission-order log");
-		else
-			fputs("admission_index,time_us,bundle_record_index,release_ms,"
-				"importance_rank,subgroup_id,payload_bytes\n", admission);
+		} else {
+			fputs(
+				"admission_index,time_us,bundle_record_index,release_ms,"
+				"importance_rank,subgroup_id,payload_bytes,"
+				"queued_stream_bytes_before,bytes_in_flight_before,"
+				"cwnd_bytes_before,queue_threshold_bytes\n",
+				admission);
+		}
 	}
+
 	if(metrics_path != NULL) {
 		metrics = fopen(metrics_path, "w");
 		if(metrics != NULL)
-			fputs("time_us,rtt_us,cwnd_bytes,bytes_in_flight,queued_stream_bytes,"
-				"pacing_Bps,ect0_packets,ect1_packets,ce_packets,alpha_numerator,"
-				"alpha_denominator\n", metrics);
+			fputs(
+				"time_us,rtt_us,cwnd_bytes,bytes_in_flight,"
+				"queued_stream_bytes,pacing_Bps,ect0_packets,"
+				"ect1_packets,ce_packets,alpha_numerator,"
+				"alpha_denominator\n",
+				metrics);
 	}
 
 	gint64 requested_epoch_us = 0;
 	if(!g_atomic_int_get(&failed) && write_ready_file_v2() < 0)
 		fail_case("could not signal publisher readiness");
-	if(!g_atomic_int_get(&failed) && wait_for_go_epoch_v2(&requested_epoch_us) < 0)
+	if(!g_atomic_int_get(&failed) &&
+			wait_for_go_epoch_v2(&requested_epoch_us) < 0)
 		fail_case("could not synchronize publisher workload start");
 
 	gint64 started = g_get_monotonic_time();
@@ -270,6 +313,7 @@ static int run_gated_publisher_v2(
 			write_metric(metrics, started);
 			next_metric += METRIC_INTERVAL_US;
 		}
+
 		if(source_done) {
 			imquic_transport_metrics transport = {0};
 			if(connection != NULL &&
@@ -290,27 +334,32 @@ static int run_gated_publisher_v2(
 			continue;
 		}
 		if(selected < 0) {
-			gint64 release_at = started + (gint64)next_release_ms * 1000;
+			gint64 release_at =
+				started + (gint64)next_release_ms * 1000;
 			gint64 sleep_us = release_at - now;
 			g_usleep((gulong)(sleep_us > 1000 ? 1000 : sleep_us));
 			continue;
 		}
 
+		scheduled_record_v2 *record = &records[selected];
+		uint64_t queue_threshold = admission_threshold_v2(record);
 		imquic_transport_metrics transport = {0};
 		if(connection == NULL ||
 				imquic_get_transport_metrics(connection, &transport) < 0 ||
-				transport.bytes_in_flight + transport.queued_stream_bytes >= queue_budget_bytes_v2) {
+				transport.cwnd_bytes == 0 ||
+				transport.bytes_in_flight >= transport.cwnd_bytes ||
+				transport.queued_stream_bytes >= queue_threshold) {
 			g_usleep(1000);
 			continue;
 		}
 
 		uint8_t *payload = NULL;
-		scheduled_record_v2 *record = &records[selected];
 		uint32_t length = record->payload_length;
 		if(read_scheduled_payload_v2(source, record, &payload) < 0) {
 			fail_case("could not read indexed source bundle record");
 			break;
 		}
+
 		uint64_t subgroup_id = embedded_subgroup(payload, length);
 		uint64_t object_id = outer_object_ids[subgroup_id]++;
 		imquic_moq_object object = {0};
@@ -319,20 +368,34 @@ static int run_gated_publisher_v2(
 		object.group_id = 0;
 		object.subgroup_id = subgroup_id;
 		object.object_id = object_id;
-		object.priority = subgroup_id == 0 ? 0 : (subgroup_id == 1 ? 64 : 128);
+		object.priority =
+			subgroup_id == 0 ? 0 : (subgroup_id == 1 ? 64 : 128);
 		object.payload = payload;
 		object.payload_len = length;
 		object.delivery = IMQUIC_MOQ_USE_SUBGROUP;
 		object.first_of_subgroup = object_id == 0;
-		if(imquic_moq_send_object(connection, &object) < 0)
+
+		if(imquic_moq_send_object(connection, &object) < 0) {
 			fail_case("could not queue scheduled 3dgs object");
-		else {
+		} else {
 			record->admitted = TRUE;
 			if(admission != NULL) {
-				fprintf(admission, "%" PRIu64 ",%" G_GINT64_FORMAT ",%d,%" PRIu64
-					",%" PRIu64 ",%" PRIu64 ",%u\n",
-					scheduled_records, g_get_monotonic_time() - started, selected,
-					record->release_ms, record->importance_rank, subgroup_id, length);
+				fprintf(
+					admission,
+					"%" PRIu64 ",%" G_GINT64_FORMAT ",%d,%" PRIu64
+					",%" PRIu64 ",%" PRIu64 ",%u,%" PRIu64
+					",%" PRIu64 ",%" PRIu64 ",%" PRIu64 "\n",
+					scheduled_records,
+					g_get_monotonic_time() - started,
+					selected,
+					record->release_ms,
+					record->importance_rank,
+					subgroup_id,
+					length,
+					transport.queued_stream_bytes,
+					transport.bytes_in_flight,
+					transport.cwnd_bytes,
+					queue_threshold);
 			}
 			queued_objects++;
 			queued_bytes += length;
@@ -345,31 +408,51 @@ static int run_gated_publisher_v2(
 
 	write_metric(metrics, started);
 	if(g_atomic_int_get(&publishing) && connection != NULL)
-		imquic_moq_publish_done(connection, publish_request_id,
+		imquic_moq_publish_done(
+			connection,
+			publish_request_id,
 			IMQUIC_MOQ_PUBDONE_SUBSCRIPTION_ENDED,
-			source_done ? "scheduled scene complete" : "scheduled scene deadline elapsed");
-	if(source != NULL) fclose(source);
-	if(metrics != NULL) fclose(metrics);
-	if(schedule != NULL) fclose(schedule);
-	if(admission != NULL) fclose(admission);
+			source_done
+				? "scheduled scene complete"
+				: "scheduled scene deadline elapsed");
+
+	if(source != NULL)
+		fclose(source);
+	if(metrics != NULL)
+		fclose(metrics);
+	if(schedule != NULL)
+		fclose(schedule);
+	if(admission != NULL)
+		fclose(admission);
 	free(records);
 
 	if(result_path != NULL) {
 		FILE *result = fopen(result_path, "w");
 		if(result != NULL) {
-			fprintf(result,
-				"{\"source_objects\":%" PRIu64 ",\"source_bytes\":%" PRIu64
-				",\"queued_objects\":%" PRIu64 ",\"queued_bytes\":%" PRIu64
-				",\"deadline_ms\":%u,\"source_fully_queued\":%s"
+			fprintf(
+				result,
+				"{\"source_objects\":%" PRIu64
+				",\"source_bytes\":%" PRIu64
+				",\"queued_objects\":%" PRIu64
+				",\"queued_bytes\":%" PRIu64
+				",\"deadline_ms\":%u"
+				",\"source_fully_queued\":%s"
 				",\"workload_start_epoch_us\":%" G_GINT64_FORMAT
 				",\"publisher_started_epoch_us\":%" G_GINT64_FORMAT
-				",\"queue_budget_bytes\":%" PRIu64
-				",\"scheduled\":true,\"scheduling_policy\":"
-				"\"lowest-importance-rank-among-currently-eligible\","
-				"\"validated\":%s}\n",
-				source_objects, source_bytes, queued_objects, queued_bytes, deadline_ms,
-				source_done ? "true" : "false", requested_epoch_us, started_real_us,
-				queue_budget_bytes_v2,
+				",\"transport_queue_slack_bytes\":%" PRIu64
+				",\"scheduled\":true"
+				",\"scheduling_policy\":"
+				"\"lowest-rank-eligible-when-cwnd-open-and-quic-queue-shallow\""
+				",\"validated\":%s}\n",
+				source_objects,
+				source_bytes,
+				queued_objects,
+				queued_bytes,
+				deadline_ms,
+				source_done ? "true" : "false",
+				requested_epoch_us,
+				started_real_us,
+				transport_queue_slack_bytes_v2,
 				g_atomic_int_get(&failed) ? "false" : "true");
 			fclose(result);
 		}
@@ -384,6 +467,7 @@ static int run_gated_publisher_v2(
 int main(int argc, char **argv) {
 	if(argc == 2 && !strcmp(argv[1], "schedule-self-test"))
 		return schedule_self_test_v2();
+
 	if(argc == 14 && !strcmp(argv[1], "publisher-scheduled-gated")) {
 		moq_namespace.buffer = (uint8_t *)NAMESPACE_NAME;
 		moq_namespace.length = strlen(NAMESPACE_NAME);
@@ -399,11 +483,13 @@ int main(int argc, char **argv) {
 		admission_path_v2 = argv[10];
 		ready_path_v2 = argv[11];
 		go_path_v2 = argv[12];
-		queue_budget_bytes_v2 = strtoull(argv[13], NULL, 10);
-		if(queue_budget_bytes_v2 == 0)
+		transport_queue_slack_bytes_v2 = strtoull(argv[13], NULL, 10);
+		if(transport_queue_slack_bytes_v2 == 0)
 			return 2;
 		return run_gated_publisher_v2(
-			argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);
+			argv[2],
+			(uint16_t)strtoul(argv[3], NULL, 10),
+			argv[4]);
 	}
 	return legacy_fixture_main(argc, argv);
 }
