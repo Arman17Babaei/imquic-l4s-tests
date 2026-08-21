@@ -16,7 +16,7 @@ from analyze_3dgs_reordering import (
     analyze_packet_order,
     evaluate_acceptance,
 )
-from reordering_workload_v2 import split_base_enhancement
+from reordering_workload_v2 import split_l4s_spectrum
 from split_3dgs_priority import object_identity
 from three_dgs_bundle import read_bundle, write_bundle
 
@@ -26,7 +26,13 @@ def _array(values):
     return struct.pack("<I", len(encoded)) + encoded
 
 
-def frame(track: str, subgroup: int, object_id: int, opacity: float, gaussians: int = 1):
+def frame(
+    track: str,
+    subgroup: int,
+    object_id: int,
+    opacity: float,
+    gaussians: int = 1,
+):
     track_bytes = track.encode()
     group = b"0"
     means = [0.0] * (gaussians * 3)
@@ -35,106 +41,136 @@ def frame(track: str, subgroup: int, object_id: int, opacity: float, gaussians: 
     scales = [0.0] * (gaussians * 3)
     rotations = [0.0] * (gaussians * 4)
     body = (
-        track_bytes + group + _array(means) + _array(opacities)
-        + _array(sh) + _array(scales) + _array(rotations)
+        track_bytes
+        + group
+        + _array(means)
+        + _array(opacities)
+        + _array(sh)
+        + _array(scales)
+        + _array(rotations)
     )
     return struct.pack(
-        "<8I", 0x47535033, 1, len(track_bytes), len(group), object_id,
-        gaussians, len(body), subgroup,
+        "<8I",
+        0x47535033,
+        1,
+        len(track_bytes),
+        len(group),
+        object_id,
+        gaussians,
+        len(body),
+        subgroup,
     ) + body
 
 
 def subgroups(path: Path) -> list[int]:
-    return [int(object_identity(payload)["subgroup_id"]) for payload in read_bundle(path)]
+    return [
+        int(object_identity(payload)["subgroup_id"])
+        for payload in read_bundle(path)
+    ]
 
 
-class SemanticSplitTests(unittest.TestCase):
+class SpectrumSplitTests(unittest.TestCase):
     def make_scene(self, root: Path) -> Path:
         source = root / "scene.bundle"
         write_bundle(
             source,
             [
-                frame("track-a", 0, 0, 0.9, 1),
-                frame("track-a", 1, 1, 0.8, 2),
-                frame("track-a", 2, 2, 0.7, 3),
-                frame("track-b", 0, 3, 0.6, 1),
-                frame("track-b", 1, 4, 0.5, 4),
-                frame("track-b", 2, 5, 0.4, 5),
+                frame("track-a", 0, 0, 0.20, 1),
+                frame("track-a", 0, 1, 0.90, 1),
+                frame("track-b", 0, 2, 0.50, 1),
+                frame("track-a", 1, 3, 0.95, 2),
+                frame("track-b", 1, 4, 0.40, 2),
+                frame("track-b", 2, 5, 0.99, 3),
             ],
         )
         return source
 
-    def test_base_never_leaves_dedicated_prague_path(self):
+    def test_rank_is_layer_then_mean_opacity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            source = self.make_scene(root)
-            for fraction in (0.0, 0.4, 1.0):
-                with self.subTest(fraction=fraction):
-                    manifest = split_base_enhancement(
-                        source,
-                        root / f"split-{fraction}",
-                        enhancement_l4s_fraction=fraction,
-                        importance="opacity",
-                    )
-                    base = Path(manifest["base"]["path"])
-                    enh_l4s = Path(manifest["enhancement_l4s"]["path"])
-                    enh_classic = Path(manifest["enhancement_classic"]["path"])
-                    self.assertTrue(all(value == 0 for value in subgroups(base)))
-                    self.assertTrue(all(value in (1, 2) for value in subgroups(enh_l4s)))
-                    self.assertTrue(all(value in (1, 2) for value in subgroups(enh_classic)))
-                    self.assertTrue(
-                        all(
-                            row["path"] == "high-prague"
-                            for row in manifest["objects"]
-                            if int(row["subgroup_id"]) == 0
-                        )
-                    )
+            manifest = split_l4s_spectrum(
+                self.make_scene(root),
+                root / "split",
+                l4s_fraction=0.5,
+            )
+            ranked = sorted(
+                manifest["objects"],
+                key=lambda row: int(row["importance_rank"]),
+            )
+            self.assertEqual(
+                [(int(row["layer"]), round(float(row["mean_opacity"]), 2)) for row in ranked],
+                [(0, 0.90), (0, 0.50), (0, 0.20), (1, 0.95), (1, 0.40), (2, 0.99)],
+            )
 
-    def test_endpoints_keep_base_on_prague_and_change_only_enhancement_transport(self):
+    def test_endpoints_keep_two_transport_bundles_but_move_all_payload(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = self.make_scene(root)
-            mixed = split_base_enhancement(
-                source, root / "mixed", enhancement_l4s_fraction=0.0,
-                importance="opacity",
+            all_reno = split_l4s_spectrum(
+                source, root / "all-reno", l4s_fraction=0.0
             )
-            all_l4s = split_base_enhancement(
-                source, root / "all-l4s", enhancement_l4s_fraction=1.0,
-                importance="opacity",
+            all_prague = split_l4s_spectrum(
+                source, root / "all-prague", l4s_fraction=1.0
             )
-            self.assertGreater(mixed["base"]["objects"], 0)
-            self.assertEqual(mixed["enhancement_l4s"]["objects"], 0)
-            self.assertGreater(mixed["enhancement_classic"]["objects"], 0)
-            self.assertGreater(all_l4s["base"]["objects"], 0)
-            self.assertGreater(all_l4s["enhancement_l4s"]["objects"], 0)
-            self.assertEqual(all_l4s["enhancement_classic"]["objects"], 0)
+            self.assertEqual(all_reno["prague"]["objects"], 0)
+            self.assertEqual(all_reno["reno"]["objects"], all_reno["source_objects"])
+            self.assertEqual(all_prague["reno"]["objects"], 0)
             self.assertEqual(
-                mixed["base"]["payload_bytes"], all_l4s["base"]["payload_bytes"]
+                all_prague["prague"]["objects"], all_prague["source_objects"]
             )
-            self.assertEqual(
-                mixed["base"]["objects"], all_l4s["base"]["objects"]
+            self.assertEqual(all_reno["actual_l4s_byte_fraction"], 0.0)
+            self.assertEqual(all_prague["actual_l4s_byte_fraction"], 1.0)
+            self.assertEqual(all_reno["prague"]["port"], 4444)
+            self.assertEqual(all_reno["reno"]["port"], 4443)
+
+    def test_small_fraction_can_split_inside_layer_zero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = split_l4s_spectrum(
+                self.make_scene(root),
+                root / "split",
+                l4s_fraction=0.20,
             )
-            self.assertEqual(mixed["actual_enhancement_l4s_fraction"], 0.0)
-            self.assertEqual(all_l4s["actual_enhancement_l4s_fraction"], 1.0)
+            prague_rows = [
+                row for row in manifest["objects"] if row["path"] == "high-prague"
+            ]
+            reno_rows = [
+                row for row in manifest["objects"] if row["path"] == "low-reno"
+            ]
+            self.assertTrue(prague_rows)
+            self.assertTrue(reno_rows)
+            self.assertTrue(any(int(row["layer"]) == 0 for row in reno_rows))
+            self.assertLess(
+                max(int(row["importance_rank"]) for row in prague_rows),
+                min(int(row["importance_rank"]) for row in reno_rows),
+            )
 
     def test_intermediate_fraction_preserves_every_object_once(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = self.make_scene(root)
-            manifest = split_base_enhancement(
-                source, root / "split", enhancement_l4s_fraction=0.5,
-                importance="opacity",
+            manifest = split_l4s_spectrum(
+                source, root / "split", l4s_fraction=0.5
             )
-            total = sum(
-                int(manifest[key]["objects"])
-                for key in ("base", "enhancement_l4s", "enhancement_classic")
+            self.assertEqual(
+                int(manifest["prague"]["objects"]) + int(manifest["reno"]["objects"]),
+                manifest["source_objects"],
             )
-            total_bytes = sum(
-                int(manifest[key]["payload_bytes"])
-                for key in ("base", "enhancement_l4s", "enhancement_classic")
+            self.assertEqual(
+                int(manifest["prague"]["payload_bytes"])
+                + int(manifest["reno"]["payload_bytes"]),
+                manifest["source_payload_bytes"],
             )
-            self.assertEqual(total, manifest["source_objects"])
-            self.assertEqual(total_bytes, manifest["source_payload_bytes"])
+            identities = {
+                (
+                    row["track_id"],
+                    row["group_id"],
+                    int(row["subgroup_id"]),
+                    int(row["object_id"]),
+                )
+                for row in manifest["objects"]
+            }
+            self.assertEqual(len(identities), manifest["source_objects"])
 
 
 class NegativeResultValidityTests(unittest.TestCase):
@@ -196,7 +232,8 @@ class NegativeResultValidityTests(unittest.TestCase):
         )
         self.assertFalse(acceptance["opportunity_observed"])
         self.assertEqual(
-            acceptance["hypothesis_outcome"], "no provider overlap opportunity observed"
+            acceptance["hypothesis_outcome"],
+            "no provider overlap opportunity observed",
         )
 
 
