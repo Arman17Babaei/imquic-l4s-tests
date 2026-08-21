@@ -82,11 +82,11 @@ class SemanticSplitTests(unittest.TestCase):
                     self.assertTrue(all(value == 0 for value in subgroups(base)))
                     self.assertTrue(all(value in (1, 2) for value in subgroups(enh_l4s)))
                     self.assertTrue(all(value in (1, 2) for value in subgroups(enh_classic)))
-                    rows = manifest["objects"]
                     self.assertTrue(
                         all(
                             row["path"] == "high-prague"
-                            for row in rows if int(row["subgroup_id"]) == 0
+                            for row in manifest["objects"]
+                            if int(row["subgroup_id"]) == 0
                         )
                     )
 
@@ -102,15 +102,12 @@ class SemanticSplitTests(unittest.TestCase):
                 source, root / "all-l4s", enhancement_l4s_fraction=1.0,
                 importance="opacity",
             )
-
             self.assertGreater(mixed["base"]["objects"], 0)
             self.assertEqual(mixed["enhancement_l4s"]["objects"], 0)
             self.assertGreater(mixed["enhancement_classic"]["objects"], 0)
-
             self.assertGreater(all_l4s["base"]["objects"], 0)
             self.assertGreater(all_l4s["enhancement_l4s"]["objects"], 0)
             self.assertEqual(all_l4s["enhancement_classic"]["objects"], 0)
-
             self.assertEqual(
                 mixed["base"]["payload_bytes"], all_l4s["base"]["payload_bytes"]
             )
@@ -145,7 +142,7 @@ class NegativeResultValidityTests(unittest.TestCase):
     def packet(time_s: float, port: int, fingerprint: str) -> Packet:
         return Packet(time_s, port, 1000, fingerprint, 0)
 
-    def test_zero_overtake_is_a_valid_negative_result(self):
+    def test_overlap_without_overtake_is_a_valid_negative_result(self):
         ingress = [
             self.packet(1.0, RENO_PORT, "r"),
             self.packet(2.0, PRAGUE_PORT, "p"),
@@ -155,6 +152,8 @@ class NegativeResultValidityTests(unittest.TestCase):
             self.packet(4.0, PRAGUE_PORT, "p"),
         ]
         result = analyze_packet_order(ingress, egress, egress)
+        self.assertEqual(result["provider_opportunity"]["opportunity_pairs"], 1)
+        self.assertEqual(result["provider_reordering"]["inversion_pairs"], 0)
         acceptance = evaluate_acceptance(
             result,
             requested_l4s_fraction=0.5,
@@ -167,9 +166,37 @@ class NegativeResultValidityTests(unittest.TestCase):
             minimum_downstream_match_fraction=0.95,
         )
         self.assertEqual(acceptance["status"], "pass")
+        self.assertTrue(acceptance["opportunity_observed"])
         self.assertFalse(acceptance["mechanism_observed"])
         self.assertEqual(
-            acceptance["hypothesis_outcome"], "no provider reordering observed"
+            acceptance["hypothesis_outcome"],
+            "provider overlap existed but no reordering observed",
+        )
+
+    def test_no_overlap_is_distinct_from_failed_overtaking(self):
+        ingress = [
+            self.packet(1.0, RENO_PORT, "r"),
+            self.packet(4.0, PRAGUE_PORT, "p"),
+        ]
+        provider = [
+            self.packet(2.0, RENO_PORT, "r"),
+            self.packet(5.0, PRAGUE_PORT, "p"),
+        ]
+        result = analyze_packet_order(ingress, provider, provider)
+        acceptance = evaluate_acceptance(
+            result,
+            requested_l4s_fraction=0.5,
+            capture_stats={
+                "provider_ingress": {"socket_drops": 0},
+                "provider_egress": {"socket_drops": 0},
+                "downstream_egress": {"socket_drops": 0},
+            },
+            minimum_provider_match_fraction=0.95,
+            minimum_downstream_match_fraction=0.95,
+        )
+        self.assertFalse(acceptance["opportunity_observed"])
+        self.assertEqual(
+            acceptance["hypothesis_outcome"], "no provider overlap opportunity observed"
         )
 
 
