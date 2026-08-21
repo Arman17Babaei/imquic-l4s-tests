@@ -53,6 +53,15 @@ def main() -> None:
     if args.repetitions <= 0 or args.deadline_ms <= 0:
         parser.error("repetitions and deadline must be positive")
 
+    subprocess.run(
+        [
+            sys.executable, "-m", "unittest", "discover", "-s", "tests",
+            "-p", "test_3dgs_reordering*.py", "-v",
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
     experiment_args = [
         "--enhancement-l4s-fractions", args.enhancement_l4s_fractions,
         "--repetitions", str(args.repetitions),
