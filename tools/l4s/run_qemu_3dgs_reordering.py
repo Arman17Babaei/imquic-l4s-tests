@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the reviewed 3DGS post-send reordering experiment in QEMU."""
+"""Run the reviewed two-connection 3DGS L4S-spectrum experiment in QEMU."""
 
 from __future__ import annotations
 
@@ -30,11 +30,12 @@ def main() -> None:
     parser.add_argument("--source-bundle", type=Path, required=True)
     parser.add_argument("--frozen-demand", type=Path, required=True)
     parser.add_argument(
-        "--enhancement-l4s-fractions", "--l4s-fractions",
-        dest="enhancement_l4s_fractions", type=_fractions, default="0,0.5,1",
+        "--l4s-fractions",
+        type=_fractions,
+        default="0,0.25,0.5,0.75,1",
         help=(
-            "fraction of Enhancement payload placed on Prague; Base always uses "
-            "its own Prague connection (deprecated alias: --l4s-fractions)"
+            "fraction of total scene payload assigned to the persistent Prague "
+            "connection after ranking by (layer, mean opacity)"
         ),
     )
     parser.add_argument("--repetitions", type=int, default=1)
@@ -55,35 +56,58 @@ def main() -> None:
 
     subprocess.run(
         [
-            sys.executable, "-m", "unittest", "discover", "-s", "tests",
-            "-p", "test_3dgs_reordering*.py", "-v",
+            sys.executable,
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "tests",
+            "-p",
+            "test_3dgs_reordering*.py",
+            "-v",
         ],
         cwd=ROOT,
         check=True,
     )
 
     experiment_args = [
-        "--enhancement-l4s-fractions", args.enhancement_l4s_fractions,
-        "--repetitions", str(args.repetitions),
-        "--deadline-ms", str(args.deadline_ms),
+        "--l4s-fractions",
+        args.l4s_fractions,
+        "--repetitions",
+        str(args.repetitions),
+        "--deadline-ms",
+        str(args.deadline_ms),
         *[value for value in args.reordering_args if value != "--"],
     ]
     command = [
         sys.executable,
         str(ROOT / "tools/l4s/run_qemu_timeseries_test.py"),
-        "--make-target", "l4s-3dgs-reordering-check",
-        "--guest-result-name", "3dgs-reordering",
-        "--guest-result-root", "results/l4s",
-        "--destination-root", "results/l4s",
-        "--destination-prefix", args.destination_prefix,
-        "--guest-file", f"{args.source_bundle.resolve()}=inputs/scene.bundle",
-        "--guest-file", f"{args.frozen_demand.resolve()}=inputs/frozen-demand-order.json",
-        "--make-variable", "THREEDGS_BUNDLE=inputs/scene.bundle",
-        "--make-variable", "THREEDGS_FROZEN_DEMAND=inputs/frozen-demand-order.json",
-        "--make-variable", f"THREEDGS_REORDERING_ARGS={' '.join(experiment_args)}",
-        "--memory", str(args.qemu_memory),
-        "--cpus", str(args.qemu_cpus),
-        "--guest-timeout", str(args.guest_timeout),
+        "--make-target",
+        "l4s-3dgs-reordering-check",
+        "--guest-result-name",
+        "3dgs-reordering",
+        "--guest-result-root",
+        "results/l4s",
+        "--destination-root",
+        "results/l4s",
+        "--destination-prefix",
+        args.destination_prefix,
+        "--guest-file",
+        f"{args.source_bundle.resolve()}=inputs/scene.bundle",
+        "--guest-file",
+        f"{args.frozen_demand.resolve()}=inputs/frozen-demand-order.json",
+        "--make-variable",
+        "THREEDGS_BUNDLE=inputs/scene.bundle",
+        "--make-variable",
+        "THREEDGS_FROZEN_DEMAND=inputs/frozen-demand-order.json",
+        "--make-variable",
+        f"THREEDGS_REORDERING_ARGS={' '.join(experiment_args)}",
+        "--memory",
+        str(args.qemu_memory),
+        "--cpus",
+        str(args.qemu_cpus),
+        "--guest-timeout",
+        str(args.guest_timeout),
     ]
     if args.allow_dirty:
         command.append("--allow-dirty")
