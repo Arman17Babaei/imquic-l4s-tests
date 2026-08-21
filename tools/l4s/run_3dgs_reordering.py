@@ -39,16 +39,8 @@ DEFAULT_3DGS = Path(
 )
 
 PATHS = {
-    "low-reno": {
-        "mode": "reno",
-        "port": 4443,
-        "manifest_key": "reno",
-    },
-    "high-prague": {
-        "mode": "prague",
-        "port": 4444,
-        "manifest_key": "prague",
-    },
+    "low-reno": {"mode": "reno", "port": 4443, "manifest_key": "reno"},
+    "high-prague": {"mode": "prague", "port": 4444, "manifest_key": "prague"},
 }
 
 
@@ -85,10 +77,7 @@ def _reset(interface: str) -> None:
 def _dualpi2(interface: str, args, *, rate: str, burst: str) -> None:
     _reset(interface)
     subprocess.run(
-        [
-            "tc", "qdisc", "add", "dev", interface, "root",
-            "handle", "1:", "htb", "default", "1",
-        ],
+        ["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "1"],
         check=True,
     )
     subprocess.run(
@@ -114,10 +103,7 @@ def _dualpi2(interface: str, args, *, rate: str, burst: str) -> None:
 def _classic_fifo(interface: str, args) -> None:
     _reset(interface)
     subprocess.run(
-        [
-            "tc", "qdisc", "add", "dev", interface, "root",
-            "handle", "1:", "htb", "default", "1",
-        ],
+        ["tc", "qdisc", "add", "dev", interface, "root", "handle", "1:", "htb", "default", "1"],
         check=True,
     )
     subprocess.run(
@@ -131,8 +117,7 @@ def _classic_fifo(interface: str, args) -> None:
     subprocess.run(
         [
             "tc", "qdisc", "add", "dev", interface, "parent", "1:1",
-            "handle", "20:", "pfifo",
-            "limit", str(args.classic_buffer_packets),
+            "handle", "20:", "pfifo", "limit", str(args.classic_buffer_packets),
         ],
         check=True,
     )
@@ -152,37 +137,17 @@ def _configure_fixed_delay(interface: str, one_way_ms: float) -> None:
     )
 
 
-def _configure_bottlenecks(
-    provider_egress: str,
-    downstream_egress: str,
-    args,
-) -> None:
-    # Recreate both qdiscs for every case so AQM/controller state never leaks.
-    _dualpi2(
-        provider_egress,
-        args,
-        rate=args.l4s_rate,
-        burst=args.l4s_burst,
-    )
+def _configure_bottlenecks(provider_egress: str, downstream_egress: str, args) -> None:
+    _dualpi2(provider_egress, args, rate=args.l4s_rate, burst=args.l4s_burst)
     if args.downstream_mode == "dualpi2":
-        _dualpi2(
-            downstream_egress,
-            args,
-            rate=args.classic_rate,
-            burst=args.classic_burst,
-        )
+        _dualpi2(downstream_egress, args, rate=args.classic_rate, burst=args.classic_burst)
     else:
         _classic_fifo(downstream_egress, args)
 
 
 def _disable_offloads(interfaces: list[str]) -> dict[str, str]:
-    """Keep encrypted UDP packet boundaries stable across capture points."""
     features = (
-        "gro",
-        "gso",
-        "tso",
-        "lro",
-        "tx-udp-segmentation",
+        "gro", "gso", "tso", "lro", "tx-udp-segmentation",
         "rx-udp-gro-forwarding",
     )
     evidence: dict[str, str] = {}
@@ -248,7 +213,6 @@ def _stop_capture(process, label: str) -> None:
 def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
     inputs = args.output / "inputs"
     inputs.mkdir()
-
     if args.frozen_demand is not None:
         frozen = json.loads(args.frozen_demand.read_text(encoding="utf-8"))
         if not isinstance(frozen.get("track_order"), list) or not frozen["track_order"]:
@@ -267,12 +231,9 @@ def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
             frame_stride=args.frame_stride,
             allow_unpinned=args.allow_unpinned_3dgs,
         )
-
     frozen["initial_base_release_ms"] = args.initial_release_ms
     frozen["demand_time_scale"] = args.demand_time_scale
-    frozen["order_source"] = (
-        "bicycle first-visible track order, frozen before network run"
-    )
+    frozen["order_source"] = "bicycle first-visible track order, frozen before network run"
     (inputs / "frozen-demand-order.json").write_text(
         json.dumps(frozen, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -282,21 +243,14 @@ def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
     for fraction in args.l4s_fractions:
         tag = f"{fraction:.4f}".rstrip("0").rstrip(".").replace(".", "p")
         root = inputs / f"l4s-{tag}"
-        manifest = split_l4s_spectrum(
-            args.source_bundle,
-            root,
-            l4s_fraction=fraction,
-        )
+        manifest = split_l4s_spectrum(args.source_bundle, root, l4s_fraction=fraction)
         importance_ranks = manifest_importance_ranks(manifest)
-
         path_inputs: dict[str, dict[str, object]] = {}
         for name, config in PATHS.items():
             source_bundle = Path(str(manifest[config["manifest_key"]]["path"]))
             ordered_bundle = root / f"{name}-ordered.bundle"
             ordered = reorder_bundle_by_track_order(
-                source_bundle,
-                ordered_bundle,
-                list(frozen["track_order"]),
+                source_bundle, ordered_bundle, list(frozen["track_order"])
             )
             schedule_path = root / f"{name}-release-ms.txt"
             schedule = write_trace_release_schedule(
@@ -313,7 +267,6 @@ def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
                 "ordered": ordered,
                 "schedule": schedule,
             }
-
         manifest["path_inputs"] = path_inputs
         (root / "reordering-input.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n",
@@ -334,10 +287,8 @@ def _write_combined_timeline(
     for raw in manifest["objects"]:
         row = dict(raw)
         identity = (
-            row["track_id"],
-            row["group_id"],
-            int(row["subgroup_id"]),
-            int(row["object_id"]),
+            row["track_id"], row["group_id"],
+            int(row["subgroup_id"]), int(row["object_id"]),
         )
         manifest_by_identity[identity] = row
 
@@ -350,84 +301,60 @@ def _write_combined_timeline(
         with timeline_path.open("r", encoding="utf-8", newline="") as stream:
             reader = csv.DictReader(stream)
             for timeline_row, payload in zip_longest(
-                reader,
-                read_bundle(received_path),
-                fillvalue=missing,
+                reader, read_bundle(received_path), fillvalue=missing
             ):
                 if timeline_row is missing or payload is missing:
-                    raise RuntimeError(
-                        f"{case / name}: timeline/bundle length mismatch"
-                    )
+                    raise RuntimeError(f"{case / name}: timeline/bundle length mismatch")
                 embedded = object_identity(payload)
                 identity = (
-                    embedded["track_id"],
-                    embedded["group_id"],
-                    int(embedded["subgroup_id"]),
-                    int(embedded["object_id"]),
+                    embedded["track_id"], embedded["group_id"],
+                    int(embedded["subgroup_id"]), int(embedded["object_id"]),
                 )
                 source = manifest_by_identity.get(identity)
                 if source is None:
-                    raise RuntimeError(
-                        f"{case / name}: object absent from spectrum manifest"
-                    )
+                    raise RuntimeError(f"{case / name}: object absent from spectrum manifest")
                 if source["path"] != name:
                     raise RuntimeError(
                         f"{case / name}: object {identity} assigned to {source['path']}"
                     )
                 path_time_us = int(timeline_row["arrival_time_us"])
                 absolute_epoch_us = subscriber_start + path_time_us
-                rows.append(
-                    {
-                        "experiment_time_us": absolute_epoch_us - workload_start_epoch_us,
-                        "absolute_epoch_us": absolute_epoch_us,
-                        "path": name,
-                        "congestion": PATHS[name]["mode"],
-                        "path_arrival_time_us": path_time_us,
-                        "bundle_record_index": int(timeline_row["bundle_record_index"]),
-                        "source_record_index": int(source["source_record_index"]),
-                        "importance_rank": int(source["importance_rank"]),
-                        "layer": int(source["layer"]),
-                        "mean_opacity": float(source["mean_opacity"]),
-                        "payload_bytes": int(timeline_row["payload_bytes"]),
-                        "num_gaussians": int(timeline_row["num_gaussians"]),
-                        "track_id": identity[0],
-                        "group_id": identity[1],
-                        "subgroup_id": int(identity[2]),
-                        "object_id": int(identity[3]),
-                    }
-                )
+                rows.append({
+                    "experiment_time_us": absolute_epoch_us - workload_start_epoch_us,
+                    "absolute_epoch_us": absolute_epoch_us,
+                    "path": name,
+                    "congestion": PATHS[name]["mode"],
+                    "path_arrival_time_us": path_time_us,
+                    "bundle_record_index": int(timeline_row["bundle_record_index"]),
+                    "source_record_index": int(source["source_record_index"]),
+                    "importance_rank": int(source["importance_rank"]),
+                    "layer": int(source["layer"]),
+                    "mean_opacity": float(source["mean_opacity"]),
+                    "payload_bytes": int(timeline_row["payload_bytes"]),
+                    "num_gaussians": int(timeline_row["num_gaussians"]),
+                    "track_id": identity[0],
+                    "group_id": identity[1],
+                    "subgroup_id": int(identity[2]),
+                    "object_id": int(identity[3]),
+                })
 
     rows.sort(
         key=lambda row: (
-            int(row["absolute_epoch_us"]),
-            str(row["path"]),
+            int(row["absolute_epoch_us"]), str(row["path"]),
             int(row["bundle_record_index"]),
         )
     )
     destination = case / "combined-arrival-timeline.csv"
     fields = (
-        "experiment_time_us",
-        "absolute_epoch_us",
-        "path",
-        "congestion",
-        "path_arrival_time_us",
-        "bundle_record_index",
-        "source_record_index",
-        "importance_rank",
-        "layer",
-        "mean_opacity",
-        "payload_bytes",
-        "num_gaussians",
-        "track_id",
-        "group_id",
-        "subgroup_id",
-        "object_id",
+        "experiment_time_us", "absolute_epoch_us", "path", "congestion",
+        "path_arrival_time_us", "bundle_record_index", "source_record_index",
+        "importance_rank", "layer", "mean_opacity", "payload_bytes",
+        "num_gaussians", "track_id", "group_id", "subgroup_id", "object_id",
     )
     with destination.open("w", encoding="utf-8", newline="") as stream:
         writer = csv.DictWriter(stream, fieldnames=fields)
         writer.writeheader()
         writer.writerows(rows)
-
     return {
         "path": str(destination),
         "sha256": sha256_file(destination),
@@ -437,9 +364,7 @@ def _write_combined_timeline(
 
 
 def _wait_publishers_ready(
-    ready_paths: dict[str, Path],
-    publishers: dict[str, object],
-    timeout_s: float,
+    ready_paths: dict[str, Path], publishers: dict[str, object], timeout_s: float
 ) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
@@ -486,7 +411,6 @@ def _run_case(
     tag = f"{fraction:.4f}".rstrip("0").rstrip(".").replace(".", "p")
     case = experiment_root / f"l4s-{tag}-rep-{repetition:02d}"
     case.mkdir()
-
     _configure_bottlenecks(provider_egress, downstream_egress, args)
     time.sleep(0.05)
 
@@ -500,28 +424,9 @@ def _run_case(
         )
 
     save_tc_state("before")
-
+    # Captures start only after both QUIC connections are established. This
+    # excludes handshake/startup packets from the reordering evidence.
     captures = {}
-    if args.capture_mode != "none":
-        for label, interface in {
-            "provider_ingress": provider_ingress,
-            "provider_egress": provider_egress,
-            "downstream_egress": downstream_egress,
-        }.items():
-            if args.capture_mode == "pcap":
-                captures[label] = _pcap_capture(
-                    interface,
-                    case / f"{label}.pcap",
-                    server_ip=server.IP(),
-                )
-            else:
-                captures[label] = _packet_log_capture(
-                    interface,
-                    case / f"{label}.packet-order.csv",
-                    server_ip=server.IP(),
-                )
-        time.sleep(0.2)
-
     processes = []
     streams = []
     publishers = {}
@@ -553,18 +458,9 @@ def _run_case(
             )
             bg_client = server.popen(
                 [
-                    "iperf3",
-                    "-c",
-                    background_sink.IP(),
-                    "-p",
-                    "5201",
-                    "-t",
-                    f"{duration:g}",
-                    "-b",
-                    f"{args.dc_background_mbps}M",
-                    "-C",
-                    args.dc_background_cc,
-                    "--json",
+                    "iperf3", "-c", background_sink.IP(), "-p", "5201",
+                    "-t", f"{duration:g}", "-b", f"{args.dc_background_mbps}M",
+                    "-C", args.dc_background_cc, "--json",
                 ],
                 stdout=bg_client_log,
                 stderr=subprocess.STDOUT,
@@ -572,7 +468,7 @@ def _run_case(
             processes.append(bg_client)
             time.sleep(args.dc_background_warmup_s)
 
-        # Always establish exactly two media connections, including alpha=0/1.
+        # Exactly two media connections are always established, including alpha=0/1.
         for name, config in PATHS.items():
             path_root = case / name
             path_root.mkdir()
@@ -585,20 +481,13 @@ def _run_case(
             path_input = manifest["path_inputs"][name]
             publishers[name] = server.popen(
                 [
-                    str(BINARY),
-                    "publisher-scheduled-gated",
-                    server.IP(),
-                    str(config["port"]),
-                    config["mode"],
-                    str(path_input["bundle"]),
-                    str(args.deadline_ms),
-                    str(path_root / "transport-metrics.csv"),
+                    str(BINARY), "publisher-scheduled-gated", server.IP(),
+                    str(config["port"]), config["mode"], str(path_input["bundle"]),
+                    str(args.deadline_ms), str(path_root / "transport-metrics.csv"),
                     str(path_root / "publisher-result.json"),
                     str(path_input["schedule"]["path"]),
-                    str(path_root / "admission-order.csv"),
-                    str(ready_path),
-                    str(go_path),
-                    str(args.transport_queue_slack_bytes),
+                    str(path_root / "admission-order.csv"), str(ready_path),
+                    str(go_path), str(args.transport_queue_slack_bytes),
                 ],
                 cwd=str(ROOT / "deps" / "imquic" / "src"),
                 stdout=pub_log,
@@ -616,14 +505,9 @@ def _run_case(
             path_root = case / name
             subscribers[name] = client.popen(
                 [
-                    str(BINARY),
-                    "subscriber",
-                    server.IP(),
-                    str(config["port"]),
-                    config["mode"],
-                    str(path_root / "received.bundle"),
-                    str(subscriber_deadline_ms),
-                    str(path_root / "arrival-timeline.csv"),
+                    str(BINARY), "subscriber", server.IP(), str(config["port"]),
+                    config["mode"], str(path_root / "received.bundle"),
+                    str(subscriber_deadline_ms), str(path_root / "arrival-timeline.csv"),
                     str(path_root / "subscriber-result.json"),
                 ],
                 cwd=str(ROOT / "deps" / "imquic" / "src"),
@@ -632,33 +516,39 @@ def _run_case(
             )
             processes.append(subscribers[name])
 
-        _wait_publishers_ready(
-            ready_paths,
-            publishers,
-            args.endpoint_ready_timeout_s,
-        )
-        workload_start_epoch_us = (
-            time.time_ns() // 1000
-            + int(args.workload_start_lead_ms * 1000)
-        )
-        go_path.write_text(
-            f"{workload_start_epoch_us}\n",
-            encoding="utf-8",
-        )
+        _wait_publishers_ready(ready_paths, publishers, args.endpoint_ready_timeout_s)
 
-        timeout = (
-            args.deadline_ms + args.subscriber_guard_ms
-        ) / 1000.0 + 30
+        if args.capture_mode != "none":
+            for label, interface in {
+                "provider_ingress": provider_ingress,
+                "provider_egress": provider_egress,
+                "downstream_egress": downstream_egress,
+            }.items():
+                if args.capture_mode == "pcap":
+                    captures[label] = _pcap_capture(
+                        interface, case / f"{label}.pcap", server_ip=server.IP()
+                    )
+                else:
+                    captures[label] = _packet_log_capture(
+                        interface, case / f"{label}.packet-order.csv",
+                        server_ip=server.IP(),
+                    )
+            time.sleep(args.capture_settle_ms / 1000.0)
+
+        workload_start_epoch_us = (
+            time.time_ns() // 1000 + int(args.workload_start_lead_ms * 1000)
+        )
+        go_path.write_text(f"{workload_start_epoch_us}\n", encoding="utf-8")
+
+        timeout = (args.deadline_ms + args.subscriber_guard_ms) / 1000.0 + 30
         status = {
             f"{name}-subscriber": process.wait(timeout=timeout)
             for name, process in subscribers.items()
         }
-        status.update(
-            {
-                f"{name}-publisher": process.wait(timeout=timeout)
-                for name, process in publishers.items()
-            }
-        )
+        status.update({
+            f"{name}-publisher": process.wait(timeout=timeout)
+            for name, process in publishers.items()
+        })
         if any(status.values()):
             raise RuntimeError(f"{case.name}: endpoint failure: {status}")
     finally:
@@ -678,23 +568,16 @@ def _run_case(
         name: validate_path(case / name, subscriber_deadline_ms)
         for name in PATHS
     }
-
     admission_results = {}
     for name, config in PATHS.items():
-        schedule_path = Path(
-            str(manifest["path_inputs"][name]["schedule"]["path"])
-        )
+        schedule_path = Path(str(manifest["path_inputs"][name]["schedule"]["path"]))
         admission_path = case / name / "admission-order.csv"
         assigned = int(manifest[config["manifest_key"]]["objects"])
         if assigned:
-            admission_results[name] = validate_admission_order(
-                schedule_path,
-                admission_path,
-            )
+            admission_results[name] = validate_admission_order(schedule_path, admission_path)
         else:
             admission_results[name] = _empty_admission_validation(
-                schedule_path,
-                admission_path,
+                schedule_path, admission_path
             )
 
     publisher_actual_starts = {
@@ -705,27 +588,18 @@ def _run_case(
         name: int(path_results[name]["publisher"]["workload_start_epoch_us"])
         for name in PATHS
     }
-    if any(
-        value != workload_start_epoch_us
-        for value in requested_starts.values()
-    ):
-        raise RuntimeError(
-            f"{case.name}: publishers did not consume the same workload gate"
-        )
-
-    publisher_start_skew_us = (
-        max(publisher_actual_starts.values())
-        - min(publisher_actual_starts.values())
+    if any(value != workload_start_epoch_us for value in requested_starts.values()):
+        raise RuntimeError(f"{case.name}: publishers did not consume the same workload gate")
+    publisher_start_skew_us = max(publisher_actual_starts.values()) - min(
+        publisher_actual_starts.values()
     )
     publisher_start_lateness_us = max(
-        abs(value - workload_start_epoch_us)
-        for value in publisher_actual_starts.values()
+        abs(value - workload_start_epoch_us) for value in publisher_actual_starts.values()
     )
     if publisher_start_skew_us > int(args.max_start_skew_ms * 1000):
         raise RuntimeError(
-            f"{case.name}: workload start skew "
-            f"{publisher_start_skew_us / 1000:.3f} ms exceeds "
-            f"{args.max_start_skew_ms:.3f} ms"
+            f"{case.name}: workload start skew {publisher_start_skew_us / 1000:.3f} ms "
+            f"exceeds {args.max_start_skew_ms:.3f} ms"
         )
     if publisher_start_lateness_us > int(args.max_start_lateness_ms * 1000):
         raise RuntimeError(
@@ -735,13 +609,10 @@ def _run_case(
         )
 
     combined = _write_combined_timeline(
-        case,
-        path_results,
-        manifest,
+        case, path_results, manifest,
         workload_start_epoch_us=workload_start_epoch_us,
     )
     balance = manifest["balance"]
-    logical_starts = {name: workload_start_epoch_us for name in PATHS}
     result = {
         "case": case.name,
         "repetition": repetition,
@@ -749,7 +620,7 @@ def _run_case(
         "requested_l4s_byte_fraction": fraction,
         "actual_l4s_byte_fraction": balance["actual_l4s_byte_fraction"],
         "workload_start_epoch_us": workload_start_epoch_us,
-        "publisher_start_epoch_us": logical_starts,
+        "publisher_start_epoch_us": {name: workload_start_epoch_us for name in PATHS},
         "publisher_actual_start_epoch_us": publisher_actual_starts,
         "publisher_start_skew_us": publisher_start_skew_us,
         "publisher_start_lateness_us": publisher_start_lateness_us,
@@ -773,8 +644,7 @@ def _run_case(
         "combined_timeline": combined,
     }
     (case / "result.json").write_text(
-        json.dumps(result, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+        json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
     return result
 
@@ -786,15 +656,11 @@ def main() -> None:
     parser.add_argument("--cache", type=Path)
     parser.add_argument("--trace", type=Path)
     parser.add_argument(
-        "--frozen-demand",
-        type=Path,
+        "--frozen-demand", type=Path,
         help="reuse a previously derived frozen-demand-order.json",
     )
     parser.add_argument(
-        "--3dgs-dir",
-        dest="three_dgs_dir",
-        type=Path,
-        default=DEFAULT_3DGS,
+        "--3dgs-dir", dest="three_dgs_dir", type=Path, default=DEFAULT_3DGS
     )
     parser.add_argument("--allow-unpinned-3dgs", action="store_true")
     parser.add_argument(
@@ -821,9 +687,7 @@ def main() -> None:
     parser.add_argument("--classic-burst", default="128k")
     parser.add_argument("--classic-buffer-packets", type=int, default=128)
     parser.add_argument(
-        "--downstream-mode",
-        choices=("classic", "dualpi2"),
-        default="classic",
+        "--downstream-mode", choices=("classic", "dualpi2"), default="classic"
     )
     parser.add_argument("--base-rtt-ms", type=float, default=20.0)
     parser.add_argument("--dualpi2-target", default="15ms")
@@ -831,9 +695,7 @@ def main() -> None:
     parser.add_argument("--dualpi2-step", default="1ms")
     parser.add_argument("--dc-background-mbps", type=float, default=280.0)
     parser.add_argument(
-        "--dc-background-cc",
-        choices=("reno", "cubic"),
-        default="reno",
+        "--dc-background-cc", choices=("reno", "cubic"), default="reno"
     )
     parser.add_argument("--dc-background-warmup-s", type=float, default=2.0)
     parser.add_argument(
@@ -848,13 +710,18 @@ def main() -> None:
     )
     parser.add_argument("--endpoint-ready-timeout-s", type=float, default=10.0)
     parser.add_argument("--workload-start-lead-ms", type=float, default=200.0)
+    parser.add_argument(
+        "--capture-settle-ms",
+        type=float,
+        default=50.0,
+        help="time to let packet capture attach after both QUIC connections are ready",
+    )
     parser.add_argument("--max-start-skew-ms", type=float, default=2.0)
     parser.add_argument("--max-start-lateness-ms", type=float, default=5.0)
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument(
-        "--capture-mode",
-        choices=("packet-log", "pcap", "none"),
+        "--capture-mode", choices=("packet-log", "pcap", "none"),
         default="packet-log",
     )
     parser.add_argument("--no-pcap", action="store_true")
@@ -866,8 +733,7 @@ def main() -> None:
         raise SystemExit("run as root")
     if not BINARY.is_file():
         raise SystemExit(
-            "build scheduled fixture with: "
-            "sh tools/l4s/build_3dgs_scheduled_fixture.sh"
+            "build scheduled fixture with: sh tools/l4s/build_3dgs_scheduled_fixture.sh"
         )
     if args.capture_mode == "pcap" and shutil.which("tcpdump") is None:
         raise SystemExit("tcpdump is required for --capture-mode pcap")
@@ -897,7 +763,11 @@ def main() -> None:
         parser.error("--transport-queue-slack-bytes must be positive")
     if args.base_rtt_ms < 0:
         parser.error("--base-rtt-ms must be non-negative")
-    if args.endpoint_ready_timeout_s <= 0 or args.workload_start_lead_ms < 0:
+    if (
+        args.endpoint_ready_timeout_s <= 0
+        or args.workload_start_lead_ms < 0
+        or args.capture_settle_ms < 0
+    ):
         parser.error("invalid endpoint synchronization timing")
     if args.max_start_skew_ms < 0 or args.max_start_lateness_ms < 0:
         parser.error("start validation thresholds must be non-negative")
@@ -925,7 +795,6 @@ def main() -> None:
     try:
         net.start()
         subprocess.run(["modprobe", "sch_dualpi2"], check=True)
-
         server_egress = _interface(server, provider)
         provider_ingress = _interface(provider, server)
         provider_egress = _interface(provider, downstream)
@@ -942,16 +811,10 @@ def main() -> None:
 
         offload_evidence = {}
         if args.capture_mode != "none":
-            offload_evidence = _disable_offloads(
-                [
-                    server_egress,
-                    provider_ingress,
-                    provider_egress,
-                    downstream_ingress,
-                    downstream_egress,
-                    client_egress,
-                ]
-            )
+            offload_evidence = _disable_offloads([
+                server_egress, provider_ingress, provider_egress,
+                downstream_ingress, downstream_egress, client_egress,
+            ])
 
         write_experiment_record(
             args.output,
@@ -960,13 +823,11 @@ def main() -> None:
                 "source_bundle": str(args.source_bundle.resolve()),
                 "source_sha256": sha256_file(args.source_bundle),
                 "trace": (
-                    str(args.trace.resolve())
-                    if args.trace is not None
+                    str(args.trace.resolve()) if args.trace is not None
                     else frozen.get("trace")
                 ),
                 "trace_sha256": (
-                    sha256_file(args.trace)
-                    if args.trace is not None
+                    sha256_file(args.trace) if args.trace is not None
                     else frozen.get("trace_sha256")
                 ),
                 "frozen_demand_sha256": sha256_file(
@@ -978,12 +839,12 @@ def main() -> None:
                     "ranked payload-byte prefix -> Prague; remainder -> Reno"
                 ),
                 "application_priority": (
-                    "(progressive layer/subgroup ascending, "
-                    "mean opacity descending, stable source order)"
+                    "(progressive layer/subgroup ascending, mean opacity descending, "
+                    "stable source order)"
                 ),
                 "application_admission_gate": (
-                    "queued_stream_bytes < min(object_size, "
-                    "transport_queue_slack_bytes) and bytes_in_flight < cwnd"
+                    "queued_stream_bytes < min(object_size, transport_queue_slack_bytes) "
+                    "and bytes_in_flight < cwnd"
                 ),
                 "transport_queue_slack_bytes": args.transport_queue_slack_bytes,
                 "demand_time_scale": args.demand_time_scale,
@@ -1001,13 +862,15 @@ def main() -> None:
                 "deadline_ms": args.deadline_ms,
                 "repetitions": args.repetitions,
                 "packet_order_capture": args.capture_mode,
+                "capture_start": (
+                    "after both QUIC connections are ready, before workload gate"
+                ),
             },
             topology={
                 "forward": (
                     "server -> s1(DualPI2) -> "
                     + (
-                        "s2(DualPI2) -> client"
-                        if args.downstream_mode == "dualpi2"
+                        "s2(DualPI2) -> client" if args.downstream_mode == "dualpi2"
                         else "s2(FIFO) -> client"
                     )
                 ),
@@ -1016,8 +879,8 @@ def main() -> None:
                     "base_rtt_ms/2 netem on client egress for ACKs"
                 ),
                 "aggregation_background": (
-                    "server -> s1 -> s2 -> background_sink; "
-                    "shares provider egress but not client-facing qdisc"
+                    "server -> s1 -> s2 -> background_sink; shares provider egress "
+                    "but not client-facing qdisc"
                 ),
                 "interfaces": {
                     "server_egress": server_egress,
@@ -1028,47 +891,38 @@ def main() -> None:
                     "client_egress": client_egress,
                 },
             },
-            observed_network={
-                "offload_features": offload_evidence,
-            },
+            observed_network={"offload_features": offload_evidence},
         )
 
         for fraction in args.l4s_fractions:
             split_root, manifest = prepared[fraction]
             for repetition in range(1, args.repetitions + 1):
-                results.append(
-                    _run_case(
-                        client=client,
-                        server=server,
-                        background_sink=background_sink,
-                        provider_ingress=provider_ingress,
-                        provider_egress=provider_egress,
-                        downstream_egress=downstream_egress,
-                        experiment_root=args.output,
-                        split_root=split_root,
-                        manifest=manifest,
-                        fraction=fraction,
-                        repetition=repetition,
-                        args=args,
-                    )
-                )
+                results.append(_run_case(
+                    client=client,
+                    server=server,
+                    background_sink=background_sink,
+                    provider_ingress=provider_ingress,
+                    provider_egress=provider_egress,
+                    downstream_egress=downstream_egress,
+                    experiment_root=args.output,
+                    split_root=split_root,
+                    manifest=manifest,
+                    fraction=fraction,
+                    repetition=repetition,
+                    args=args,
+                ))
     finally:
         net.stop()
         subprocess.run(["mn", "-c"], check=False)
 
     (args.output / "summary.json").write_text(
-        json.dumps(
-            {
-                "scenario": "3dgs-two-connection-l4s-spectrum-reordering",
-                "frozen_demand_order": str(
-                    args.output / "inputs" / "frozen-demand-order.json"
-                ),
-                "cases": results,
-            },
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
+        json.dumps({
+            "scenario": "3dgs-two-connection-l4s-spectrum-reordering",
+            "frozen_demand_order": str(
+                args.output / "inputs" / "frozen-demand-order.json"
+            ),
+            "cases": results,
+        }, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 
