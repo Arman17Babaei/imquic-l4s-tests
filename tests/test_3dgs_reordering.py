@@ -25,6 +25,7 @@ from reordering_workload import (
     reorder_bundle_by_track_order,
     split_by_l4s_fraction,
     validate_admission_order,
+    validate_cross_path_admission_order,
     write_trace_release_schedule,
 )
 from render_3dgs_reordering import (
@@ -217,6 +218,46 @@ class ReorderingWorkloadTests(unittest.TestCase):
             result = validate_admission_order(schedule, admission)
             self.assertTrue(result["validated"])
             self.assertEqual(result["admitted_records"], 3)
+
+    def test_cross_path_admission_allows_classic_while_prague_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prague = root / "prague.txt"
+            classic = root / "classic.txt"
+            combined = root / "combined.csv"
+            prague.write_text("10 0\n", encoding="utf-8")
+            classic.write_text("0 1\n", encoding="utf-8")
+            combined.write_text(
+                "admission_index,time_us,path,bundle_record_index,release_ms,"
+                "importance_rank,subgroup_id,payload_bytes,"
+                "queued_stream_bytes_before,bytes_in_flight_before,"
+                "cwnd_bytes_before,queue_threshold_bytes\n"
+                "0,100,low-reno,0,0,1,1,100,0,0,1000,100\n"
+                "1,10000,high-prague,0,10,0,0,100,0,0,1000,100\n",
+                encoding="utf-8",
+            )
+            result = validate_cross_path_admission_order(prague, classic, combined)
+            self.assertTrue(result["validated"])
+
+    def test_cross_path_admission_rejects_classic_while_prague_is_available(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prague = root / "prague.txt"
+            classic = root / "classic.txt"
+            combined = root / "combined.csv"
+            prague.write_text("0 0\n", encoding="utf-8")
+            classic.write_text("0 1\n", encoding="utf-8")
+            combined.write_text(
+                "admission_index,time_us,path,bundle_record_index,release_ms,"
+                "importance_rank,subgroup_id,payload_bytes,"
+                "queued_stream_bytes_before,bytes_in_flight_before,"
+                "cwnd_bytes_before,queue_threshold_bytes\n"
+                "0,100,low-reno,0,0,1,1,100,0,0,1000,100\n"
+                "1,200,high-prague,0,0,0,0,100,0,0,1000,100\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "Prague was available"):
+                validate_cross_path_admission_order(prague, classic, combined)
 
     def test_gif_timing_preserves_sampled_trace_timestamps(self):
         frames = [

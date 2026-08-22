@@ -482,11 +482,7 @@ def write_trace_release_schedule(
     }
 
 
-def validate_admission_order(
-    schedule_path: Path,
-    admission_path: Path,
-) -> dict[str, object]:
-    """Prove every logged admission selected the best currently eligible rank."""
+def _read_release_schedule(schedule_path: Path) -> list[tuple[int, int]]:
     schedule: list[tuple[int, int]] = []
     for line_number, line in enumerate(
         Path(schedule_path).read_text(encoding="utf-8").splitlines(), start=1
@@ -498,6 +494,15 @@ def validate_admission_order(
         if release_ms < 0 or importance_rank < 0:
             raise ValueError(f"{schedule_path}:{line_number}: negative schedule value")
         schedule.append((release_ms, importance_rank))
+    return schedule
+
+
+def validate_admission_order(
+    schedule_path: Path,
+    admission_path: Path,
+) -> dict[str, object]:
+    """Prove every logged admission selected the best currently eligible rank."""
+    schedule = _read_release_schedule(schedule_path)
 
     admitted: set[int] = set()
     with Path(admission_path).open(encoding="utf-8", newline="") as stream:
@@ -543,4 +548,74 @@ def validate_admission_order(
         "admission_policy": "lowest importance rank among currently eligible records",
         "scheduled_records": len(schedule),
         "admitted_records": len(admitted),
+    }
+
+
+def validate_cross_path_admission_order(
+    prague_schedule_path: Path,
+    classic_schedule_path: Path,
+    admission_path: Path,
+) -> dict[str, object]:
+    """Prove that Classic was admitted only while Prague had no eligible object."""
+
+    schedules = {
+        "high-prague": _read_release_schedule(prague_schedule_path),
+        "low-reno": _read_release_schedule(classic_schedule_path),
+    }
+    admitted = {name: set() for name in schedules}
+    rows = []
+    with Path(admission_path).open("r", encoding="utf-8", newline="") as stream:
+        reader = csv.DictReader(stream)
+        required = {
+            "admission_index", "time_us", "path", "bundle_record_index",
+            "release_ms", "importance_rank", "subgroup_id", "payload_bytes",
+            "queued_stream_bytes_before", "bytes_in_flight_before",
+            "cwnd_bytes_before", "queue_threshold_bytes",
+        }
+        if set(reader.fieldnames or ()) != required:
+            raise ValueError(f"{admission_path}: invalid combined admission header")
+        for expected_index, row in enumerate(reader):
+            index = int(row["admission_index"])
+            if index != expected_index:
+                raise ValueError(f"{admission_path}: non-contiguous global admission index")
+            path = row["path"]
+            if path not in schedules:
+                raise ValueError(f"{admission_path}: unknown admission path {path!r}")
+            record_index = int(row["bundle_record_index"])
+            time_us = int(row["time_us"])
+            schedule = schedules[path]
+            if record_index < 0 or record_index >= len(schedule):
+                raise ValueError(f"{admission_path}: invalid {path} record index")
+            if record_index in admitted[path]:
+                raise ValueError(f"{admission_path}: duplicate {path} admission")
+            release_ms, importance_rank = schedule[record_index]
+            if (release_ms, importance_rank) != (
+                int(row["release_ms"]),
+                int(row["importance_rank"]),
+            ):
+                raise ValueError(f"{admission_path}: admission does not match schedule")
+            if time_us < release_ms * 1000:
+                raise ValueError(f"{admission_path}: object admitted before release")
+            eligible_prague = [
+                candidate
+                for candidate, (release, _) in enumerate(schedules["high-prague"])
+                if candidate not in admitted["high-prague"]
+                and release * 1000 <= time_us
+            ]
+            if path == "low-reno" and eligible_prague:
+                raise ValueError(
+                    f"{admission_path}: Classic admitted while Prague was available"
+                )
+            admitted[path].add(record_index)
+            rows.append(row)
+
+    for path, schedule in schedules.items():
+        if len(admitted[path]) != len(schedule):
+            raise ValueError(f"{admission_path}: incomplete {path} admission log")
+    return {
+        "validated": True,
+        "admitted_records": len(rows),
+        "prague_records": len(schedules["high-prague"]),
+        "classic_records": len(schedules["low-reno"]),
+        "admission_policy": "Prague-first high-biased two-queue select",
     }

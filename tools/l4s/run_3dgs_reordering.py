@@ -24,6 +24,7 @@ from reordering_workload import (
     manifest_importance_ranks,
     reorder_bundle_by_track_order,
     validate_admission_order,
+    validate_cross_path_admission_order,
     write_trace_release_schedule,
 )
 from reordering_workload_v2 import split_l4s_spectrum
@@ -34,6 +35,7 @@ from three_dgs_bundle import read_bundle, sha256_file
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = ROOT / "build" / "imquic-3dgs-moq-scheduled"
 PACKET_LOGGER = ROOT / "tools" / "l4s" / "capture_udp_order.py"
+PRAGUE_WARMUP_DRAIN_GUARD_MS = 5000
 DEFAULT_3DGS = Path(
     os.environ.get("THREEDGS_DIR", ROOT / "deps" / "3dgs_over_moq")
 )
@@ -395,19 +397,17 @@ def _write_combined_timeline(
     }
 
 
-def _wait_publishers_ready(
-    ready_paths: dict[str, Path], publishers: dict[str, object], timeout_s: float
+def _wait_publisher_ready(
+    ready_path: Path, publisher, timeout_s: float
 ) -> None:
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        for name, process in publishers.items():
-            if process.poll() is not None:
-                raise RuntimeError(f"{name} publisher exited before workload gate")
-        if all(path.is_file() for path in ready_paths.values()):
+        if publisher.poll() is not None:
+            raise RuntimeError("dual publisher exited before workload gate")
+        if ready_path.is_file():
             return
         time.sleep(0.005)
-    missing = [name for name, path in ready_paths.items() if not path.is_file()]
-    raise RuntimeError(f"publishers not ready before timeout: {', '.join(missing)}")
+    raise RuntimeError("dual publisher not ready before timeout")
 
 
 def _empty_admission_validation(schedule_path: Path, admission_path: Path):
@@ -461,12 +461,15 @@ def _run_case(
     captures = {}
     processes = []
     streams = []
-    publishers = {}
+    publisher = None
     subscribers = {}
     subscriber_logs = {}
-    ready_paths: dict[str, Path] = {}
+    ready_path = case / "publisher-ready"
     go_path = case / "workload-go.txt"
     workload_start_epoch_us = None
+    background_started_epoch_us = None
+    background_alive_after_warmup = False
+    bg_client = None
 
     try:
         if args.dc_background_mbps > 0:
@@ -484,8 +487,10 @@ def _run_case(
             time.sleep(0.2)
             duration = (
                 args.dc_background_warmup_s
+                + args.prague_warmup_ms / 1000.0
                 + args.deadline_ms / 1000.0
                 + args.subscriber_guard_ms / 1000.0
+                + PRAGUE_WARMUP_DRAIN_GUARD_MS / 1000.0
                 + 2
             )
             bg_client = server.popen(
@@ -498,42 +503,53 @@ def _run_case(
                 stderr=subprocess.STDOUT,
             )
             processes.append(bg_client)
+            background_started_epoch_us = time.time_ns() // 1000
             time.sleep(args.dc_background_warmup_s)
 
-        # Exactly two media connections are always established, including alpha=0/1.
-        for name, config in PATHS.items():
+        # One publisher owns both persistent media connections in every case.
+        for name in PATHS:
             path_root = case / name
             path_root.mkdir()
-            pub_log = (path_root / "publisher.log").open("w")
             sub_log = (path_root / "subscriber.log").open("w")
-            streams += [pub_log, sub_log]
+            streams.append(sub_log)
             subscriber_logs[name] = sub_log
-            ready_path = path_root / "publisher-ready"
-            ready_paths[name] = ready_path
+
+        publisher_log = (case / "publisher.log").open("w")
+        streams.append(publisher_log)
+        publisher_command = [
+            str(BINARY), "publisher-scheduled-dual-gated", server.IP(),
+            str(args.deadline_ms), str(args.transport_queue_slack_bytes),
+            str(args.prague_warmup_ms), str(ready_path), str(go_path),
+            str(case / "combined-admission-order.csv"),
+            str(case / "scheduler-result.json"),
+        ]
+        for name in ("high-prague", "low-reno"):
+            path_root = case / name
             path_input = manifest["path_inputs"][name]
-            publishers[name] = server.popen(
-                [
-                    str(BINARY), "publisher-scheduled-gated", server.IP(),
-                    str(config["port"]), config["mode"], str(path_input["bundle"]),
-                    str(args.deadline_ms), str(path_root / "transport-metrics.csv"),
-                    str(path_root / "publisher-result.json"),
-                    str(path_input["schedule"]["path"]),
-                    str(path_root / "admission-order.csv"), str(ready_path),
-                    str(go_path), str(args.transport_queue_slack_bytes),
-                    str(args.prague_warmup_ms),
-                ],
-                cwd=str(ROOT / "deps" / "imquic" / "src"),
-                stdout=pub_log,
-                stderr=subprocess.STDOUT,
-            )
-            processes.append(publishers[name])
+            publisher_command.extend([
+                str(path_input["bundle"]),
+                str(path_root / "transport-metrics.csv"),
+                str(path_root / "publisher-result.json"),
+                str(path_input["schedule"]["path"]),
+                str(path_root / "admission-order.csv"),
+            ])
+        publisher = server.popen(
+            publisher_command,
+            cwd=str(ROOT / "deps" / "imquic" / "src"),
+            stdout=publisher_log,
+            stderr=subprocess.STDOUT,
+        )
+        processes.append(publisher)
 
         time.sleep(0.3)
         launch_order = list(PATHS)
         if repetition % 2 == 0:
             launch_order.reverse()
         subscriber_deadline_ms = (
-            args.prague_warmup_ms + args.deadline_ms + args.subscriber_guard_ms
+            args.prague_warmup_ms
+            + PRAGUE_WARMUP_DRAIN_GUARD_MS
+            + args.deadline_ms
+            + args.subscriber_guard_ms
         )
         for name in launch_order:
             config = PATHS[name]
@@ -554,11 +570,15 @@ def _run_case(
             )
             processes.append(subscribers[name])
 
-        _wait_publishers_ready(
-            ready_paths,
-            publishers,
+        _wait_publisher_ready(
+            ready_path,
+            publisher,
             args.endpoint_ready_timeout_s + args.prague_warmup_ms / 1000.0 + 5.0,
         )
+        if bg_client is not None:
+            background_alive_after_warmup = bg_client.poll() is None
+            if not background_alive_after_warmup:
+                raise RuntimeError(f"{case.name}: background ended during Prague warm-up")
 
         if args.capture_mode != "none":
             seen_interfaces = set()
@@ -596,10 +616,7 @@ def _run_case(
             f"{name}-subscriber": process.wait(timeout=timeout)
             for name, process in subscribers.items()
         }
-        status.update({
-            f"{name}-publisher": process.wait(timeout=timeout)
-            for name, process in publishers.items()
-        })
+        status["dual-publisher"] = publisher.wait(timeout=timeout)
         if any(status.values()):
             raise RuntimeError(f"{case.name}: endpoint failure: {status}")
     finally:
@@ -625,7 +642,10 @@ def _run_case(
         raise RuntimeError(f"{case.name}: workload gate was never released")
 
     subscriber_deadline_ms = (
-        args.prague_warmup_ms + args.deadline_ms + args.subscriber_guard_ms
+        args.prague_warmup_ms
+        + PRAGUE_WARMUP_DRAIN_GUARD_MS
+        + args.deadline_ms
+        + args.subscriber_guard_ms
     )
     path_results = {
         name: validate_path(case / name, subscriber_deadline_ms)
@@ -643,6 +663,8 @@ def _run_case(
             raise RuntimeError(
                 f"{case.name}/{name}: incomplete warm-up discard delivery"
             )
+        if name == "low-reno" and (queued_objects or queued_bytes):
+            raise RuntimeError(f"{case.name}: Classic media connection was warmed")
         warmup_validation[name] = {
             "queued_objects": queued_objects,
             "queued_bytes": queued_bytes,
@@ -660,6 +682,26 @@ def _run_case(
         else:
             admission_results[name] = _empty_admission_validation(
                 schedule_path, admission_path
+            )
+    cross_path_admission = validate_cross_path_admission_order(
+        Path(str(manifest["path_inputs"]["high-prague"]["schedule"]["path"])),
+        Path(str(manifest["path_inputs"]["low-reno"]["schedule"]["path"])),
+        case / "combined-admission-order.csv",
+    )
+    scheduler_result = json.loads(
+        (case / "scheduler-result.json").read_text(encoding="utf-8")
+    )
+    if not scheduler_result.get("validated"):
+        raise RuntimeError(f"{case.name}: scheduler result failed validation")
+    if args.prague_warmup_ms > 0 and args.dc_background_mbps > 0:
+        if (
+            background_started_epoch_us is None
+            or background_started_epoch_us
+            > int(scheduler_result["warmup_started_epoch_us"])
+            or not background_alive_after_warmup
+        ):
+            raise RuntimeError(
+                f"{case.name}: background did not span the Prague warm-up"
             )
 
     publisher_actual_starts = {
@@ -709,6 +751,20 @@ def _run_case(
         "transport_queue_slack_bytes": args.transport_queue_slack_bytes,
         "prague_warmup_ms": args.prague_warmup_ms,
         "warmup_validation": warmup_validation,
+        "warmup_phase": {
+            "started_epoch_us": scheduler_result["warmup_started_epoch_us"],
+            "finished_epoch_us": scheduler_result["warmup_finished_epoch_us"],
+            "background_started_epoch_us": background_started_epoch_us,
+            "background_active_through_warmup": background_alive_after_warmup,
+            "background_overlap_validated": (
+                args.prague_warmup_ms > 0
+                and args.dc_background_mbps > 0
+                and background_alive_after_warmup
+            ),
+            "classic_warmup_bytes": warmup_validation["low-reno"]["queued_bytes"],
+        },
+        "scheduler": scheduler_result,
+        "cross_path_admission_validation": cross_path_admission,
         "priority_definition": manifest["priority_definition"],
         "connections": 2,
         "paths": {
@@ -766,7 +822,7 @@ def main() -> None:
     parser.add_argument(
         "--prague-warmup-ms",
         type=int,
-        default=0,
+        default=10000,
         help=(
             "send and discard saturated dummy objects on the same Prague "
             "connection before releasing the scene gate"
@@ -877,8 +933,6 @@ def main() -> None:
         parser.error("repetitions and deadline must be positive")
     if args.prague_warmup_ms < 0:
         parser.error("--prague-warmup-ms must be non-negative")
-    if args.prague_warmup_ms and args.l4s_fractions != [1.0]:
-        parser.error("--prague-warmup-ms currently requires --l4s-fractions 1")
     if args.subscriber_guard_ms <= 0:
         parser.error("--subscriber-guard-ms must be positive")
     if args.transport_queue_slack_bytes <= 0:
@@ -989,11 +1043,15 @@ def main() -> None:
                     "stable source order)"
                 ),
                 "application_admission_gate": (
+                    "Prague-first high-biased two-queue select; Classic only while "
+                    "Prague has no eligible object; selected transport requires "
                     "queued_stream_bytes < min(object_size, transport_queue_slack_bytes) "
                     "and bytes_in_flight < cwnd"
                 ),
                 "transport_queue_slack_bytes": args.transport_queue_slack_bytes,
                 "prague_warmup_ms": args.prague_warmup_ms,
+                "warmup_assignment": "Prague only; Classic media connection idle",
+                "background_during_warmup": args.dc_background_mbps > 0,
                 "demand_time_scale": args.demand_time_scale,
                 "initial_release_ms": args.initial_release_ms,
                 "base_rtt_ms": args.base_rtt_ms,

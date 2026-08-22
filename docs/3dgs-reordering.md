@@ -117,12 +117,13 @@ higher-ranked object becomes eligible
 
 The publisher does not preload the whole workload into IMQUIC.
 
-For each connection independently:
+One publisher owns both connections and applies a high-biased two-queue select:
 
-1. keep unsent objects in the experiment's application priority queue;
-2. find the highest-ranked currently eligible object assigned to that transport;
-3. read IMQUIC transport metrics;
-4. admit the object only if both conditions hold:
+1. try the Prague queue without blocking;
+2. if Prague is empty, wait on both Prague and Classic eligibility;
+3. recheck Prague after wake-up, so Prague wins a simultaneous release;
+4. consult Classic only while Prague has no currently eligible object;
+5. admit the selected object only if both transport conditions hold:
 
 ```text
 bytes_in_flight < cwnd_bytes
@@ -142,6 +143,11 @@ The default is:
 
 This intentionally keeps only a few kilobytes of unsent QUIC data beyond the
 experiment scheduler's control.
+
+An eligible Prague object whose transport gate is closed blocks Classic. If a
+Classic object is waiting for transport room, a newly eligible Prague object
+preempts it before either object is admitted. A future Prague release does not
+block a Classic object that is available now.
 
 The gate is object-granular, not intra-object preemption. Once an MoQ object is
 handed to IMQUIC, its remaining bytes are committed to that transport. New
@@ -166,6 +172,20 @@ queue_threshold_bytes
 ```
 
 so the sender behavior can be audited after the run.
+
+The case-level `combined-admission-order.csv` adds a global admission index and
+transport path. Its validator rejects any Classic admission made while an
+eligible, unadmitted Prague object existed. `scheduler-result.json` records
+Prague-blocked time and Classic preemptions.
+
+## Prague warm-up
+
+The default `--prague-warmup-ms 10000` sends and discards dummy objects only on
+the Prague connection, including in the all-Classic endpoint control. The
+Classic media connection is established but remains idle. Configured background
+traffic starts before this warm-up and remains active through warm-up, drain,
+and scene measurement. Capture and the scene workload begin only after the
+Prague warm-up payload has drained. Use `--prague-warmup-ms 0` to disable it.
 
 ## Network topology
 
