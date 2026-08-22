@@ -61,6 +61,39 @@ def _mean_rtt_ms(path: Path) -> float | None:
     return statistics.fmean(value for _, value in points) if points else None
 
 
+def _experiment_goodput(path: Path, stream: str, *, bin_us: int) -> list[float]:
+    bins: list[int] = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        for row in csv.DictReader(handle):
+            if row["path"] != stream:
+                continue
+            time_us = int(row["experiment_time_us"])
+            if time_us < 0:
+                continue
+            index = time_us // bin_us
+            while len(bins) <= index:
+                bins.append(0)
+            bins[index] += int(row["payload_bytes"])
+    return [value * 8.0 / bin_us for value in bins]
+
+
+def _measured_rtt(
+    metrics_path: Path,
+    subscriber_result_path: Path,
+    workload_start_epoch_us: int,
+    deadline_s: float,
+) -> list[tuple[float, float]]:
+    subscriber = json.loads(subscriber_result_path.read_text(encoding="utf-8"))
+    offset_s = (
+        int(subscriber["started_epoch_us"]) - workload_start_epoch_us
+    ) / 1_000_000.0
+    return [
+        (time_s + offset_s, value)
+        for time_s, value in smoothed_rtt(metrics_path)
+        if 0.0 <= time_s + offset_s <= deadline_s
+    ]
+
+
 def _write_summary(rows: list[dict], destination: Path) -> None:
     fields = tuple(rows[0])
     with destination.open("w", encoding="utf-8", newline="") as stream:
@@ -136,7 +169,8 @@ def _render_summary(rows: list[dict], output_dir: Path) -> list[Path]:
 
 
 def _render_timeseries(
-    roots: dict[str, Path], fractions: list[float], output_dir: Path, *, bin_us: int
+    roots: dict[str, Path], fractions: list[float], output_dir: Path, *, bin_us: int,
+    deadline_s: float,
 ) -> list[Path]:
     import matplotlib.pyplot as plt
 
@@ -149,9 +183,12 @@ def _render_timeseries(
             rate_axis = axes[row_index, mode_index * 2]
             rtt_axis = axes[row_index, mode_index * 2 + 1]
             total_rates: list[float] = []
+            case_root = _cell_root(roots[mode], fraction) / case
+            combined_timeline = case_root / "combined-arrival-timeline.csv"
+            case_result = json.loads((case_root / "result.json").read_text(encoding="utf-8"))
             for stream, stream_label, color in STREAMS:
-                stream_root = _cell_root(roots[mode], fraction) / case / stream
-                rates = payload_goodput(stream_root / "arrival-timeline.csv", bin_us=bin_us)
+                stream_root = case_root / stream
+                rates = _experiment_goodput(combined_timeline, stream, bin_us=bin_us)
                 if len(total_rates) < len(rates):
                     total_rates.extend([0.0] * (len(rates) - len(total_rates)))
                 for index, value in enumerate(rates):
@@ -162,7 +199,12 @@ def _render_timeseries(
                 # An endpoint's empty path still exchanges handshake/control
                 # packets, but that RTT is not representative of a media flow.
                 if rates:
-                    rtt = smoothed_rtt(stream_root / "transport-metrics.csv")
+                    rtt = _measured_rtt(
+                        stream_root / "transport-metrics.csv",
+                        stream_root / "subscriber-result.json",
+                        int(case_result["workload_start_epoch_us"]),
+                        deadline_s,
+                    )
                     rtt_axis.plot(
                         [point[0] for point in rtt], [point[1] for point in rtt],
                         color=color, linewidth=1.0, label=stream_label,
@@ -175,7 +217,7 @@ def _render_timeseries(
             rate_axis.set_ylabel(f"{fraction:g} share\nMbit/s")
             rtt_axis.set_ylabel("ms")
             for axis in (rate_axis, rtt_axis):
-                axis.set_xlim(0, 33)
+                axis.set_xlim(0, deadline_s)
                 axis.set_ylim(bottom=0)
                 axis.grid(True, alpha=0.22)
                 if row_index == len(fractions) - 1:
@@ -247,9 +289,17 @@ def render_matrix(
                 row[f"{stream}_mean_goodput_mbps"] = (
                     float(received_payload_bytes) * 8.0 / deadline_s / 1_000_000.0
                 )
-                row[f"{stream}_mean_rtt_ms"] = (
-                    _mean_rtt_ms(metrics_path) if received_payload_bytes else None
-                )
+                row[f"{stream}_mean_rtt_ms"] = None
+                if received_payload_bytes:
+                    case_result = result
+                    row[f"{stream}_mean_rtt_ms"] = statistics.fmean(
+                        value for _, value in _measured_rtt(
+                            metrics_path,
+                            case_root / stream / "subscriber-result.json",
+                            int(case_result["workload_start_epoch_us"]),
+                            deadline_s,
+                        )
+                    )
                 arrival_path = case_root / stream / "arrival-timeline.csv"
                 sources.append({
                     "run": roots[mode].name,
@@ -266,7 +316,7 @@ def render_matrix(
     summary_csv = output_dir / "matrix-summary.csv"
     _write_summary(rows, summary_csv)
     outputs = _render_summary(rows, output_dir) + _render_timeseries(
-        roots, fractions, output_dir, bin_us=bin_us
+        roots, fractions, output_dir, bin_us=bin_us, deadline_s=deadline_s
     )
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),

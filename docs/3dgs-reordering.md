@@ -187,6 +187,11 @@ traffic starts before this warm-up and remains active through warm-up, drain,
 and scene measurement. Capture and the scene workload begin only after the
 Prague warm-up payload has drained. Use `--prague-warmup-ms 0` to disable it.
 
+The background option `--dc-background-mbps unlimited` omits iperf3's `-b`
+argument, allowing the TCP Reno flow to run at the available rate. The runner
+records that mode and requires the flow to remain active through the warm-up
+and measured workload.
+
 ## Network topology
 
 The default path is:
@@ -330,6 +335,30 @@ sudo python3 tools/l4s/run_3dgs_reordering.py \
   --dc-background-mbps 280 \
   --repetitions 3
 ```
+
+For a matched five-fraction downstream comparison, run each topology with one
+repetition and isolated fraction cells. `--retention evidence` keeps packet
+logs, timelines, admissions, transport metrics, and provenance while removing
+regenerated split and received bundles after validation:
+
+```sh
+python3 tools/l4s/run_qemu_3dgs_reordering.py \
+  --source-bundle results/l4s/3dgs-preparation/scene.bundle \
+  --frozen-demand results/l4s/3dgs-reordering-demand/frozen-demand-order.json \
+  --l4s-fractions 0,0.25,0.5,0.75,1 \
+  --repetitions 1 --isolate-fractions \
+  --destination-prefix qemu-3dgs-prague-first-l4s-l4s \
+  -- \
+  --downstream-mode dualpi2 \
+  --dc-background-mbps unlimited \
+  --prague-warmup-ms 10000 \
+  --capture-mode packet-log --retention evidence
+```
+
+Repeat with `--downstream-mode classic` and a different destination prefix.
+Pass the two run roots to `plot_3dgs_reordering_matrix.py`; its RTT and
+goodput series align to the workload gate, so warm-up is recorded but not
+counted as measured scene throughput.
 
 Analyze packet order with:
 

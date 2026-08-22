@@ -31,6 +31,10 @@ from reordering_workload_v2 import split_l4s_spectrum
 from run_3dgs_priority_split import stop, validate_path
 from split_3dgs_priority import object_identity
 from three_dgs_bundle import read_bundle, sha256_file
+from run_qemu_3dgs_reordering import (
+    _background_rate,
+    _iperf_background_command,
+)
 
 ROOT = Path(__file__).resolve().parents[2]
 BINARY = ROOT / "build" / "imquic-3dgs-moq-scheduled"
@@ -58,6 +62,27 @@ def _fractions(value: str) -> list[float]:
             "fractions must be comma-separated numbers in [0,1]"
         )
     return result
+
+
+def _background_enabled(args) -> bool:
+    return args.dc_background_mbps is None or args.dc_background_mbps > 0
+
+
+def _read_background_result(path: Path) -> dict[str, object]:
+    try:
+        result = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError(f"invalid iperf background result: {path}") from error
+    received = result.get("end", {}).get("sum_received", {})
+    if int(received.get("bytes", 0)) <= 0:
+        raise RuntimeError(f"iperf background transferred no bytes: {path}")
+    return {
+        "bytes_received": int(received["bytes"]),
+        "bits_per_second": float(received.get("bits_per_second", 0.0)),
+        "start": result.get("start", {}),
+        "end": result.get("end", {}),
+        "validated": True,
+    }
 
 
 def _interface(left, right) -> str:
@@ -469,10 +494,11 @@ def _run_case(
     workload_start_epoch_us = None
     background_started_epoch_us = None
     background_alive_after_warmup = False
+    background_alive_through_workload = False
     bg_client = None
 
     try:
-        if args.dc_background_mbps > 0:
+        if _background_enabled(args):
             server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
             background_sink.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
             bg_server_log = (case / "background-server.json").open("w")
@@ -494,11 +520,10 @@ def _run_case(
                 + 2
             )
             bg_client = server.popen(
-                [
-                    "iperf3", "-c", background_sink.IP(), "-p", "5201",
-                    "-t", f"{duration:g}", "-b", f"{args.dc_background_mbps}M",
-                    "-C", args.dc_background_cc, "--json",
-                ],
+                _iperf_background_command(
+                    background_sink.IP(), duration, args.dc_background_mbps,
+                    args.dc_background_cc,
+                ),
                 stdout=bg_client_log,
                 stderr=subprocess.STDOUT,
             )
@@ -619,6 +644,12 @@ def _run_case(
         status["dual-publisher"] = publisher.wait(timeout=timeout)
         if any(status.values()):
             raise RuntimeError(f"{case.name}: endpoint failure: {status}")
+        if bg_client is not None:
+            background_alive_through_workload = bg_client.poll() is None
+            if not background_alive_through_workload:
+                raise RuntimeError(
+                    f"{case.name}: background ended before workload completion"
+                )
     finally:
         for process in reversed(processes):
             stop(process)
@@ -640,6 +671,10 @@ def _run_case(
 
     if workload_start_epoch_us is None:
         raise RuntimeError(f"{case.name}: workload gate was never released")
+
+    background_result = None
+    if bg_client is not None:
+        background_result = _read_background_result(case / "background-client.json")
 
     subscriber_deadline_ms = (
         args.prague_warmup_ms
@@ -693,7 +728,7 @@ def _run_case(
     )
     if not scheduler_result.get("validated"):
         raise RuntimeError(f"{case.name}: scheduler result failed validation")
-    if args.prague_warmup_ms > 0 and args.dc_background_mbps > 0:
+    if args.prague_warmup_ms > 0 and _background_enabled(args):
         if (
             background_started_epoch_us is None
             or background_started_epoch_us
@@ -756,13 +791,16 @@ def _run_case(
             "finished_epoch_us": scheduler_result["warmup_finished_epoch_us"],
             "background_started_epoch_us": background_started_epoch_us,
             "background_active_through_warmup": background_alive_after_warmup,
+            "background_active_through_workload": background_alive_through_workload,
             "background_overlap_validated": (
                 args.prague_warmup_ms > 0
-                and args.dc_background_mbps > 0
+                and _background_enabled(args)
                 and background_alive_after_warmup
+                and background_alive_through_workload
             ),
             "classic_warmup_bytes": warmup_validation["low-reno"]["queued_bytes"],
         },
+        "background": background_result,
         "scheduler": scheduler_result,
         "cross_path_admission_validation": cross_path_admission,
         "priority_definition": manifest["priority_definition"],
@@ -857,7 +895,10 @@ def main() -> None:
         "--dualpi2-step",
         help="L4S step threshold (default: 15ms for client-switch, otherwise 5ms)",
     )
-    parser.add_argument("--dc-background-mbps", type=float, default=280.0)
+    parser.add_argument(
+        "--dc-background-mbps", type=_background_rate, default=280.0,
+        help="TCP background rate in Mbit/s, unlimited to omit iperf3 -b, or 0 to disable",
+    )
     parser.add_argument(
         "--dc-background-cc", choices=("reno", "cubic"), default="reno"
     )
@@ -913,7 +954,7 @@ def main() -> None:
         raise SystemExit("tcpdump is required for --capture-mode pcap")
     if args.capture_mode != "none" and shutil.which("ethtool") is None:
         raise SystemExit("ethtool is required for capture-safe offload control")
-    if args.dc_background_mbps > 0 and shutil.which("iperf3") is None:
+    if _background_enabled(args) and shutil.which("iperf3") is None:
         raise SystemExit("iperf3 is required for datacenter aggregation background")
     if args.frozen_demand is None and (args.cache is None or args.trace is None):
         parser.error("--cache and --trace are required unless --frozen-demand is used")
@@ -1051,11 +1092,14 @@ def main() -> None:
                 "transport_queue_slack_bytes": args.transport_queue_slack_bytes,
                 "prague_warmup_ms": args.prague_warmup_ms,
                 "warmup_assignment": "Prague only; Classic media connection idle",
-                "background_during_warmup": args.dc_background_mbps > 0,
+                "background_during_warmup": _background_enabled(args),
                 "demand_time_scale": args.demand_time_scale,
                 "initial_release_ms": args.initial_release_ms,
                 "base_rtt_ms": args.base_rtt_ms,
                 "dc_background_mbps": args.dc_background_mbps,
+                "dc_background_rate_mode": (
+                    "unlimited" if args.dc_background_mbps is None else "limited"
+                ),
                 "dc_background_cc": args.dc_background_cc,
                 "provider_dualpi2_rate": args.l4s_rate,
                 "downstream_rate": args.classic_rate,

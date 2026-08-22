@@ -32,7 +32,11 @@ from render_3dgs_reordering import (
     gif_frame_durations_ms,
     quantize_gif_durations_ms,
 )
-from run_qemu_3dgs_reordering import _fractions as qemu_fractions
+from run_qemu_3dgs_reordering import (
+    _background_rate,
+    _fractions as qemu_fractions,
+    _iperf_background_command,
+)
 from split_3dgs_priority import object_identity
 from three_dgs_bundle import read_bundle, write_bundle
 
@@ -76,6 +80,16 @@ def frame(
 class ReorderingWorkloadTests(unittest.TestCase):
     def test_qemu_wrapper_accepts_endpoint_fractions(self):
         self.assertEqual(qemu_fractions("0,0.25,1"), "0,0.25,1")
+
+    def test_unlimited_background_omits_rate_limit(self):
+        self.assertIsNone(_background_rate("unlimited"))
+        command = _iperf_background_command("10.0.0.3", 10.0, None, "reno")
+        self.assertNotIn("-b", command)
+        self.assertIn("-C", command)
+
+    def test_background_rate_parser_preserves_numeric_and_disabled_modes(self):
+        self.assertEqual(_background_rate("280"), 280.0)
+        self.assertEqual(_background_rate("0"), 0.0)
 
     def test_endpoint_fractions_assign_the_complete_scene_to_one_path(self):
         with tempfile.TemporaryDirectory() as directory:

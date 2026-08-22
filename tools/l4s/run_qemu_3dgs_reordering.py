@@ -25,6 +25,30 @@ def _fractions(value: str) -> str:
     return value
 
 
+def _background_rate(value: str) -> float | None:
+    if value.strip().lower() == "unlimited":
+        return None
+    try:
+        rate = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError(
+            "background rate must be a non-negative Mbit/s value or unlimited"
+        ) from error
+    if rate < 0:
+        raise argparse.ArgumentTypeError("background rate must be non-negative")
+    return rate
+
+
+def _iperf_background_command(
+    host: str, duration_s: float, rate_mbps: float | None, congestion_control: str
+) -> list[str]:
+    command = ["iperf3", "-c", host, "-p", "5201", "-t", f"{duration_s:g}"]
+    if rate_mbps is not None:
+        command.extend(["-b", f"{rate_mbps}M"])
+    command.extend(["-C", congestion_control, "--json"])
+    return command
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source-bundle", type=Path, required=True)

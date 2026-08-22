@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import subprocess
 import sys
@@ -29,12 +30,42 @@ def tag(value: float) -> str:
     return f"{value:.4f}".rstrip("0").rstrip(".").replace(".", "p")
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _discard_bundles(cell: Path) -> dict[str, object]:
+    removed = []
+    for path in sorted(cell.rglob("*.bundle")):
+        record = {
+            "path": str(path),
+            "size_bytes": path.stat().st_size,
+            "sha256": _sha256(path),
+        }
+        path.unlink()
+        removed.append(record)
+    record = {
+        "mode": "evidence",
+        "removed_bundles": removed,
+        "validated_before_removal": True,
+    }
+    (cell / "retention.json").write_text(
+        json.dumps(record, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+    return record
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--source-bundle", type=Path, required=True)
     parser.add_argument("--frozen-demand", type=Path, required=True)
     parser.add_argument("--l4s-fractions", type=fractions, required=True)
+    parser.add_argument("--retention", choices=("full", "evidence"), default="full")
     args, forwarded = parser.parse_known_args()
     args.output.mkdir(parents=True, exist_ok=False)
 
@@ -58,6 +89,9 @@ def main() -> None:
         analysis = json.loads(
             (cell / "reordering-analysis.json").read_text(encoding="utf-8")
         )
+        retention = None
+        if args.retention == "evidence":
+            retention = _discard_bundles(cell)
         summaries.extend(summary["cases"])
         analyses.extend(analysis["cases"])
         cells.append({
@@ -65,6 +99,7 @@ def main() -> None:
             "root": str(cell),
             "summary": str(cell / "summary.json"),
             "analysis": str(cell / "reordering-analysis.json"),
+            "retention": retention,
         })
 
     (args.output / "summary.json").write_text(
@@ -76,7 +111,11 @@ def main() -> None:
         encoding="utf-8",
     )
     (args.output / "matrix.json").write_text(
-        json.dumps({"cell_isolation": "fresh runner and Mininet process", "cells": cells},
+        json.dumps({
+                       "cell_isolation": "fresh runner and Mininet process",
+                       "retention": args.retention,
+                       "cells": cells,
+                   },
                    indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
