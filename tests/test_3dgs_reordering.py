@@ -253,6 +253,26 @@ class ReorderingWorkloadTests(unittest.TestCase):
             result = validate_cross_path_admission_order(prague, classic, combined)
             self.assertTrue(result["validated"])
 
+    def test_cross_path_admission_accepts_deadline_truncated_logs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            prague = root / "prague.txt"
+            classic = root / "classic.txt"
+            combined = root / "combined.csv"
+            prague.write_text("100 0\n", encoding="utf-8")
+            classic.write_text("0 1\n0 2\n", encoding="utf-8")
+            combined.write_text(
+                "admission_index,time_us,path,bundle_record_index,release_ms,"
+                "importance_rank,subgroup_id,payload_bytes,"
+                "queued_stream_bytes_before,bytes_in_flight_before,"
+                "cwnd_bytes_before,queue_threshold_bytes\n"
+                "0,100,low-reno,0,0,1,1,100,0,0,1000,100\n",
+                encoding="utf-8",
+            )
+            result = validate_cross_path_admission_order(prague, classic, combined)
+            self.assertTrue(result["validated"])
+            self.assertEqual(result["admitted_classic_records"], 1)
+
     def test_cross_path_admission_rejects_classic_while_prague_is_available(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
