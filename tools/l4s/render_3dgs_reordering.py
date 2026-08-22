@@ -375,6 +375,7 @@ def render_case(
         "case": case.name,
         "evaluation_lag_ms": evaluation_lag_ms,
         "frames": len(rows),
+        "ssim_device": ssim_device,
         "mean_ssim": float(np.mean(ssims)) if ssims else None,
         "p05_ssim": float(np.percentile(ssims, 5)) if ssims else None,
         "mean_psnr_db": float(np.mean(psnrs)) if psnrs else None,
@@ -405,7 +406,10 @@ def main() -> None:
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--3dgs-dir", dest="three_dgs_dir", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
-    parser.add_argument("--ssim-device", default="cpu")
+    parser.add_argument(
+        "--ssim-device",
+        help="SSIM compute device (default: use --device)",
+    )
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--frame-step", type=int, default=1)
@@ -429,6 +433,8 @@ def main() -> None:
     parser.add_argument("--allow-unpinned-3dgs", action="store_true")
     args = parser.parse_args()
     configure_render_logging()
+    if args.ssim_device is None:
+        args.ssim_device = args.device
 
     if args.frame_step <= 0:
         parser.error("--frame-step must be positive")
@@ -491,6 +497,7 @@ def main() -> None:
                 "scenario": "3dgs-partial-l4s-post-send-reordering",
                 "evaluation_lag_ms": args.evaluation_lag_ms,
                 "frame_step": args.frame_step,
+                "ssim_device": args.ssim_device,
                 "gaussian_budget": args.gaussian_budget,
                 "max_gaussians_per_pass": args.max_gaussians_per_pass,
                 "compositing": (

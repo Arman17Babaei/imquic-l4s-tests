@@ -5,6 +5,11 @@
 static const char *release_schedule_path_v2, *admission_path_v2;
 static const char *ready_path_v2, *go_path_v2;
 static uint64_t transport_queue_slack_bytes_v2 = 4096;
+static uint32_t prague_warmup_ms_v2;
+static uint64_t warmup_queued_objects_v2, warmup_queued_bytes_v2;
+
+#define WARMUP_OBJECT_BYTES_V2 (16U * 1024U)
+#define WARMUP_OUTSTANDING_OBJECTS_V2 10U
 
 typedef struct scheduled_record_v2 {
 	long payload_offset;
@@ -215,6 +220,79 @@ static int wait_for_go_epoch_v2(gint64 *requested_epoch_us) {
 	return -1;
 }
 
+static int run_prague_warmup_v2(const char *mode, FILE *metrics) {
+	if(prague_warmup_ms_v2 == 0 || strcmp(mode, "prague"))
+		return 0;
+	uint8_t *payload = malloc(WARMUP_OBJECT_BYTES_V2);
+	if(payload == NULL)
+		return -1;
+	memset(payload, 0xa5, WARMUP_OBJECT_BYTES_V2);
+	memcpy(payload, WARMUP_MAGIC, WARMUP_MAGIC_BYTES);
+	gint64 started = g_get_monotonic_time();
+	gint64 deadline = started + (gint64)prague_warmup_ms_v2 * 1000;
+	gint64 next_metric = started;
+	while(!g_atomic_int_get(&stop_requested) &&
+			!g_atomic_int_get(&failed) && g_get_monotonic_time() < deadline) {
+		gint64 now = g_get_monotonic_time();
+		if(now >= next_metric) {
+			write_metric(metrics, started);
+			next_metric += METRIC_INTERVAL_US;
+		}
+		imquic_transport_metrics transport = {0};
+		if(connection == NULL ||
+				imquic_get_transport_metrics(connection, &transport) < 0) {
+			g_usleep(1000);
+			continue;
+		}
+		uint64_t outstanding =
+			transport.bytes_in_flight + transport.queued_stream_bytes;
+		uint64_t target =
+			(uint64_t)WARMUP_OUTSTANDING_OBJECTS_V2 * WARMUP_OBJECT_BYTES_V2;
+		unsigned int count = outstanding < target
+			? (unsigned int)((target - outstanding + WARMUP_OBJECT_BYTES_V2 - 1) /
+				WARMUP_OBJECT_BYTES_V2)
+			: 0;
+		for(unsigned int i = 0; i < count; i++) {
+			imquic_moq_object object = {0};
+			object.request_id = publish_request_id;
+			object.track_alias = publish_track_alias;
+			object.group_id = 0;
+			object.subgroup_id = 0;
+			object.object_id = outer_object_ids[0]++;
+			object.priority = 0;
+			object.payload = payload;
+			object.payload_len = WARMUP_OBJECT_BYTES_V2;
+			object.delivery = IMQUIC_MOQ_USE_SUBGROUP;
+			object.first_of_subgroup = object.object_id == 0;
+			if(imquic_moq_send_object(connection, &object) < 0) {
+				free(payload);
+				return -1;
+			}
+			warmup_queued_objects_v2++;
+			warmup_queued_bytes_v2 += WARMUP_OBJECT_BYTES_V2;
+		}
+		g_usleep(1000);
+	}
+	write_metric(metrics, started);
+	free(payload);
+
+	/* Do not let warm-up payload enter the scene measurement interval. */
+	gint64 drain_deadline =
+		g_get_monotonic_time() + 5 * G_USEC_PER_SEC;
+	while(!g_atomic_int_get(&stop_requested) &&
+			!g_atomic_int_get(&failed) &&
+			g_get_monotonic_time() < drain_deadline) {
+		imquic_transport_metrics transport = {0};
+		if(connection != NULL &&
+				imquic_get_transport_metrics(connection, &transport) == 0 &&
+				transport.bytes_in_flight == 0 &&
+				transport.queued_stream_bytes == 0)
+			return 0;
+		g_usleep(1000);
+	}
+	return -1;
+}
+
 static int run_gated_publisher_v2(
 		const char *bind_address, uint16_t port, const char *mode) {
 	imquic_congestion_controller cc;
@@ -254,6 +332,7 @@ static int run_gated_publisher_v2(
 	FILE *schedule = NULL;
 	FILE *admission = NULL;
 	FILE *admission_gate = NULL;
+	FILE *warmup_metrics = NULL;
 	scheduled_record_v2 *records = NULL;
 
 	if(!g_atomic_int_get(&failed) && open_source_bundle(&source) < 0)
@@ -305,6 +384,27 @@ static int run_gated_publisher_v2(
 				"alpha_denominator\n",
 				metrics);
 	}
+	if(!g_atomic_int_get(&failed) && prague_warmup_ms_v2 > 0 &&
+			!strcmp(mode, "prague")) {
+		char *warmup_path = g_strdup_printf("%s.warmup.csv", metrics_path);
+		if(warmup_path != NULL) {
+			warmup_metrics = fopen(warmup_path, "w");
+			g_free(warmup_path);
+		}
+		if(warmup_metrics == NULL) {
+			fail_case("could not open warm-up metrics log");
+		} else {
+			fputs(
+				"time_us,rtt_us,cwnd_bytes,bytes_in_flight,"
+				"queued_stream_bytes,pacing_Bps,ect0_packets,"
+				"ect1_packets,ce_packets,alpha_numerator,"
+				"alpha_denominator\n",
+				warmup_metrics);
+		}
+	}
+	if(!g_atomic_int_get(&failed) &&
+			run_prague_warmup_v2(mode, warmup_metrics) < 0)
+		fail_case("Prague warm-up or drain failed");
 
 	gint64 requested_epoch_us = 0;
 	if(!g_atomic_int_get(&failed) && write_ready_file_v2() < 0)
@@ -453,6 +553,8 @@ static int run_gated_publisher_v2(
 		fclose(admission);
 	if(admission_gate != NULL)
 		fclose(admission_gate);
+	if(warmup_metrics != NULL)
+		fclose(warmup_metrics);
 	free(records);
 
 	if(result_path != NULL) {
@@ -469,6 +571,9 @@ static int run_gated_publisher_v2(
 				",\"workload_start_epoch_us\":%" G_GINT64_FORMAT
 				",\"publisher_started_epoch_us\":%" G_GINT64_FORMAT
 				",\"transport_queue_slack_bytes\":%" PRIu64
+				",\"prague_warmup_ms\":%u"
+				",\"warmup_queued_objects\":%" PRIu64
+				",\"warmup_queued_bytes\":%" PRIu64
 				",\"scheduled\":true"
 				",\"scheduling_policy\":"
 				"\"lowest-rank-eligible-when-cwnd-open-and-quic-queue-shallow\""
@@ -482,6 +587,9 @@ static int run_gated_publisher_v2(
 				requested_epoch_us,
 				started_real_us,
 				transport_queue_slack_bytes_v2,
+				prague_warmup_ms_v2,
+				warmup_queued_objects_v2,
+				warmup_queued_bytes_v2,
 				g_atomic_int_get(&failed) ? "false" : "true");
 			fclose(result);
 		}
@@ -497,7 +605,7 @@ int main(int argc, char **argv) {
 	if(argc == 2 && !strcmp(argv[1], "schedule-self-test"))
 		return schedule_self_test_v2();
 
-	if(argc == 14 && !strcmp(argv[1], "publisher-scheduled-gated")) {
+	if(argc == 15 && !strcmp(argv[1], "publisher-scheduled-gated")) {
 		moq_namespace.buffer = (uint8_t *)NAMESPACE_NAME;
 		moq_namespace.length = strlen(NAMESPACE_NAME);
 		moq_track.buffer = (uint8_t *)TRACK_NAME;
@@ -515,6 +623,7 @@ int main(int argc, char **argv) {
 		transport_queue_slack_bytes_v2 = strtoull(argv[13], NULL, 10);
 		if(transport_queue_slack_bytes_v2 == 0)
 			return 2;
+		prague_warmup_ms_v2 = (uint32_t)strtoul(argv[14], NULL, 10);
 		return run_gated_publisher_v2(
 			argv[2],
 			(uint16_t)strtoul(argv[3], NULL, 10),

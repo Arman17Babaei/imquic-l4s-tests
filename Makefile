@@ -5,7 +5,7 @@ THREEDGS_FIXTURE := $(CURDIR)/build/imquic-3dgs-moq
 THREEDGS_BACKGROUND_MBPS ?= 150
 DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -141,6 +141,11 @@ l4s-dualpi2-reference-qemu-check:
 
 l4s-sustained-moq-check:
 	python3 tools/l4s/run_sustained_coexistence.py --output $(L4S_RESULT_DIR) $(L4S_SUSTAINED_ARGS)
+
+l4s-sustained-single-switch-check:
+	cp tests/sustained-moq-test.c deps/imquic/src/sustained-moq-test.c
+	$(MAKE) -C deps/imquic/src imquic-sustained-moq
+	python3 tools/l4s/run_sustained_single_switch.py --output $(L4S_RESULT_DIR) $(L4S_SUSTAINED_ARGS)
 
 l4s-reno-fairness-check:
 	python3 tools/l4s/run_reno_fairness.py --output $(L4S_RESULT_DIR) $(L4S_RENO_FAIRNESS_ARGS)

@@ -331,6 +331,10 @@ python3 tools/l4s/render_3dgs_reordering.py \
   --device cuda:0
 ```
 
+SSIM uses the rendering device by default, so the command above computes SSIM
+on `cuda:0` as well. Use `--ssim-device cpu` only when a separate CPU SSIM pass
+is needed, for example when GPU memory is constrained.
+
 ## Important controls
 
 At minimum compare:

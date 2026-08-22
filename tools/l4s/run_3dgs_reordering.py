@@ -161,6 +161,15 @@ def _configure_fixed_delay(node, interface: str, one_way_ms: float) -> None:
 
 
 def _configure_bottlenecks(provider_egress: str, downstream_egress: str, args) -> None:
+    if args.switch_topology == "server-switch":
+        _dualpi2(provider_egress, args, rate=args.isolated_switch_rate, burst=args.l4s_burst)
+        return
+    if args.switch_topology == "client-switch":
+        if args.downstream_mode == "dualpi2":
+            _dualpi2(downstream_egress, args, rate=args.classic_rate, burst=args.classic_burst)
+        else:
+            _classic_fifo(downstream_egress, args)
+        return
     _dualpi2(provider_egress, args, rate=args.l4s_rate, burst=args.l4s_burst)
     if args.downstream_mode == "dualpi2":
         _dualpi2(downstream_egress, args, rate=args.classic_rate, burst=args.classic_burst)
@@ -511,6 +520,7 @@ def _run_case(
                     str(path_input["schedule"]["path"]),
                     str(path_root / "admission-order.csv"), str(ready_path),
                     str(go_path), str(args.transport_queue_slack_bytes),
+                    str(args.prague_warmup_ms),
                 ],
                 cwd=str(ROOT / "deps" / "imquic" / "src"),
                 stdout=pub_log,
@@ -522,7 +532,9 @@ def _run_case(
         launch_order = list(PATHS)
         if repetition % 2 == 0:
             launch_order.reverse()
-        subscriber_deadline_ms = args.deadline_ms + args.subscriber_guard_ms
+        subscriber_deadline_ms = (
+            args.prague_warmup_ms + args.deadline_ms + args.subscriber_guard_ms
+        )
         for name in launch_order:
             config = PATHS[name]
             path_root = case / name
@@ -542,14 +554,22 @@ def _run_case(
             )
             processes.append(subscribers[name])
 
-        _wait_publishers_ready(ready_paths, publishers, args.endpoint_ready_timeout_s)
+        _wait_publishers_ready(
+            ready_paths,
+            publishers,
+            args.endpoint_ready_timeout_s + args.prague_warmup_ms / 1000.0 + 5.0,
+        )
 
         if args.capture_mode != "none":
+            seen_interfaces = set()
             for label, interface in {
                 "provider_ingress": provider_ingress,
                 "provider_egress": provider_egress,
                 "downstream_egress": downstream_egress,
             }.items():
+                if interface in seen_interfaces:
+                    continue
+                seen_interfaces.add(interface)
                 if args.capture_mode == "pcap":
                     captures[label] = _pcap_capture(
                         interface, case / f"{label}.pcap", server_ip=server.IP()
@@ -587,6 +607,16 @@ def _run_case(
             stop(process)
         for label, process in captures.items():
             _stop_capture(process, label)
+        # In an isolated topology the active switch egress is both the
+        # provider and downstream observation point.  Preserve the canonical
+        # downstream filename expected by the analyzer without running a
+        # second competing capture on the same interface.
+        if downstream_egress == provider_egress:
+            for suffix in ("packet-order.csv", "packet-order.stats.json"):
+                source = case / f"provider_egress.{suffix}"
+                target = case / f"downstream_egress.{suffix}"
+                if source.is_file() and not target.exists():
+                    shutil.copyfile(source, target)
         for stream in streams:
             stream.close()
         save_tc_state("after")
@@ -594,11 +624,32 @@ def _run_case(
     if workload_start_epoch_us is None:
         raise RuntimeError(f"{case.name}: workload gate was never released")
 
-    subscriber_deadline_ms = args.deadline_ms + args.subscriber_guard_ms
+    subscriber_deadline_ms = (
+        args.prague_warmup_ms + args.deadline_ms + args.subscriber_guard_ms
+    )
     path_results = {
         name: validate_path(case / name, subscriber_deadline_ms)
         for name in PATHS
     }
+    warmup_validation = {}
+    for name in PATHS:
+        publisher = path_results[name]["publisher"]
+        subscriber = path_results[name]["subscriber"]
+        queued_objects = int(publisher.get("warmup_queued_objects", 0))
+        queued_bytes = int(publisher.get("warmup_queued_bytes", 0))
+        received_objects = int(subscriber.get("warmup_received_objects", 0))
+        received_bytes = int(subscriber.get("warmup_received_bytes", 0))
+        if queued_objects != received_objects or queued_bytes != received_bytes:
+            raise RuntimeError(
+                f"{case.name}/{name}: incomplete warm-up discard delivery"
+            )
+        warmup_validation[name] = {
+            "queued_objects": queued_objects,
+            "queued_bytes": queued_bytes,
+            "received_and_discarded_objects": received_objects,
+            "received_and_discarded_bytes": received_bytes,
+            "validated": True,
+        }
     admission_results = {}
     for name, config in PATHS.items():
         schedule_path = Path(str(manifest["path_inputs"][name]["schedule"]["path"]))
@@ -656,6 +707,8 @@ def _run_case(
         "publisher_start_skew_us": publisher_start_skew_us,
         "publisher_start_lateness_us": publisher_start_lateness_us,
         "transport_queue_slack_bytes": args.transport_queue_slack_bytes,
+        "prague_warmup_ms": args.prague_warmup_ms,
+        "warmup_validation": warmup_validation,
         "priority_definition": manifest["priority_definition"],
         "connections": 2,
         "paths": {
@@ -710,6 +763,15 @@ def main() -> None:
     parser.add_argument("--demand-time-scale", type=float, default=1.0)
     parser.add_argument("--fallback-track-spacing-ms", type=float, default=100.0)
     parser.add_argument("--deadline-ms", type=int, default=30000)
+    parser.add_argument(
+        "--prague-warmup-ms",
+        type=int,
+        default=0,
+        help=(
+            "send and discard saturated dummy objects on the same Prague "
+            "connection before releasing the scene gate"
+        ),
+    )
     parser.add_argument("--subscriber-guard-ms", type=int, default=3000)
     parser.add_argument("--repetitions", type=int, default=3)
     parser.add_argument("--l4s-rate", default="300mbit")
@@ -720,10 +782,25 @@ def main() -> None:
     parser.add_argument(
         "--downstream-mode", choices=("classic", "dualpi2"), default="classic"
     )
+    parser.add_argument(
+        "--switch-topology", choices=("two-switch", "server-switch", "client-switch"),
+        default="two-switch",
+        help="two-switch baseline, isolated server-side L4S switch, or isolated client-side switch",
+    )
+    parser.add_argument("--isolated-switch-rate", default="200mbit")
     parser.add_argument("--base-rtt-ms", type=float, default=20.0)
-    parser.add_argument("--dualpi2-target", default="15ms")
-    parser.add_argument("--dualpi2-tupdate", default="16ms")
-    parser.add_argument("--dualpi2-step", default="5ms")
+    parser.add_argument(
+        "--dualpi2-target",
+        help="Classic target (default: 20ms for client-switch, otherwise 15ms)",
+    )
+    parser.add_argument(
+        "--dualpi2-tupdate",
+        help="PI update interval (default: 32ms for client-switch, otherwise 16ms)",
+    )
+    parser.add_argument(
+        "--dualpi2-step",
+        help="L4S step threshold (default: 15ms for client-switch, otherwise 5ms)",
+    )
     parser.add_argument("--dc-background-mbps", type=float, default=280.0)
     parser.add_argument(
         "--dc-background-cc", choices=("reno", "cubic"), default="reno"
@@ -757,6 +834,16 @@ def main() -> None:
     )
     parser.add_argument("--no-pcap", action="store_true")
     args = parser.parse_args()
+    client_dualpi2 = (
+        args.switch_topology == "client-switch"
+        and args.downstream_mode == "dualpi2"
+    )
+    if args.dualpi2_target is None:
+        args.dualpi2_target = "20ms" if client_dualpi2 else "15ms"
+    if args.dualpi2_tupdate is None:
+        args.dualpi2_tupdate = "32ms" if client_dualpi2 else "16ms"
+    if args.dualpi2_step is None:
+        args.dualpi2_step = "15ms" if client_dualpi2 else "5ms"
 
     if args.no_pcap:
         args.capture_mode = "none"
@@ -788,6 +875,10 @@ def main() -> None:
         parser.error("frame stride and demand time scale must be positive")
     if args.repetitions <= 0 or args.deadline_ms <= 0:
         parser.error("repetitions and deadline must be positive")
+    if args.prague_warmup_ms < 0:
+        parser.error("--prague-warmup-ms must be non-negative")
+    if args.prague_warmup_ms and args.l4s_fractions != [1.0]:
+        parser.error("--prague-warmup-ms currently requires --l4s-fractions 1")
     if args.subscriber_guard_ms <= 0:
         parser.error("--subscriber-guard-ms must be positive")
     if args.transport_queue_slack_bytes <= 0:
@@ -817,22 +908,46 @@ def main() -> None:
     background_sink = net.addHost("bg_sink", ip="10.0.0.3/24")
     provider = net.addSwitch("s1", failMode="standalone")
     downstream = net.addSwitch("s2", failMode="standalone")
-    net.addLink(server, provider)
-    net.addLink(provider, downstream)
-    net.addLink(downstream, client)
-    net.addLink(downstream, background_sink)
+    if args.switch_topology == "server-switch":
+        net.addLink(server, provider)
+        net.addLink(provider, client)
+        net.addLink(provider, background_sink)
+    elif args.switch_topology == "client-switch":
+        net.addLink(server, downstream)
+        net.addLink(downstream, client)
+        net.addLink(downstream, background_sink)
+    else:
+        net.addLink(server, provider)
+        net.addLink(provider, downstream)
+        net.addLink(downstream, client)
+        net.addLink(downstream, background_sink)
 
     results = []
     try:
         net.start()
         subprocess.run(["modprobe", "sch_dualpi2"], check=True)
-        server_egress = _interface(server, provider)
-        provider_ingress = _interface(provider, server)
-        provider_egress = _interface(provider, downstream)
-        downstream_ingress = _interface(downstream, provider)
-        downstream_egress = _interface(downstream, client)
-        client_egress = _interface(client, downstream)
-        background_egress = _interface(background_sink, downstream)
+        server_egress = _interface(server, provider if args.switch_topology == "server-switch" else downstream)
+        if args.switch_topology == "server-switch":
+            provider_ingress = _interface(provider, server)
+            provider_egress = _interface(provider, client)
+            downstream_ingress = provider_ingress
+            downstream_egress = provider_egress
+            client_egress = _interface(client, provider)
+            background_egress = _interface(background_sink, provider)
+        elif args.switch_topology == "client-switch":
+            provider_ingress = _interface(downstream, server)
+            provider_egress = _interface(downstream, client)
+            downstream_ingress = provider_ingress
+            downstream_egress = provider_egress
+            client_egress = _interface(client, downstream)
+            background_egress = _interface(background_sink, downstream)
+        else:
+            provider_ingress = _interface(provider, server)
+            provider_egress = _interface(provider, downstream)
+            downstream_ingress = _interface(downstream, provider)
+            downstream_egress = _interface(downstream, client)
+            client_egress = _interface(client, downstream)
+            background_egress = _interface(background_sink, downstream)
 
         # base_rtt_ms is split equally between media data and ACK directions.
         one_way_ms = args.base_rtt_ms / 2.0
@@ -878,6 +993,7 @@ def main() -> None:
                     "and bytes_in_flight < cwnd"
                 ),
                 "transport_queue_slack_bytes": args.transport_queue_slack_bytes,
+                "prague_warmup_ms": args.prague_warmup_ms,
                 "demand_time_scale": args.demand_time_scale,
                 "initial_release_ms": args.initial_release_ms,
                 "base_rtt_ms": args.base_rtt_ms,
@@ -886,6 +1002,8 @@ def main() -> None:
                 "provider_dualpi2_rate": args.l4s_rate,
                 "downstream_rate": args.classic_rate,
                 "downstream_mode": args.downstream_mode,
+                "switch_topology": args.switch_topology,
+                "isolated_switch_rate": args.isolated_switch_rate,
                 "classic_buffer_packets": args.classic_buffer_packets,
                 "dualpi2_target": args.dualpi2_target,
                 "dualpi2_tupdate": args.dualpi2_tupdate,
@@ -899,11 +1017,10 @@ def main() -> None:
             },
             topology={
                 "forward": (
-                    "server -> s1(DualPI2) -> "
-                    + (
-                        "s2(DualPI2) -> client" if args.downstream_mode == "dualpi2"
-                        else "s2(FIFO) -> client"
-                    )
+                    "server -> s1(DualPI2) -> client" if args.switch_topology == "server-switch" else
+                    ("server -> s2(%s) -> client" % ("DualPI2" if args.downstream_mode == "dualpi2" else "FIFO"))
+                    if args.switch_topology == "client-switch" else
+                    "server -> s1(DualPI2) -> " + ("s2(DualPI2) -> client" if args.downstream_mode == "dualpi2" else "s2(FIFO) -> client")
                 ),
                 "base_rtt": (
                     "base_rtt_ms/2 netem on server egress for data; "

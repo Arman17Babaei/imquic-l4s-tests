@@ -17,6 +17,8 @@
 #define MAX_RECORD_BYTES (64U * 1024U * 1024U)
 #define MAX_QUEUED_BYTES (4U * 1024U * 1024U)
 #define METRIC_INTERVAL_US (10 * 1000)
+#define WARMUP_MAGIC "WARMUP01"
+#define WARMUP_MAGIC_BYTES 8
 
 static volatile gint stop_requested, failed, publishing;
 static gboolean allow_empty;
@@ -25,6 +27,7 @@ static uint64_t publish_request_id, publish_track_alias = 2;
 static uint64_t received_objects, received_bytes;
 static uint64_t received_gaussians, first_arrival_us, last_arrival_us;
 static uint64_t queued_objects, queued_bytes;
+static uint64_t warmup_received_objects, warmup_received_bytes;
 static uint64_t source_objects, source_bytes;
 static uint64_t outer_object_ids[3];
 static uint32_t deadline_ms;
@@ -204,6 +207,13 @@ static void incoming_object(imquic_connection *conn, imquic_moq_object *object) 
 	if(received_bundle == NULL || arrival_log == NULL ||
 			object->payload == NULL || object->payload_len == 0) {
 		fail_case("invalid incoming 3dgs object");
+		g_mutex_unlock(&receive_lock);
+		return;
+	}
+	if(object->payload_len >= WARMUP_MAGIC_BYTES &&
+			memcmp(object->payload, WARMUP_MAGIC, WARMUP_MAGIC_BYTES) == 0) {
+		warmup_received_objects++;
+		warmup_received_bytes += object->payload_len;
 		g_mutex_unlock(&receive_lock);
 		return;
 	}
@@ -474,12 +484,15 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 			fprintf(result,
 				"{\"received_objects\":%" PRIu64 ",\"received_bytes\":%" PRIu64
 				",\"received_gaussians\":%" PRIu64 ",\"deadline_ms\":%u"
+				",\"warmup_received_objects\":%" PRIu64
+				",\"warmup_received_bytes\":%" PRIu64
 				",\"first_object_time_us\":%" PRIu64 ",\"last_object_time_us\":%" PRIu64
 				",\"bundle_finalized_time_us\":%" G_GINT64_FORMAT
 				",\"started_epoch_us\":%" G_GINT64_FORMAT
 				",\"timeline_origin\":\"subscriber_endpoint_start\""
 				",\"elapsed_ms\":%.3f,\"validated\":%s}\n",
 				received_objects, received_bytes, received_gaussians, deadline_ms,
+				warmup_received_objects, warmup_received_bytes,
 				first_arrival_us, last_arrival_us, finalized_us, subscriber_started_real_us,
 				(g_get_monotonic_time() - subscriber_started_us) / 1000.0,
 				g_atomic_int_get(&failed) ? "false" : "true");

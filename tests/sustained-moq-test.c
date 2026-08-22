@@ -21,6 +21,9 @@ static uint64_t publish_track_alias = 2, next_object, received_objects;
 static uint32_t duration_seconds = 60;
 static const char *metrics_path;
 static const char *result_path;
+static const char *arrival_path;
+static FILE *arrival_file;
+static gint64 subscriber_started_us;
 static volatile gint publishing;
 static imquic_moq_namespace moq_namespace;
 static imquic_moq_track moq_track;
@@ -138,6 +141,11 @@ static void incoming_object(imquic_connection *conn, imquic_moq_object *object) 
 			return;
 		}
 	received_objects++;
+	if(arrival_file != NULL) {
+		fprintf(arrival_file, "%" G_GINT64_FORMAT ",%" PRIu64 ",%zu,%" PRIu64 "\n",
+			g_get_monotonic_time() - subscriber_started_us, object->object_id,
+			object->payload_len, received_objects * (uint64_t)OBJECT_BYTES);
+	}
 }
 
 static int parse_mode(const char *mode, imquic_congestion_controller *cc, imquic_ecn_mode *ecn) {
@@ -231,6 +239,12 @@ static int run_publisher(const char *bind_address, uint16_t port, const char *mo
 static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 	imquic_congestion_controller cc; imquic_ecn_mode ecn;
 	if(parse_mode(mode, &cc, &ecn) < 0 || imquic_init(NULL) < 0) return 1;
+	if(arrival_path != NULL) {
+		arrival_file = fopen(arrival_path, "w");
+		if(arrival_file == NULL) return 1;
+		fputs("time_us,object_id,payload_bytes,cumulative_payload_bytes\n", arrival_file);
+	}
+	subscriber_started_us = g_get_monotonic_time();
 	imquic_client *client = imquic_create_moq_client("sustained-moq-subscriber",
 		IMQUIC_CONFIG_INIT, IMQUIC_CONFIG_TLS_CERT, CERT_PATH,
 		IMQUIC_CONFIG_TLS_KEY, KEY_PATH, IMQUIC_CONFIG_TLS_NO_VERIFY, TRUE,
@@ -263,14 +277,16 @@ static int run_subscriber(const char *host, uint16_t port, const char *mode) {
 			fclose(result);
 		}
 	}
-	imquic_shutdown_endpoint(client); imquic_deinit();
+	imquic_shutdown_endpoint(client);
+	if(arrival_file != NULL) fclose(arrival_file);
+	imquic_deinit();
 	return g_atomic_int_get(&failed) ? 1 : 0;
 }
 
 int main(int argc, char **argv) {
 	if(argc < 6) {
 		fprintf(stderr, "usage: %s publisher BIND PORT MODE METRICS [DURATION]\n"
-		"       %s subscriber HOST PORT MODE DURATION RESULT\n", argv[0], argv[0]);
+		"       %s subscriber HOST PORT MODE DURATION RESULT [ARRIVALS]\n", argv[0], argv[0]);
 		return 2;
 	}
 	moq_namespace.buffer = (uint8_t *)NAMESPACE_NAME;
@@ -284,6 +300,7 @@ int main(int argc, char **argv) {
 	if(!strcmp(argv[1], "subscriber")) {
 		duration_seconds = strtoul(argv[5], NULL, 10);
 		if(argc > 6) result_path = argv[6];
+		if(argc > 7) arrival_path = argv[7];
 		return run_subscriber(argv[2], (uint16_t)strtoul(argv[3], NULL, 10), argv[4]);
 	}
 	return 2;
