@@ -279,7 +279,7 @@ def render_matrix(
     output_dir: Path,
     *,
     fractions: list[float] | None = None,
-    deadline_s: float = 30.0,
+    deadline_s: float = 45.0,
     bin_us: int = 1_000_000,
 ) -> dict:
     fractions = fractions or [0.0, 0.25, 0.5, 0.75, 1.0]
@@ -382,8 +382,14 @@ def main() -> None:
     parser.add_argument("dualpi2_root", type=Path)
     parser.add_argument("classic_root", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--deadline-s",
+        type=float,
+        default=45.0,
+        help="measured workload horizon used for axes and mean goodput (default: 45)",
+    )
     args = parser.parse_args()
-    render_matrix(args.dualpi2_root, args.classic_root, args.output)
+    render_matrix(args.dualpi2_root, args.classic_root, args.output, deadline_s=args.deadline_s)
 
 
 if __name__ == "__main__":
