@@ -73,12 +73,19 @@ def _read_background_result(path: Path) -> dict[str, object]:
         result = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise RuntimeError(f"invalid iperf background result: {path}") from error
-    received = result.get("end", {}).get("sum_received", {})
-    if int(received.get("bytes", 0)) <= 0:
+    end = result.get("end", {})
+    sent = end.get("sum_sent", {})
+    received = end.get("sum_received", {})
+    bytes_sent = int(sent.get("bytes", 0))
+    bytes_received = int(received.get("bytes", 0))
+    if max(bytes_sent, bytes_received) <= 0:
         raise RuntimeError(f"iperf background transferred no bytes: {path}")
     return {
-        "bytes_received": int(received["bytes"]),
-        "bits_per_second": float(received.get("bits_per_second", 0.0)),
+        "bytes_sent": bytes_sent,
+        "bytes_received": bytes_received,
+        "bits_per_second": float(
+            sent.get("bits_per_second", received.get("bits_per_second", 0.0))
+        ),
         "start": result.get("start", {}),
         "end": result.get("end", {}),
         "validated": True,
