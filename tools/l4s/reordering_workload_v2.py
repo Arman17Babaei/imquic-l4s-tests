@@ -61,6 +61,7 @@ def split_l4s_spectrum(
     output_dir: Path,
     *,
     l4s_fraction: float,
+    eligible_object_keys: set[tuple[object, ...]] | None = None,
 ) -> dict[str, object]:
     """Assign a ranked payload-byte prefix to Prague and the rest to Reno.
 
@@ -80,12 +81,20 @@ def split_l4s_spectrum(
         raise ValueError("reordering experiment requires at least two objects")
 
     rows: list[dict[str, object]] = []
+    payload_by_source_index: dict[int, bytes] = {}
     identities: set[tuple[object, ...]] = set()
     total_bytes = 0
     total_gaussians = 0
+    excluded_objects = 0
+    excluded_bytes = 0
     for source_index, payload in enumerate(payloads):
         row = object_importance(payload)
         key = _key(row)
+        if eligible_object_keys is not None and key not in eligible_object_keys:
+            excluded_objects += 1
+            excluded_bytes += len(payload)
+            continue
+        payload_by_source_index[source_index] = payload
         if key in identities:
             raise ValueError(f"duplicate object identity: {key}")
         identities.add(key)
@@ -118,9 +127,8 @@ def split_l4s_spectrum(
     reno_indices = set(range(len(rows))) - prague_indices
 
     def selected(indices: set[int]) -> Iterable[bytes]:
-        for index, payload in enumerate(payloads):
-            if index in indices:
-                yield payload
+        for index in indices:
+            yield payload_by_source_index[int(rows[index]["source_record_index"])]
 
     prague_path = output_dir / "prague.bundle"
     reno_path = output_dir / "reno.bundle"
@@ -153,6 +161,8 @@ def split_l4s_spectrum(
         "source_objects": len(rows),
         "source_payload_bytes": total_bytes,
         "source_gaussians": total_gaussians,
+        "excluded_never_visible_objects": excluded_objects,
+        "excluded_never_visible_bytes": excluded_bytes,
         "priority_definition": definition,
         "split_rule": (
             "rank all objects by (layer, mean opacity, stable source order); "

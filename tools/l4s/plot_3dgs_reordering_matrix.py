@@ -79,13 +79,13 @@ def _experiment_goodput(path: Path, stream: str, *, bin_us: int) -> list[float]:
 
 def _measured_rtt(
     metrics_path: Path,
-    subscriber_result_path: Path,
+    publisher_result_path: Path,
     workload_start_epoch_us: int,
     deadline_s: float,
 ) -> list[tuple[float, float]]:
-    subscriber = json.loads(subscriber_result_path.read_text(encoding="utf-8"))
+    publisher = json.loads(publisher_result_path.read_text(encoding="utf-8"))
     offset_s = (
-        int(subscriber["started_epoch_us"]) - workload_start_epoch_us
+        int(publisher["publisher_started_epoch_us"]) - workload_start_epoch_us
     ) / 1_000_000.0
     return [
         (time_s + offset_s, value)
@@ -141,7 +141,7 @@ def _render_summary(rows: list[dict], output_dir: Path) -> list[Path]:
     axes[0, 0].set_ylabel("Bytes / matched L4S packet")
     axes[0, 1].set_title("Total overtaken Classic byte-pairs")
     axes[0, 1].set_ylabel("GB of byte-pairs")
-    axes[1, 0].set_title("Mean received payload goodput over 30 s")
+    axes[1, 0].set_title("Mean received payload goodput over measured workload")
     axes[1, 0].set_ylabel("Mbit/s")
     axes[1, 1].set_title("Mean transport-reported smoothed RTT")
     axes[1, 1].set_ylabel("ms")
@@ -201,7 +201,7 @@ def _render_timeseries(
                 if rates:
                     rtt = _measured_rtt(
                         stream_root / "transport-metrics.csv",
-                        stream_root / "subscriber-result.json",
+                        stream_root / "publisher-result.json",
                         int(case_result["workload_start_epoch_us"]),
                         deadline_s,
                     )
@@ -234,6 +234,41 @@ def _render_timeseries(
     paths = [output_dir / "matrix-timeseries.svg", output_dir / "matrix-timeseries.png"]
     figure.savefig(paths[0])
     figure.savefig(paths[1], dpi=160)
+    plt.close(figure)
+    return paths
+
+
+def _render_availability(
+    root: Path, fractions: list[float], output_dir: Path, *, deadline_s: float,
+) -> list[Path]:
+    import matplotlib.pyplot as plt
+
+    figure, axes = plt.subplots(len(fractions), 1, figsize=(11, 2.4 * len(fractions)), sharex=True)
+    if len(fractions) == 1:
+        axes = [axes]
+    for axis, fraction in zip(axes, fractions):
+        case_root = _cell_root(root, fraction)
+        input_root = case_root / "inputs" / f"l4s-{_tag(fraction)}"
+        for name, color, label in (("high-prague", "#ef6c00", "Prague"), ("low-reno", "#1565c0", "Classic")):
+            schedule_path = input_root / f"{name}-release-ms.txt"
+            if not schedule_path.is_file():
+                continue
+            times = sorted(
+                int(line.split()[0]) / 1000.0
+                for line in schedule_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            )
+            axis.step(times, range(1, len(times) + 1), where="post", color=color, label=label)
+        axis.set_ylabel(f"{fraction:g}\nobjects")
+        axis.grid(True, alpha=0.25)
+        axis.legend(frameon=False, loc="upper left", ncol=2)
+        axis.set_xlim(0, deadline_s)
+    axes[-1].set_xlabel("Release time since workload start (s)")
+    figure.suptitle("3DGS object availability by frozen visibility schedule")
+    figure.tight_layout()
+    paths = [output_dir / "object-availability-timeline.svg", output_dir / "object-availability-timeline.png"]
+    figure.savefig(paths[0])
+    figure.savefig(paths[1], dpi=180)
     plt.close(figure)
     return paths
 
@@ -295,7 +330,7 @@ def render_matrix(
                     row[f"{stream}_mean_rtt_ms"] = statistics.fmean(
                         value for _, value in _measured_rtt(
                             metrics_path,
-                            case_root / stream / "subscriber-result.json",
+                            case_root / stream / "publisher-result.json",
                             int(case_result["workload_start_epoch_us"]),
                             deadline_s,
                         )
@@ -318,6 +353,7 @@ def render_matrix(
     outputs = _render_summary(rows, output_dir) + _render_timeseries(
         roots, fractions, output_dir, bin_us=bin_us, deadline_s=deadline_s
     )
+    outputs += _render_availability(roots["dualpi2"], fractions, output_dir, deadline_s=deadline_s)
     manifest = {
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "comparison": "DualPI2 versus Classic downstream across Prague shares",
@@ -326,7 +362,7 @@ def render_matrix(
         "definitions": {
             "mean_overtaken_bytes_per_l4s_packet": "sum of overtaken Classic payload byte-pairs divided by all matched Prague packets; zero-overtake packets included",
             "total_overtaken_byte_pairs": "sum of Classic payload bytes overtaken by each Prague packet; a Classic byte may contribute more than once",
-            "mean_goodput": "received application payload bytes divided by the configured 30 second workload deadline",
+            "mean_goodput": "received application payload bytes divided by the configured workload deadline",
             "timeseries_goodput": "received application payload bytes in fixed one-second bins",
             "rtt": "transport-reported smoothed RTT; not direct qdisc sojourn time",
             "repetitions": 1,

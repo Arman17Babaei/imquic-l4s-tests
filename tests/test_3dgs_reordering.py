@@ -22,7 +22,8 @@ from analyze_3dgs_reordering import (
 from capture_udp_order import parse_udp_packet
 from reordering_workload import (
     manifest_importance_ranks,
-    reorder_bundle_by_track_order,
+    object_release_times,
+    reorder_bundle_by_object_order,
     split_by_l4s_fraction,
     validate_admission_order,
     validate_cross_path_admission_order,
@@ -148,7 +149,7 @@ class ReorderingWorkloadTests(unittest.TestCase):
                 len(records),
             )
 
-    def test_high_bundle_can_be_frozen_in_track_demand_order(self):
+    def test_bundle_can_be_frozen_in_object_release_order(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             source = root / "source.bundle"
@@ -160,14 +161,23 @@ class ReorderingWorkloadTests(unittest.TestCase):
             ]
             write_bundle(source, records)
             destination = root / "ordered.bundle"
-            reorder_bundle_by_track_order(
-                source, destination, ["track-a", "track-b", "track-c"]
-            )
-            tracks = [
-                str(object_identity(payload)["track_id"])
+            release_times = {
+                ("track-a", "0", 0, 1): 10,
+                ("track-a", "0", 0, 3): 20,
+                ("track-b", "0", 0, 2): 30,
+                ("track-c", "0", 0, 0): 40,
+            }
+            reorder_bundle_by_object_order(source, destination, release_times)
+            keys = [
+                (
+                    str(object_identity(payload)["track_id"]),
+                    str(object_identity(payload)["group_id"]),
+                    int(object_identity(payload)["subgroup_id"]),
+                    int(object_identity(payload)["object_id"]),
+                )
                 for payload in read_bundle(destination)
             ]
-            self.assertEqual(tracks, ["track-a", "track-a", "track-b", "track-c"])
+            self.assertEqual(keys, list(release_times))
 
     def test_trace_release_schedule_records_eligibility_and_global_rank(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -195,10 +205,20 @@ class ReorderingWorkloadTests(unittest.TestCase):
                 bundle,
                 schedule,
                 frozen_demand={
-                    "track_order": ["track-a", "track-b", "track-c"],
+                    "schema_version": 2,
+                    "eligibility_granularity": "object-aabb",
+                    "initial_visibility_spread_ms": 40.0,
+                    "object_order": [
+                        ["track-a", "0", 0, 0],
+                        ["track-a", "0", 1, 1],
+                        ["track-b", "0", 0, 2],
+                        ["track-c", "0", 2, 3],
+                    ],
                     "events": [
-                        {"track_id": "track-a", "timestamp_ms": 0.0},
-                        {"track_id": "track-b", "timestamp_ms": 20.0},
+                        {"object_key": ["track-a", "0", 0, 0], "timestamp_ms": 0.0, "distance": 1.0},
+                        {"object_key": ["track-a", "0", 1, 1], "timestamp_ms": 0.0, "distance": 2.0},
+                        {"object_key": ["track-b", "0", 0, 2], "timestamp_ms": 20.0, "distance": 3.0},
+                        {"object_key": ["track-c", "0", 2, 3], "timestamp_ms": 70.0, "distance": 4.0},
                     ],
                 },
                 initial_release_ms=5.0,
@@ -210,10 +230,29 @@ class ReorderingWorkloadTests(unittest.TestCase):
                 tuple(map(int, line.split()))
                 for line in schedule.read_text(encoding="utf-8").splitlines()
             ]
-            self.assertEqual(rows, [(5, 2), (5, 3), (45, 0), (145, 1)])
+            self.assertEqual(rows, [(5, 2), (25, 3), (45, 0), (145, 1)])
             self.assertEqual(result["records"], 4)
             self.assertEqual(result["format"], "release_ms importance_rank")
             self.assertEqual(result["viewport_gated_subgroups"], [0, 1, 2])
+
+    def test_object_release_times_pace_initial_visibility_without_rank_order(self):
+        frozen = {
+            "initial_visibility_spread_ms": 10000.0,
+            "events": [
+                {"object_key": ["t", "g", 0, 0], "timestamp_ms": 0.0, "distance": 3.0},
+                {"object_key": ["t", "g", 0, 1], "timestamp_ms": 0.0, "distance": 1.0},
+                {"object_key": ["t", "g", 0, 2], "timestamp_ms": 500.0, "distance": 2.0},
+            ],
+        }
+        releases = object_release_times(
+            frozen,
+            initial_release_ms=5.0,
+            time_scale=4.0,
+            initial_visibility_spread_ms=10000.0,
+        )
+        self.assertEqual(releases[("t", "g", 0, 1)], 5)
+        self.assertEqual(releases[("t", "g", 0, 0)], 5005)
+        self.assertEqual(releases[("t", "g", 0, 2)], 2005)
 
     def test_admission_log_proves_best_rank_among_eligible_records(self):
         with tempfile.TemporaryDirectory() as directory:

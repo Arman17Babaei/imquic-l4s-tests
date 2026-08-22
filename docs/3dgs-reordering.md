@@ -78,8 +78,9 @@ not encode the conclusion in the transport assignment.
 ## Frozen bicycle demand
 
 The bicycle camera trace is used before the network experiment to derive the
-first frame in which each track enters the viewport. That order and those
-timestamps are frozen to:
+first frame in which each encoded object AABB enters the viewport. Object
+means are used for the AABB, and frame-zero objects are paced nearest-first
+over the configured startup spread. The object timestamps are frozen to:
 
 ```text
 inputs/frozen-demand-order.json
@@ -88,12 +89,13 @@ inputs/frozen-demand-order.json
 Every repetition then uses the same fixed workload.
 
 The trace controls **eligibility**: an object cannot be admitted before its
-track's frozen first-visible time.
+own frozen first-visible time. Objects never visible in the trace are excluded
+from the visible-workload split and recorded in provenance.
 
 The `(layer, mean opacity)` rank controls **which currently eligible object is
 chosen next**.
 
-Thus a lower-ranked object from an already-visible track may be transmitted
+Thus a lower-ranked object that is already visible may be transmitted
 before a future higher-ranked object exists. When the camera advances and that
 new object becomes eligible, it can jump ahead of lower-ranked objects that are
 still in the application queue.
@@ -302,7 +304,7 @@ Prepare and freeze demand once:
 
 ```sh
 results/venvs/3dgs/bin/python tools/l4s/prepare_3dgs_reordering.py \
-  --cache results/l4s/3dgs-preparation/point_cloud.cache \
+  --source-bundle results/l4s/3dgs-preparation/scene.bundle \
   --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
   --output results/l4s/3dgs-reordering-demand/frozen-demand-order.json \
   --allow-unpinned-3dgs
@@ -350,6 +352,9 @@ python3 tools/l4s/run_qemu_3dgs_reordering.py \
   --destination-prefix qemu-3dgs-prague-first-l4s-l4s \
   -- \
   --downstream-mode dualpi2 \
+  --deadline-ms 45000 \
+  --demand-time-scale 4.0 \
+  --initial-visibility-spread-ms 10000 \
   --dc-background-mbps unlimited \
   --prague-warmup-ms 10000 \
   --capture-mode packet-log --retention evidence
@@ -357,8 +362,9 @@ python3 tools/l4s/run_qemu_3dgs_reordering.py \
 
 Repeat with `--downstream-mode classic` and a different destination prefix.
 Pass the two run roots to `plot_3dgs_reordering_matrix.py`; its RTT and
-goodput series align to the workload gate, so warm-up is recorded but not
-counted as measured scene throughput.
+goodput series align to the publisher workload gate, so warm-up is recorded
+but not counted as measured scene throughput. The plotter also emits the
+object-availability timeline.
 
 Analyze packet order with:
 

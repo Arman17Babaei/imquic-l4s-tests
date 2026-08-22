@@ -9,7 +9,7 @@ TOOLS = Path(__file__).resolve().parents[1] / "tools" / "l4s"
 sys.path.insert(0, str(TOOLS))
 
 from plot_3dgs_rtt_throughput import payload_goodput, smoothed_rtt
-from plot_3dgs_reordering_matrix import overtaking_metrics
+from plot_3dgs_reordering_matrix import _measured_rtt, overtaking_metrics
 
 
 class Plot3dgsRttThroughputTests(unittest.TestCase):
@@ -44,6 +44,22 @@ class Plot3dgsRttThroughputTests(unittest.TestCase):
         })
         self.assertEqual(total, 1000.0)
         self.assertEqual(mean, 100.0)
+
+    def test_measured_rtt_uses_publisher_workload_origin(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            metrics = root / "metrics.csv"
+            metrics.write_text(
+                "time_us,rtt_us\n0,20000\n44000000,25000\n",
+                encoding="utf-8",
+            )
+            publisher = root / "publisher-result.json"
+            publisher.write_text(
+                '{"publisher_started_epoch_us":1000000}',
+                encoding="utf-8",
+            )
+            points = _measured_rtt(metrics, publisher, 999950, 45.0)
+            self.assertEqual(points, [(0.00005, 20.0), (44.00005, 25.0)])
 
 
 if __name__ == "__main__":

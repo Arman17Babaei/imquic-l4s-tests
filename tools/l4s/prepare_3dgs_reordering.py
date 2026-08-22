@@ -8,7 +8,7 @@ import json
 import os
 from pathlib import Path
 
-from reordering_workload import derive_first_visible_track_order
+from reordering_workload import derive_first_visible_object_order
 
 ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_3DGS = Path(os.environ.get("THREEDGS_DIR", ROOT / "deps" / "3dgs_over_moq"))
@@ -16,7 +16,7 @@ DEFAULT_3DGS = Path(os.environ.get("THREEDGS_DIR", ROOT / "deps" / "3dgs_over_mo
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--cache", type=Path, required=True)
+    parser.add_argument("--source-bundle", type=Path, required=True)
     parser.add_argument("--trace", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--3dgs-dir", dest="three_dgs_dir", type=Path, default=DEFAULT_3DGS)
@@ -26,7 +26,7 @@ def main() -> None:
     parser.add_argument("--allow-unpinned-3dgs", action="store_true")
     args = parser.parse_args()
 
-    for path in (args.cache, args.trace, args.three_dgs_dir):
+    for path in (args.source_bundle, args.trace, args.three_dgs_dir):
         if not path.exists():
             raise SystemExit(f"missing required path: {path}")
     if args.width <= 0 or args.height <= 0 or args.frame_stride <= 0:
@@ -34,8 +34,8 @@ def main() -> None:
     if args.output.exists():
         raise SystemExit(f"refusing to overwrite existing output: {args.output}")
 
-    frozen = derive_first_visible_track_order(
-        args.cache,
+    frozen = derive_first_visible_object_order(
+        args.source_bundle,
         args.trace,
         args.three_dgs_dir,
         width=args.width,

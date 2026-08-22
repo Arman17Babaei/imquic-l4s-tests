@@ -10,7 +10,13 @@ import runpy
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from split_3dgs_priority import _ranking, object_importance
+from split_3dgs_priority import (
+    _array_views,
+    _float_values,
+    _ranking,
+    object_identity,
+    object_importance,
+)
 from three_dgs_bundle import (
     _activate_dependency,
     read_bundle,
@@ -27,6 +33,10 @@ def _object_key(row: dict[str, object]) -> tuple[object, ...]:
         int(row["subgroup_id"]),
         int(row["object_id"]),
     )
+
+
+def _object_key_from_payload(payload: bytes) -> tuple[object, ...]:
+    return _object_key(object_importance(payload))
 
 
 def manifest_importance_ranks(
@@ -201,8 +211,8 @@ def split_by_l4s_fraction(
     return manifest
 
 
-def derive_first_visible_track_order(
-    cache_path: Path,
+def derive_first_visible_object_order(
+    source_bundle: Path,
     trace_path: Path,
     dependency: Path,
     *,
@@ -211,7 +221,7 @@ def derive_first_visible_track_order(
     frame_stride: int = 1,
     allow_unpinned: bool = False,
 ) -> dict[str, object]:
-    """Derive and freeze the first-appearance order of tracks in a camera trace.
+    """Derive first-visible timestamps for every encoded object.
 
     This is intentionally a *pre-experiment* step. The network run consumes the
     resulting ordered list and never consults camera state, so every repetition
@@ -223,7 +233,6 @@ def derive_first_visible_track_order(
     _activate_dependency(dependency)
 
     import numpy as np  # type: ignore
-    import torch  # type: ignore
     # Importing streaming.transport.client executes the live MoQ client package
     # initializer and loads libmoq.so. Demand freezing only needs the pure
     # viewport math, so load that source module without importing its parent.
@@ -238,11 +247,22 @@ def derive_first_visible_track_order(
     projection_matrix_from_fov = frustum["projection_matrix_from_fov"]
     scene_far_from_bboxes = frustum["scene_far_from_bboxes"]
 
-    data = torch.load(cache_path, weights_only=False, map_location="cpu")
-    manifest = data.get("manifest")
-    if manifest is None:
-        raise RuntimeError(f"{cache_path}: cache does not contain manifest")
-    tracks = list(manifest.tracks)
+    payloads = list(read_bundle(source_bundle))
+    if not payloads:
+        raise RuntimeError(f"{source_bundle}: bundle has no objects")
+    bounds: list[tuple[tuple[object, ...], object, object, float]] = []
+    for payload in payloads:
+        identity = object_identity(payload)
+        importance = object_importance(payload)
+        arrays = _array_views(payload, identity)
+        means = arrays["means"]
+        if means is None:
+            raise ValueError("object visibility requires Gaussian means")
+        values = list(_float_values(means, int(identity["num_gaussians"]) * 3, "means"))
+        points = np.asarray(values, dtype=np.float64).reshape(-1, 3)
+        bounds.append((_object_key(importance), points.min(axis=0), points.max(axis=0), len(payload)))
+    scene_mins = [item[1] for item in bounds]
+    scene_maxs = [item[2] for item in bounds]
     frames = json.loads(Path(trace_path).read_text(encoding="utf-8"))
     if isinstance(frames, dict) and "frames" in frames:
         frames = frames["frames"]
@@ -250,10 +270,7 @@ def derive_first_visible_track_order(
         raise RuntimeError(f"{trace_path}: trace has no frames")
 
     aspect = width / max(height, 1)
-    scene_far = scene_far_from_bboxes(
-        [track.bbox_min for track in tracks],
-        [track.bbox_max for track in tracks],
-    )
+    scene_far = scene_far_from_bboxes(scene_mins, scene_maxs)
     seen: set[str] = set()
     events: list[dict[str, object]] = []
 
@@ -265,130 +282,88 @@ def derive_first_visible_track_order(
         )
         frustum = extract_frustum(projection @ view)
         camera = np.asarray(frame["camera_position"], dtype=np.float64)
-        visible: list[tuple[float, str]] = []
-        for track in tracks:
-            bbox_min = np.asarray(track.bbox_min, dtype=np.float64)
-            bbox_max = np.asarray(track.bbox_max, dtype=np.float64)
+        for key, bbox_min, bbox_max, _ in bounds:
+            key_text = json.dumps(list(key), separators=(",", ":"))
+            if key_text in seen:
+                continue
             if check_aabb_frustum(bbox_min, bbox_max, frustum) == 0:
                 continue
             centroid = (bbox_min + bbox_max) / 2.0
-            visible.append((float(np.linalg.norm(camera - centroid)), str(track.track_id)))
-        visible.sort(key=lambda item: (item[0], item[1]))
-        newly_visible = [(distance, track_id) for distance, track_id in visible if track_id not in seen]
-        for distance, track_id in newly_visible:
-            seen.add(track_id)
-            events.append(
-                {
-                    "track_id": track_id,
-                    "frame_index": frame_index,
-                    "timestamp_ms": float(frame["timestamp_ms"]),
-                    "distance": distance,
-                }
-            )
+            seen.add(key_text)
+            events.append({
+                "object_key": list(key),
+                "frame_index": frame_index,
+                "timestamp_ms": float(frame["timestamp_ms"]),
+                "distance": float(np.linalg.norm(camera - centroid)),
+            })
 
-    # Tracks that never appear in the sampled trace are appended deterministically
-    # so the ordered bundle remains lossless.
-    never_visible = sorted(str(track.track_id) for track in tracks if str(track.track_id) not in seen)
+    never_visible = [list(item[0]) for item in bounds
+                     if json.dumps(list(item[0]), separators=(",", ":")) not in seen]
     return {
-        "schema_version": 1,
-        "cache": str(Path(cache_path).resolve()),
-        "cache_sha256": sha256_file(Path(cache_path)),
+        "schema_version": 2,
+        "eligibility_granularity": "object-aabb",
+        "source_bundle": str(Path(source_bundle).resolve()),
+        "source_bundle_sha256": sha256_file(Path(source_bundle)),
         "trace": str(Path(trace_path).resolve()),
         "trace_sha256": sha256_file(Path(trace_path)),
         "frame_stride": frame_stride,
         "width": width,
         "height": height,
         "events": events,
-        "track_order": [event["track_id"] for event in events] + never_visible,
+        "object_order": [event["object_key"] for event in events] + never_visible,
         "never_visible": never_visible,
+        "initial_visibility_spread_ms": 10000.0,
     }
 
 
-def reorder_bundle_by_track_order(
+def _key_json(key: tuple[object, ...]) -> str:
+    return json.dumps(list(key), separators=(",", ":"))
+
+
+def object_release_times(
+    frozen_demand: dict[str, object],
+    *,
+    initial_release_ms: float,
+    time_scale: float,
+    initial_visibility_spread_ms: float,
+) -> dict[tuple[object, ...], int]:
+    events = list(frozen_demand.get("events", []))
+    initial = [event for event in events if float(event["timestamp_ms"]) == 0.0]
+    initial.sort(key=lambda event: (float(event.get("distance", 0.0)), _key_json(tuple(event["object_key"]))))
+    releases: dict[tuple[object, ...], int] = {}
+    count = len(initial)
+    for index, event in enumerate(initial):
+        key = tuple(event["object_key"])
+        offset = initial_visibility_spread_ms * index / max(count, 1)
+        releases[key] = int(round(initial_release_ms + offset))
+    for event in events:
+        key = tuple(event["object_key"])
+        if key not in releases:
+            releases[key] = int(round(initial_release_ms + float(event["timestamp_ms"]) * time_scale))
+    return releases
+
+
+def reorder_bundle_by_object_order(
     source: Path,
     destination: Path,
-    track_order: list[str],
+    release_times: Mapping[tuple[object, ...], int],
 ) -> dict[str, object]:
-    """Write the same objects grouped by a frozen track-demand order."""
-    order = {track_id: index for index, track_id in enumerate(track_order)}
-    records: list[tuple[int, int, bytes]] = []
+    """Write visible objects in deterministic release-time order."""
+    records: list[tuple[int, tuple[object, ...], int, bytes]] = []
     unknown: set[str] = set()
     for source_index, payload in enumerate(read_bundle(source)):
-        row = object_importance(payload)
-        track_id = str(row["track_id"])
-        if track_id not in order:
-            unknown.add(track_id)
-        records.append((order.get(track_id, len(order)), source_index, payload))
-    records.sort(key=lambda item: (item[0], item[1]))
-    summary = write_bundle(destination, (item[2] for item in records))
+        key = _object_key_from_payload(payload)
+        if key not in release_times:
+            unknown.add(_key_json(key))
+            continue
+        records.append((release_times[key], key, source_index, payload))
+    records.sort(key=lambda item: (item[0], _key_json(item[1]), item[2]))
+    summary = write_bundle(destination, (item[3] for item in records))
     return {
         **summary,
         "sha256": sha256_file(destination),
-        "track_order": track_order,
+        "object_order": [_key_json(item[1]) for item in records],
         "unknown_tracks": sorted(unknown),
-    }
-
-
-def write_track_release_schedule(
-    bundle_path: Path,
-    schedule_path: Path,
-    *,
-    track_order: list[str],
-    initial_release_ms: float,
-    track_spacing_ms: float,
-) -> dict[str, object]:
-    """Write one non-decreasing release time per bundle record.
-
-    All objects from the same track become available together. Tracks are
-    released in the frozen camera-demand order at a fixed synthetic spacing,
-    which creates deterministic priority reversals without requiring live
-    camera feedback during the network experiment.
-    """
-    if initial_release_ms < 0 or track_spacing_ms < 0:
-        raise ValueError("release timing values must be non-negative")
-    order = {track_id: index for index, track_id in enumerate(track_order)}
-    release_by_track = {
-        track_id: initial_release_ms + index * track_spacing_ms
-        for track_id, index in order.items()
-    }
-    rows: list[int] = []
-    observed_tracks: list[str] = []
-    seen: set[str] = set()
-    fallback_index = len(order)
-    for payload in read_bundle(bundle_path):
-        row = object_importance(payload)
-        track_id = str(row["track_id"])
-        if track_id not in seen:
-            observed_tracks.append(track_id)
-            seen.add(track_id)
-        if track_id not in release_by_track:
-            release_by_track[track_id] = (
-                initial_release_ms + fallback_index * track_spacing_ms
-            )
-            fallback_index += 1
-        rows.append(int(round(release_by_track[track_id])))
-
-    # The ordered bundle should make this monotone. Rejecting inversions catches
-    # accidental source-order use, which would change the intended workload.
-    if rows != sorted(rows):
-        raise ValueError(
-            "bundle order is inconsistent with track release order; "
-            "call reorder_bundle_by_track_order first"
-        )
-    schedule_path = Path(schedule_path)
-    schedule_path.parent.mkdir(parents=True, exist_ok=True)
-    schedule_path.write_text(
-        "".join(f"{release_ms}\n" for release_ms in rows),
-        encoding="utf-8",
-    )
-    return {
-        "path": str(schedule_path),
-        "sha256": sha256_file(schedule_path),
-        "records": len(rows),
-        "initial_release_ms": initial_release_ms,
-        "track_spacing_ms": track_spacing_ms,
-        "release_by_track_ms": release_by_track,
-        "observed_tracks": observed_tracks,
     }
 
 
@@ -404,7 +379,7 @@ def write_trace_release_schedule(
 ) -> dict[str, object]:
     """Record viewport eligibility and global rank for every bundle object.
 
-    Base and Enhancement objects become eligible at their track's frozen
+    Base and Enhancement objects become eligible at their object's frozen
     first-visible time. The resulting per-record
     ``release_ms importance_rank`` schedule is fixed on disk and reused
     verbatim. The publisher chooses the lowest rank among all eligible records;
@@ -412,42 +387,31 @@ def write_trace_release_schedule(
     """
     if initial_release_ms < 0 or time_scale <= 0 or fallback_spacing_ms < 0:
         raise ValueError("invalid trace release timing")
-    track_order = [str(track) for track in frozen_demand["track_order"]]
-    events = list(frozen_demand.get("events", []))
-    release_by_track: dict[str, float] = {}
-    for event in events:
-        track_id = str(event["track_id"])
-        release_by_track[track_id] = (
-            initial_release_ms + float(event["timestamp_ms"]) * time_scale
-        )
+    release_times = object_release_times(
+        frozen_demand,
+        initial_release_ms=initial_release_ms,
+        time_scale=time_scale,
+        initial_visibility_spread_ms=float(
+            frozen_demand.get("initial_visibility_spread_ms", 10000.0)
+        ),
+    )
 
-    last_release = max(release_by_track.values(), default=initial_release_ms)
-    fallback_index = 1
-    for track_id in track_order:
-        if track_id not in release_by_track:
-            release_by_track[track_id] = (
-                last_release + fallback_index * fallback_spacing_ms
-            )
-            fallback_index += 1
-
-    order = {track_id: index for index, track_id in enumerate(track_order)}
-    records: list[tuple[int, int, bytes, str]] = []
+    records: list[tuple[int, int, bytes, tuple[object, ...]]] = []
     for source_index, payload in enumerate(read_bundle(bundle_path)):
         row = object_importance(payload)
-        track_id = str(row["track_id"])
-        records.append((order.get(track_id, len(order)), source_index, payload, track_id))
-    # The caller normally passes an already track-ordered bundle; this check is
+        key = _object_key(row)
+        if key not in release_times:
+            continue
+        records.append((release_times[key], source_index, payload, key))
+    # The caller normally passes an already release-ordered bundle; this check is
     # deliberately strict so a schedule can never silently refer to the wrong record.
     if records != sorted(records, key=lambda item: (item[0], item[1])):
         raise ValueError(
-            "bundle order is inconsistent with frozen demand order; "
-            "call reorder_bundle_by_track_order first"
+            "bundle order is inconsistent with object release order; "
+            "call reorder_bundle_by_object_order first"
         )
 
-    release_rows = [
-        int(round(release_by_track[track_id]))
-        for _, _, _, track_id in records
-    ]
+    release_rows = [int(release_time) for release_time, _, _, _ in records]
     if release_rows != sorted(release_rows):
         raise ValueError("trace-derived release times are not non-decreasing")
     rank_rows = [
@@ -472,13 +436,13 @@ def write_trace_release_schedule(
         "records": len(release_rows),
         "format": "release_ms importance_rank",
         "admission_policy": "lowest importance rank among currently eligible records",
-        "timing": "all objects at frozen first-visible track timestamps",
+        "timing": "object AABB first-visible timestamps with paced frame-zero objects",
         "viewport_gated_subgroups": [0, 1, 2],
         "immediately_eligible_subgroups": [],
         "initial_release_ms": initial_release_ms,
         "time_scale": time_scale,
         "fallback_spacing_ms": fallback_spacing_ms,
-        "release_by_track_ms": release_by_track,
+        "release_by_object": {_key_json(key): release for key, release in release_times.items()},
     }
 
 

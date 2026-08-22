@@ -20,9 +20,10 @@ from mininet.node import OVSBridge
 
 from experiment_metadata import detailed_tc_state, write_experiment_record
 from reordering_workload import (
-    derive_first_visible_track_order,
+    derive_first_visible_object_order,
     manifest_importance_ranks,
-    reorder_bundle_by_track_order,
+    object_release_times,
+    reorder_bundle_by_object_order,
     validate_admission_order,
     validate_cross_path_admission_order,
     write_trace_release_schedule,
@@ -281,15 +282,17 @@ def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
     inputs.mkdir()
     if args.frozen_demand is not None:
         frozen = json.loads(args.frozen_demand.read_text(encoding="utf-8"))
-        if not isinstance(frozen.get("track_order"), list) or not frozen["track_order"]:
-            raise RuntimeError(f"{args.frozen_demand}: invalid frozen track order")
+        if frozen.get("schema_version") != 2 or frozen.get("eligibility_granularity") != "object-aabb":
+            raise RuntimeError(f"{args.frozen_demand}: expected object-aabb frozen demand schema v2")
+        if not isinstance(frozen.get("object_order"), list) or not frozen["object_order"]:
+            raise RuntimeError(f"{args.frozen_demand}: invalid frozen object order")
         if not isinstance(frozen.get("events"), list):
             raise RuntimeError(f"{args.frozen_demand}: invalid frozen demand events")
         frozen["frozen_demand_source"] = str(args.frozen_demand.resolve())
         frozen["frozen_demand_source_sha256"] = sha256_file(args.frozen_demand)
     else:
-        frozen = derive_first_visible_track_order(
-            args.cache,
+        frozen = derive_first_visible_object_order(
+            args.source_bundle,
             args.trace,
             args.three_dgs_dir,
             width=args.width,
@@ -299,7 +302,15 @@ def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
         )
     frozen["initial_base_release_ms"] = args.initial_release_ms
     frozen["demand_time_scale"] = args.demand_time_scale
-    frozen["order_source"] = "bicycle first-visible track order, frozen before network run"
+    frozen["initial_visibility_spread_ms"] = args.initial_visibility_spread_ms
+    frozen["order_source"] = "bicycle first-visible object AABB order, frozen before network run"
+    visible_keys = {tuple(event["object_key"]) for event in frozen["events"]}
+    release_times = object_release_times(
+        frozen,
+        initial_release_ms=args.initial_release_ms,
+        time_scale=args.demand_time_scale,
+        initial_visibility_spread_ms=args.initial_visibility_spread_ms,
+    )
     (inputs / "frozen-demand-order.json").write_text(
         json.dumps(frozen, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
@@ -309,15 +320,18 @@ def _prepare_inputs(args) -> dict[float, tuple[Path, dict[str, object]]]:
     for fraction in args.l4s_fractions:
         tag = f"{fraction:.4f}".rstrip("0").rstrip(".").replace(".", "p")
         root = inputs / f"l4s-{tag}"
-        manifest = split_l4s_spectrum(args.source_bundle, root, l4s_fraction=fraction)
+        manifest = split_l4s_spectrum(
+            args.source_bundle,
+            root,
+            l4s_fraction=fraction,
+            eligible_object_keys=visible_keys,
+        )
         importance_ranks = manifest_importance_ranks(manifest)
         path_inputs: dict[str, dict[str, object]] = {}
         for name, config in PATHS.items():
             source_bundle = Path(str(manifest[config["manifest_key"]]["path"]))
             ordered_bundle = root / f"{name}-ordered.bundle"
-            ordered = reorder_bundle_by_track_order(
-                source_bundle, ordered_bundle, list(frozen["track_order"])
-            )
+            ordered = reorder_bundle_by_object_order(source_bundle, ordered_bundle, release_times)
             schedule_path = root / f"{name}-release-ms.txt"
             schedule = write_trace_release_schedule(
                 ordered_bundle,
@@ -865,6 +879,7 @@ def main() -> None:
     parser.add_argument("--frame-stride", type=int, default=1)
     parser.add_argument("--initial-release-ms", type=float, default=5.0)
     parser.add_argument("--demand-time-scale", type=float, default=1.0)
+    parser.add_argument("--initial-visibility-spread-ms", type=float, default=10000.0)
     parser.add_argument("--fallback-track-spacing-ms", type=float, default=100.0)
     parser.add_argument("--deadline-ms", type=int, default=30000)
     parser.add_argument(
@@ -966,20 +981,20 @@ def main() -> None:
         raise SystemExit("ethtool is required for capture-safe offload control")
     if _background_enabled(args) and shutil.which("iperf3") is None:
         raise SystemExit("iperf3 is required for datacenter aggregation background")
-    if args.frozen_demand is None and (args.cache is None or args.trace is None):
-        parser.error("--cache and --trace are required unless --frozen-demand is used")
+    if args.frozen_demand is None and args.trace is None:
+        parser.error("--trace is required unless --frozen-demand is used")
 
     required_paths = [args.source_bundle]
     if args.frozen_demand is not None:
         required_paths.append(args.frozen_demand)
     else:
-        required_paths.extend((args.cache, args.trace, args.three_dgs_dir))
+        required_paths.extend((args.trace, args.three_dgs_dir))
     for path in required_paths:
         if not path.exists():
             raise SystemExit(f"missing required path: {path}")
 
-    if args.frame_stride <= 0 or args.demand_time_scale <= 0:
-        parser.error("frame stride and demand time scale must be positive")
+    if args.frame_stride <= 0 or args.demand_time_scale <= 0 or args.initial_visibility_spread_ms < 0:
+        parser.error("frame stride and demand time scale must be positive; visibility spread must be non-negative")
     if args.repetitions <= 0 or args.deadline_ms <= 0:
         parser.error("repetitions and deadline must be positive")
     if args.prague_warmup_ms < 0:
@@ -1107,6 +1122,9 @@ def main() -> None:
                 "warmup_assignment": "Prague only; Classic media connection idle",
                 "background_during_warmup": _background_enabled(args),
                 "demand_time_scale": args.demand_time_scale,
+                "initial_visibility_spread_ms": args.initial_visibility_spread_ms,
+                "eligibility_granularity": "object-aabb",
+                "never_visible_policy": "excluded-from-visible-workload",
                 "initial_release_ms": args.initial_release_ms,
                 "base_rtt_ms": args.base_rtt_ms,
                 "dc_background_mbps": args.dc_background_mbps,

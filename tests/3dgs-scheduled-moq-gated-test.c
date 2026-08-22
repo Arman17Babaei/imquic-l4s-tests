@@ -473,6 +473,7 @@ static void path_result_v2(publisher_path_v2 *path, uint32_t deadline,
 		",\"deadline_ms\":%u,\"source_fully_queued\":%s"
 		",\"workload_start_epoch_us\":%" G_GINT64_FORMAT
 		",\"publisher_started_epoch_us\":%" G_GINT64_FORMAT
+		",\"transport_metrics_time_origin\":\"publisher_workload_start\""
 		",\"transport_queue_slack_bytes\":%" PRIu64
 		",\"prague_warmup_ms\":%u,\"warmup_queued_objects\":%" PRIu64
 		",\"warmup_queued_bytes\":%" PRIu64
