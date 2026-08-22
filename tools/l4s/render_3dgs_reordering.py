@@ -89,6 +89,18 @@ def configure_render_logging() -> None:
     )
 
 
+def sampled_frame_indices(total: int, frame_step: int, frame_count: int | None) -> list[int]:
+    if frame_count is None:
+        return list(range(0, total, frame_step))
+    if frame_count <= 0:
+        raise ValueError("frame_count must be positive")
+    if frame_count >= total:
+        return list(range(0, total, frame_step))
+    if frame_count == 1:
+        return [0]
+    return sorted({round(index * (total - 1) / (frame_count - 1)) for index in range(frame_count)})
+
+
 class BundleCursor:
     """Sequential access to a received bundle using its arrival-record index."""
 
@@ -198,6 +210,7 @@ def render_references(
     width: int,
     height: int,
     frame_step: int,
+    frame_count: int | None,
     gaussian_budget: int,
     max_gaussians_per_pass: int | None,
 ) -> tuple[dict[int, Path], list[dict]]:
@@ -216,7 +229,7 @@ def render_references(
         max_gaussians_per_pass=max_gaussians_per_pass,
     )
     paths: dict[int, Path] = {}
-    for frame_index in range(0, len(frames), frame_step):
+    for frame_index in sampled_frame_indices(len(frames), frame_step, frame_count):
         frame = frames[frame_index]
         # Offline quality must not depend on the live client's adaptive
         # performance budget or on the speed of the rendering GPU.
@@ -248,6 +261,7 @@ def render_case(
     width: int,
     height: int,
     frame_step: int,
+    frame_count: int | None,
     gaussian_budget: int,
     max_gaussians_per_pass: int | None,
     evaluation_lag_ms: float,
@@ -293,7 +307,7 @@ def render_case(
     rendered_paths: list[Path] = []
     rendered_frame_indices: list[int] = []
 
-    for frame_index in range(0, len(frames), frame_step):
+    for frame_index in sampled_frame_indices(len(frames), frame_step, frame_count):
         frame = frames[frame_index]
         trace_ms = float(frame["timestamp_ms"])
         logical_ms = initial_ms + trace_ms * time_scale + evaluation_lag_ms
@@ -413,6 +427,7 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--frame-step", type=int, default=1)
+    parser.add_argument("--frame-count", type=int, help="sample exactly this many trace frames")
     parser.add_argument(
         "--gaussian-budget", type=int, default=5_000_000,
         help="fixed offline per-frame budget (default exceeds this scene)",
@@ -438,6 +453,8 @@ def main() -> None:
 
     if args.frame_step <= 0:
         parser.error("--frame-step must be positive")
+    if args.frame_count is not None and args.frame_count <= 0:
+        parser.error("--frame-count must be positive")
     if args.gaussian_budget <= 0:
         parser.error("--gaussian-budget must be positive")
     if args.max_gaussians_per_pass is not None and args.max_gaussians_per_pass <= 0:
@@ -464,6 +481,7 @@ def main() -> None:
         width=args.width,
         height=args.height,
         frame_step=args.frame_step,
+        frame_count=args.frame_count,
         gaussian_budget=args.gaussian_budget,
         max_gaussians_per_pass=args.max_gaussians_per_pass,
     )
@@ -484,6 +502,7 @@ def main() -> None:
             width=args.width,
             height=args.height,
             frame_step=args.frame_step,
+            frame_count=args.frame_count,
             gaussian_budget=args.gaussian_budget,
             max_gaussians_per_pass=args.max_gaussians_per_pass,
             evaluation_lag_ms=args.evaluation_lag_ms,
