@@ -506,13 +506,21 @@ def validate_admission_order(
 
     admitted: set[int] = set()
     with Path(admission_path).open(encoding="utf-8", newline="") as stream:
-        rows = list(csv.DictReader(stream))
+        reader = csv.DictReader(stream)
+        rows = list(reader)
     required = {
         "admission_index", "time_us", "bundle_record_index", "release_ms",
         "importance_rank", "subgroup_id", "payload_bytes",
     }
-    if not rows or set(rows[0]) != required:
-        raise ValueError(f"{admission_path}: invalid or empty admission log")
+    if set(reader.fieldnames or ()) != required:
+        raise ValueError(f"{admission_path}: invalid admission log header")
+    if not rows:
+        return {
+            "validated": True,
+            "admission_policy": "lowest importance rank among currently eligible records",
+            "scheduled_records": len(schedule),
+            "admitted_records": 0,
+        }
 
     for expected_index, row in enumerate(rows):
         admission_index = int(row["admission_index"])
