@@ -1021,7 +1021,10 @@ def main() -> None:
     try:
         net.start()
         subprocess.run(["modprobe", "sch_dualpi2"], check=True)
-        server_egress = _interface(server, provider if args.switch_topology == "server-switch" else downstream)
+        server_egress = _interface(
+            server,
+            provider if args.switch_topology != "client-switch" else downstream,
+        )
         if args.switch_topology == "server-switch":
             provider_ingress = _interface(provider, server)
             provider_egress = _interface(provider, client)
