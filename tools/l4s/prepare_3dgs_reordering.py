@@ -23,6 +23,9 @@ def main() -> None:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--frame-stride", type=int, default=1)
+    parser.add_argument("--start-time-ms", type=float, default=0.0)
+    parser.add_argument("--wrap-end-time-ms", type=float)
+    parser.add_argument("--fov-scale", type=float, default=1.0)
     parser.add_argument("--allow-unpinned-3dgs", action="store_true")
     args = parser.parse_args()
 
@@ -31,6 +34,8 @@ def main() -> None:
             raise SystemExit(f"missing required path: {path}")
     if args.width <= 0 or args.height <= 0 or args.frame_stride <= 0:
         parser.error("width, height, and frame stride must be positive")
+    if args.start_time_ms < 0 or not 0 < args.fov_scale <= 1:
+        parser.error("start time must be non-negative and fov scale must be in (0, 1]")
     if args.output.exists():
         raise SystemExit(f"refusing to overwrite existing output: {args.output}")
 
@@ -41,6 +46,9 @@ def main() -> None:
         width=args.width,
         height=args.height,
         frame_stride=args.frame_stride,
+        start_time_ms=args.start_time_ms,
+        wrap_end_time_ms=args.wrap_end_time_ms,
+        fov_scale=args.fov_scale,
         allow_unpinned=args.allow_unpinned_3dgs,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -219,6 +219,9 @@ def derive_first_visible_object_order(
     width: int = 1920,
     height: int = 1080,
     frame_stride: int = 1,
+    start_time_ms: float = 0.0,
+    wrap_end_time_ms: float | None = None,
+    fov_scale: float = 1.0,
     allow_unpinned: bool = False,
 ) -> dict[str, object]:
     """Derive first-visible timestamps for every encoded object.
@@ -229,6 +232,8 @@ def derive_first_visible_object_order(
     """
     if frame_stride <= 0:
         raise ValueError("frame_stride must be positive")
+    if start_time_ms < 0 or not 0 < fov_scale <= 1:
+        raise ValueError("start time must be non-negative and fov scale must be in (0, 1]")
     require_dependency(dependency, allow_unpinned=allow_unpinned)
     _activate_dependency(dependency)
 
@@ -268,6 +273,33 @@ def derive_first_visible_object_order(
         frames = frames["frames"]
     if not frames:
         raise RuntimeError(f"{trace_path}: trace has no frames")
+    if start_time_ms or wrap_end_time_ms is not None:
+        start_index = next(
+            (index for index, frame in enumerate(frames)
+             if float(frame["timestamp_ms"]) >= start_time_ms),
+            len(frames),
+        )
+        if start_index == len(frames):
+            raise ValueError("start time is beyond the trace")
+        prefix = [
+            frame for frame in frames[:start_index]
+            if wrap_end_time_ms is None or float(frame["timestamp_ms"]) <= wrap_end_time_ms
+        ]
+        frames = frames[start_index:] + prefix
+        base_time = float(frames[0]["timestamp_ms"])
+        trace_duration = float(frames[-1]["timestamp_ms"]) - base_time
+        frames = [
+            {**frame,
+             "timestamp_ms": (
+                 float(frame["timestamp_ms"]) - base_time
+                 if index < len(frames) - len(prefix)
+                 else float(frame["timestamp_ms"]) + trace_duration - float(frames[0]["timestamp_ms"])
+             ),
+             "fov": float(frame["fov"]) * fov_scale}
+            for index, frame in enumerate(frames)
+        ]
+    elif fov_scale != 1.0:
+        frames = [{**frame, "fov": float(frame["fov"]) * fov_scale} for frame in frames]
 
     aspect = width / max(height, 1)
     scene_far = scene_far_from_bboxes(scene_mins, scene_maxs)
@@ -313,6 +345,9 @@ def derive_first_visible_object_order(
         "object_order": [event["object_key"] for event in events] + never_visible,
         "never_visible": never_visible,
         "initial_visibility_spread_ms": 10000.0,
+        "trace_start_time_ms": start_time_ms,
+        "trace_wrap_end_time_ms": wrap_end_time_ms,
+        "fov_scale": fov_scale,
     }
 
 
