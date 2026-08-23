@@ -476,6 +476,8 @@ def _run_case(
     client,
     server,
     background_sink,
+    client_background_source,
+    client_background_sink,
     provider_ingress: str,
     provider_egress: str,
     downstream_egress: str,
@@ -517,6 +519,7 @@ def _run_case(
     background_alive_after_warmup = False
     background_alive_through_workload = False
     bg_client = None
+    client_bg_client = None
 
     try:
         if _background_enabled(args):
@@ -549,6 +552,32 @@ def _run_case(
                 stderr=subprocess.STDOUT,
             )
             processes.append(bg_client)
+            if client_background_source is not None and client_background_sink is not None:
+                client_background_source.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+                client_background_sink.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
+                client_bg_server_log = (
+                    case / "client-switch-background-server.json"
+                ).open("w")
+                client_bg_client_log = (
+                    case / "client-switch-background-client.json"
+                ).open("w")
+                streams += [client_bg_server_log, client_bg_client_log]
+                client_bg_server = client_background_sink.popen(
+                    ["iperf3", "-s", "-1", "-p", "5202", "--json"],
+                    stdout=client_bg_server_log,
+                    stderr=subprocess.STDOUT,
+                )
+                processes.append(client_bg_server)
+                time.sleep(0.2)
+                client_bg_client = client_background_source.popen(
+                    _iperf_background_command(
+                        client_background_sink.IP(), duration,
+                        args.dc_background_mbps, args.dc_background_cc,
+                    ),
+                    stdout=client_bg_client_log,
+                    stderr=subprocess.STDOUT,
+                )
+                processes.append(client_bg_client)
             background_started_epoch_us = time.time_ns() // 1000
             time.sleep(args.dc_background_warmup_s)
 
@@ -624,8 +653,14 @@ def _run_case(
             publisher,
             args.endpoint_ready_timeout_s + args.prague_warmup_ms / 1000.0 + 5.0,
         )
-        if bg_client is not None:
-            background_alive_after_warmup = bg_client.poll() is None
+        background_clients = [
+            process for process in (bg_client, client_bg_client)
+            if process is not None
+        ]
+        if background_clients:
+            background_alive_after_warmup = all(
+                process.poll() is None for process in background_clients
+            )
             if not background_alive_after_warmup:
                 raise RuntimeError(f"{case.name}: background ended during Prague warm-up")
 
@@ -668,8 +703,10 @@ def _run_case(
         status["dual-publisher"] = publisher.wait(timeout=timeout)
         if any(status.values()):
             raise RuntimeError(f"{case.name}: endpoint failure: {status}")
-        if bg_client is not None:
-            background_alive_through_workload = bg_client.poll() is None
+        if background_clients:
+            background_alive_through_workload = all(
+                process.poll() is None for process in background_clients
+            )
             if not background_alive_through_workload:
                 raise RuntimeError(
                     f"{case.name}: background ended before workload completion"
@@ -699,6 +736,11 @@ def _run_case(
     background_result = None
     if bg_client is not None:
         background_result = _read_background_result(case / "background-client.json")
+    client_background_result = None
+    if client_bg_client is not None:
+        client_background_result = _read_background_result(
+            case / "client-switch-background-client.json"
+        )
 
     subscriber_deadline_ms = (
         args.prague_warmup_ms
@@ -825,6 +867,11 @@ def _run_case(
             "classic_warmup_bytes": warmup_validation["low-reno"]["queued_bytes"],
         },
         "background": background_result,
+        "client_switch_background": client_background_result,
+        "background_flows": {
+            "server_to_background_sink": background_result,
+            "client_switch_dedicated": client_background_result,
+        },
         "scheduler": scheduler_result,
         "cross_path_admission_validation": cross_path_admission,
         "priority_definition": manifest["priority_definition"],
@@ -1026,6 +1073,8 @@ def main() -> None:
     server = net.addHost("server", ip="10.0.0.1/24")
     client = net.addHost("client", ip="10.0.0.2/24")
     background_sink = net.addHost("bg_sink", ip="10.0.0.3/24")
+    client_background_source = None
+    client_background_sink = None
     provider = net.addSwitch("s1", failMode="standalone")
     downstream = net.addSwitch("s2", failMode="standalone")
     if args.switch_topology == "server-switch":
@@ -1041,6 +1090,10 @@ def main() -> None:
         net.addLink(provider, downstream)
         net.addLink(downstream, client)
         net.addLink(downstream, background_sink)
+        client_background_source = net.addHost("bg_client_src", ip="10.0.0.4/24")
+        client_background_sink = net.addHost("bg_client_sink", ip="10.0.0.5/24")
+        net.addLink(client_background_source, provider)
+        net.addLink(client_background_sink, downstream)
 
     results = []
     try:
@@ -1077,6 +1130,17 @@ def main() -> None:
         _configure_fixed_delay(server, server_egress, one_way_ms)
         _configure_fixed_delay(client, client_egress, one_way_ms)
         _configure_fixed_delay(background_sink, background_egress, one_way_ms)
+        if client_background_source is not None and client_background_sink is not None:
+            _configure_fixed_delay(
+                client_background_source,
+                _interface(client_background_source, provider),
+                one_way_ms,
+            )
+            _configure_fixed_delay(
+                client_background_sink,
+                _interface(client_background_sink, downstream),
+                one_way_ms,
+            )
 
         offload_evidence = {}
         if args.capture_mode != "none":
@@ -1132,6 +1196,11 @@ def main() -> None:
                     "unlimited" if args.dc_background_mbps is None else "limited"
                 ),
                 "dc_background_cc": args.dc_background_cc,
+                "client_switch_background": client_background_source is not None,
+                "client_switch_background_rate_mode": (
+                    "unlimited" if args.dc_background_mbps is None else "limited"
+                ),
+                "client_switch_background_cc": args.dc_background_cc,
                 "provider_dualpi2_rate": args.l4s_rate,
                 "downstream_rate": args.classic_rate,
                 "downstream_mode": args.downstream_mode,
@@ -1163,6 +1232,12 @@ def main() -> None:
                     "server -> s1 -> s2 -> background_sink; shares provider egress "
                     "but not client-facing qdisc"
                 ),
+                "client_switch_background": (
+                    "bg_client_src -> s1 -> s2 -> bg_client_sink; dedicated "
+                    "second-switch iperf flow, same configured rate mode"
+                    if client_background_source is not None
+                    else "disabled outside two-switch topology"
+                ),
                 "interfaces": {
                     "server_egress": server_egress,
                     "provider_ingress": provider_ingress,
@@ -1182,6 +1257,8 @@ def main() -> None:
                     client=client,
                     server=server,
                     background_sink=background_sink,
+                    client_background_source=client_background_source,
+                    client_background_sink=client_background_sink,
                     provider_ingress=provider_ingress,
                     provider_egress=provider_egress,
                     downstream_egress=downstream_egress,
