@@ -281,19 +281,20 @@ def derive_first_visible_object_order(
         )
         if start_index == len(frames):
             raise ValueError("start time is beyond the trace")
+        original_end_time = float(frames[-1]["timestamp_ms"])
         prefix = [
             frame for frame in frames[:start_index]
             if wrap_end_time_ms is None or float(frame["timestamp_ms"]) <= wrap_end_time_ms
         ]
         frames = frames[start_index:] + prefix
         base_time = float(frames[0]["timestamp_ms"])
-        trace_duration = float(frames[-1]["timestamp_ms"]) - base_time
+        trace_duration = original_end_time - base_time
         frames = [
             {**frame,
              "timestamp_ms": (
                  float(frame["timestamp_ms"]) - base_time
                  if index < len(frames) - len(prefix)
-                 else float(frame["timestamp_ms"]) + trace_duration - float(frames[0]["timestamp_ms"])
+                 else float(frame["timestamp_ms"]) + trace_duration
              ),
              "fov": float(frame["fov"]) * fov_scale}
             for index, frame in enumerate(frames)
