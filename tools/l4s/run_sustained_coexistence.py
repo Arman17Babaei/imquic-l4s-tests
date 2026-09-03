@@ -35,7 +35,7 @@ def stop(process):
             process.kill()
 
 
-def qdisc(switch, rate):
+def qdisc(switch, rate, target, tupdate, step_thresh):
     for dev in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
         subprocess.run(["tc", "qdisc", "del", "dev", dev, "root"], check=False,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -45,7 +45,8 @@ def qdisc(switch, rate):
                         "classid", "1:1", "htb", "rate", rate, "burst", "32k"],
                        check=True)
         subprocess.run(["tc", "qdisc", "add", "dev", dev, "parent", "1:1",
-                        "handle", "10:", "dualpi2"], check=True)
+                        "handle", "10:", "dualpi2", "target", target,
+                        "tupdate", tupdate, "step_thresh", step_thresh], check=True)
 
 
 def save_qdisc_stats(switch, case, label):
@@ -56,10 +57,11 @@ def save_qdisc_stats(switch, case, label):
             stream.write(f"device={interface}\n{stats}")
 
 
-def configure_tcp_ecn(client, server, tcp_ecn):
+def configure_tcp_ecn(client, server, tcp_ecn, ports):
+    port_range = f"{min(ports)}:{max(ports)}"
     for host, rule in (
-        (server, ["-p", "tcp", "--dport", "5201"]),
-        (client, ["-p", "tcp", "--sport", "5201"]),
+        (server, ["-p", "tcp", "--dport", port_range]),
+        (client, ["-p", "tcp", "--sport", port_range]),
     ):
         for tos in ("0x00", "0x02"):
             host.cmd("iptables -t mangle -D OUTPUT " + " ".join(rule) +
@@ -67,41 +69,58 @@ def configure_tcp_ecn(client, server, tcp_ecn):
     if tcp_ecn == "not-ect":
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=0")
-        server.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x00")
-        client.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x00")
+        server.cmd(f"iptables -t mangle -A OUTPUT -p tcp --dport {port_range} -j TOS --set-tos 0x00")
+        client.cmd(f"iptables -t mangle -A OUTPUT -p tcp --sport {port_range} -j TOS --set-tos 0x00")
     elif tcp_ecn == "ect0":
         client.cmd("sysctl -qw net.ipv4.tcp_ecn=1")
         server.cmd("sysctl -qw net.ipv4.tcp_ecn=1")
         # Some L4S-capable kernels select ECT(1) for ECN-enabled TCP.  Keep
         # TCP's ECN negotiation enabled but rewrite only this test flow to
         # the conventional ECT(0) codepoint, in both directions.
-        server.cmd("iptables -t mangle -A OUTPUT -p tcp --dport 5201 -j TOS --set-tos 0x02")
-        client.cmd("iptables -t mangle -A OUTPUT -p tcp --sport 5201 -j TOS --set-tos 0x02")
+        server.cmd(f"iptables -t mangle -A OUTPUT -p tcp --dport {port_range} -j TOS --set-tos 0x02")
+        client.cmd(f"iptables -t mangle -A OUTPUT -p tcp --sport {port_range} -j TOS --set-tos 0x02")
     else:
         raise ValueError(f"unsupported TCP ECN mode: {tcp_ecn}")
 
 
+def disable_offloads(client, server, switch):
+    for host, interface in ((client, client.defaultIntf().name),
+                            (server, server.defaultIntf().name)):
+        host.cmd(f"ethtool -K {interface} tso off gso off gro off lro off 2>/dev/null || true")
+    for interface in (f"{switch.name}-eth1", f"{switch.name}-eth2"):
+        subprocess.run(["ethtool", "-K", interface, "tso", "off", "gso", "off",
+                        "gro", "off", "lro", "off"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def run_case(client, server, switch, root, mode, background_congestion,
-             repetition, duration, warmup, drain):
+             background_flow_count, repetition, duration, warmup, drain,
+             bottleneck_mbps, target, tupdate, step_thresh):
     case = root / (
-        f"{mode}-tcp-{background_congestion}-unlimited-rep-{repetition:02d}"
+        f"{mode}-tcp-{background_congestion}-flows-{background_flow_count:02d}"
+        f"-rep-{repetition:02d}"
     )
     case.mkdir(parents=True)
-    configure_tcp_ecn(client, server, "not-ect")
-    qdisc(switch, "20mbit")
+    ports = [5201 + index for index in range(background_flow_count)]
+    configure_tcp_ecn(client, server, "not-ect", ports or [5201])
+    qdisc(switch, f"{bottleneck_mbps:g}mbit", target, tupdate, step_thresh)
     save_qdisc_stats(switch, case, "before")
     metadata = {"mode": mode, "tcp_ecn": "not-ect",
                 "background_congestion": background_congestion,
+                "background_flow_count": background_flow_count,
+                "background_ports": ports,
                 "background_rate": "unlimited", "repetition": repetition,
                 "duration_seconds": duration, "warmup_seconds": warmup,
                 "drain_seconds": drain, "background_mbps": -1,
-                "bottleneck_mbps": 20, "namespace": "imquic-l4s",
+                "bottleneck_mbps": bottleneck_mbps,
+                "namespace": "imquic-l4s",
                 "track": "sustained", "client_ip": client.IP(),
                 "server_ip": server.IP(),
                 "forward_direction": "server-to-client"}
     (case / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     captures, files = [], []
-    publisher = subscriber = tcp_server = tcp_client = None
+    publisher = subscriber = None
+    tcp_servers, tcp_clients, tcp_client_logs = [], [], []
     try:
         for interface, name in ((f"{switch.name}-eth1", "switch-client.pcap"),
                                 (f"{switch.name}-eth2", "switch-server.pcap")):
@@ -110,31 +129,37 @@ def run_case(client, server, switch, root, mode, background_congestion,
             captures.append(subprocess.Popen(
                 ["tcpdump", "-U", "-s", "128", "-i", interface, "-w", str(case / name)],
                 stdout=log, stderr=subprocess.STDOUT))
-        tcp_server_log = (case / "iperf-server.json").open("w")
-        tcp_client_log = (case / "iperf-client.json").open("w")
-        files.extend((tcp_server_log, tcp_client_log))
-        tcp_server = client.popen(["iperf3", "-s", "-1", "-p", "5201", "--json"],
-                                  stdout=tcp_server_log, stderr=subprocess.STDOUT)
-        time.sleep(.3)
+        for index, port in enumerate(ports, 1):
+            server_log = (case / f"iperf-server-{index:02d}.json").open("w")
+            client_log = (case / f"iperf-client-{index:02d}.json").open("w")
+            files.extend((server_log, client_log))
+            tcp_client_logs.append(client_log)
+            tcp_servers.append(client.popen(
+                ["iperf3", "-s", "-1", "-p", str(port), "--json"],
+                stdout=server_log, stderr=subprocess.STDOUT))
+        if ports:
+            time.sleep(.3)
         tcp_started = time.time()
-        tcp_client = server.popen(
-            ["iperf3", "-c", client.IP(), "-p", "5201", "-t",
-             str(warmup + duration + drain), "-i", "1", "-C",
-             background_congestion, "--json"],
-            stdout=tcp_client_log, stderr=subprocess.STDOUT)
+        for index, port in enumerate(ports, 1):
+            tcp_clients.append(server.popen(
+                ["iperf3", "-c", client.IP(), "-p", str(port), "-t",
+                 str(warmup + duration + drain), "-i", "1", "-C",
+                 background_congestion, "--json"],
+                stdout=tcp_client_logs[index - 1],
+                stderr=subprocess.STDOUT))
         metadata["tcp_started_epoch"] = tcp_started
         time.sleep(warmup)
         pub_log = (case / "publisher.log").open("w")
         sub_log = (case / "subscriber.log").open("w")
         files.extend((pub_log, sub_log))
-        foreground_started = time.time()
         publisher = server.popen([str(BINARY), "publisher", server.IP(), "4443",
-                                  mode, str(case / "metrics.csv"), str(duration)],
+                                  mode, str(case / "metrics.csv"), str(duration + 1)],
                                  cwd=str(BINARY.parent), stdout=pub_log,
                                  stderr=subprocess.STDOUT)
         time.sleep(.5)
         if publisher.poll() is not None:
             raise RuntimeError(f"{case.name}: publisher exited before subscription")
+        foreground_started = time.time()
         subscriber = client.popen([str(BINARY), "subscriber", server.IP(), "4443",
                                    mode, str(duration), str(case / "subscriber-result.json")],
                                   cwd=str(BINARY.parent),
@@ -145,6 +170,8 @@ def run_case(client, server, switch, root, mode, background_congestion,
         publisher_status = publisher.wait(timeout=duration + 30)
         subscriber_status = subscriber.wait(timeout=30)
         metadata["foreground_started_epoch"] = foreground_started
+        metadata["measurement_started_epoch"] = foreground_started
+        metadata["measurement_finished_epoch"] = foreground_started + duration
         metadata["foreground_finished_epoch"] = time.time()
         metadata["publisher_status"] = publisher_status
         metadata["subscriber_status"] = subscriber_status
@@ -154,12 +181,14 @@ def run_case(client, server, switch, root, mode, background_congestion,
         result = case / "subscriber-result.json"
         if not result.is_file() or not json.loads(result.read_text()).get("validated"):
             raise RuntimeError(f"{case.name}: subscriber validation evidence missing")
-        tcp_client.wait(timeout=30)
-        tcp_server.wait(timeout=10)
+        for process in tcp_clients:
+            process.wait(timeout=30)
+        for process in tcp_servers:
+            process.wait(timeout=10)
         metadata["tcp_finished_epoch"] = time.time()
         (case / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
     finally:
-        for process in (subscriber, publisher, tcp_client, tcp_server, *captures):
+        for process in (subscriber, publisher, *tcp_clients, *tcp_servers, *captures):
             stop(process)
         save_qdisc_stats(switch, case, "after")
         for stream in files:
@@ -173,6 +202,12 @@ def main():
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--drain", type=int, default=1)
     parser.add_argument("--repetitions", type=int, default=1)
+    parser.add_argument("--bottleneck-mbps", type=float, default=10)
+    parser.add_argument("--background-flow-counts", default="1")
+    parser.add_argument("--dualpi2-target", default="15ms")
+    parser.add_argument("--dualpi2-tupdate", default="16ms")
+    parser.add_argument("--dualpi2-step-thresh", default="1ms")
+    parser.add_argument("--strict-pair-gate", action="store_true")
     parser.add_argument("--modes", default=",".join(MODES))
     parser.add_argument(
         "--background-congestions", default=",".join(BACKGROUND_CONTROLLERS),
@@ -181,6 +216,10 @@ def main():
     args = parser.parse_args()
     modes = args.modes.split(",")
     backgrounds = args.background_congestions.split(",")
+    try:
+        flow_counts = [int(value) for value in args.background_flow_counts.split(",")]
+    except ValueError:
+        parser.error("background flow counts must be comma-separated integers")
     if (not modes or len(set(modes)) != len(modes)
             or any(mode not in MODES for mode in modes)):
         parser.error(f"modes must be unique members of {','.join(MODES)}")
@@ -192,8 +231,15 @@ def main():
         )
     if args.duration <= 0 or args.repetitions <= 0:
         parser.error("duration and repetitions must be positive")
+    if args.bottleneck_mbps <= 0:
+        parser.error("bottleneck Mbps must be positive")
     if args.warmup < 0 or args.drain < 0:
         parser.error("warmup and drain must be non-negative")
+    if (not flow_counts or len(set(flow_counts)) != len(flow_counts)
+            or any(value not in (0, 1, 2, 4) for value in flow_counts)):
+        parser.error("background flow counts must be unique members of 0,1,2,4")
+    if args.strict_pair_gate and modes != ["reno", "prague"]:
+        parser.error("strict pair gating requires --modes reno,prague")
     if os.geteuid() != 0:
         raise SystemExit("sustained coexistence must run as root")
     if not BINARY.exists():
@@ -221,15 +267,20 @@ def main():
                 "repetitions": args.repetitions,
                 "modes": modes,
                 "background_congestions": backgrounds,
+                "background_flow_counts": flow_counts,
                 "background_transport": "unlimited non-ECN TCP iperf3",
                 "background_mbps": "unlimited",
-                "bottleneck": "20mbit",
+                "bottleneck": f"{args.bottleneck_mbps:g}mbit",
+                "bottleneck_mbps": args.bottleneck_mbps,
                 "qdisc": {
                     "interfaces": ["s1-eth1", "s1-eth2"],
                     "root": "HTB",
                     "burst": "32k",
                     "child": "DualPI2",
-                    "parameter_profile": "kernel-defaults",
+                    "parameter_profile": "thesis-figures-06-08",
+                    "target": args.dualpi2_target,
+                    "tupdate": args.dualpi2_tupdate,
+                    "step_thresh": args.dualpi2_step_thresh,
                     "parameter_evidence": (
                         "exact effective values retained per case in "
                         "dualpi2-stats.txt"
@@ -252,25 +303,40 @@ def main():
                 "unavailable background congestion controllers: "
                 + ", ".join(missing)
             )
+        disable_offloads(client, server, switch)
         for repetition in range(1, args.repetitions + 1):
             for background_congestion in backgrounds:
-                for mode in modes:
-                    print(
-                        f"running {mode} MoQ against unlimited "
-                        f"{background_congestion} TCP "
-                        f"(repetition {repetition}/{args.repetitions})",
-                        flush=True,
-                    )
-                    run_case(
-                        client, server, switch, args.output, mode,
-                        background_congestion, repetition, args.duration,
-                        args.warmup, args.drain,
-                    )
+                for flow_count in flow_counts:
+                    pair = []
+                    for mode in modes:
+                        print(
+                            f"running {mode} MoQ against {flow_count} unlimited "
+                            f"{background_congestion} TCP flows "
+                            f"(repetition {repetition}/{args.repetitions})",
+                            flush=True,
+                        )
+                        run_case(
+                            client, server, switch, args.output, mode,
+                            background_congestion, flow_count, repetition,
+                            args.duration, args.warmup, args.drain,
+                            args.bottleneck_mbps, args.dualpi2_target,
+                            args.dualpi2_tupdate, args.dualpi2_step_thresh,
+                        )
+                        pair.append(args.output / (
+                            f"{mode}-tcp-{background_congestion}-flows-{flow_count:02d}"
+                            f"-rep-{repetition:02d}"
+                        ))
+                    if args.strict_pair_gate:
+                        subprocess.run([
+                            "python3", str(ROOT / "tools/l4s/thesis_network_matrix.py"),
+                            str(pair[0]), str(pair[1]), "--gate",
+                        ], check=True)
     finally:
         net.stop()
         subprocess.run(["mn", "-c"], check=False)
-    subprocess.run(["python3", str(ROOT / "tools/l4s/analyze_sustained_coexistence.py"),
-                    str(args.output)], check=True)
+    if not args.strict_pair_gate:
+        subprocess.run(["python3", str(ROOT / "tools/l4s/analyze_sustained_coexistence.py"),
+                        str(args.output)], check=True)
 
 
 if __name__ == "__main__":

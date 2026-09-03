@@ -30,9 +30,9 @@ def run(command, **kwargs):
     return subprocess.run(command, check=True, text=True, **kwargs)
 
 
-def archive_tracked_with_submodules(repository, destination):
+def archive_worktree(repository, destination):
     tracked = subprocess.run(
-        ["git", "ls-files", "--recurse-submodules", "-z"],
+        ["git", "ls-files", "--cached", "--others", "--exclude-standard", "-z"],
         cwd=repository,
         check=True,
         capture_output=True,
@@ -43,6 +43,21 @@ def archive_tracked_with_submodules(repository, destination):
                 continue
             relative = os.fsdecode(encoded)
             archive.add(repository / relative, arcname=relative, recursive=False)
+
+
+def parse_guest_file(value):
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("guest files must use SOURCE=RELATIVE_DEST")
+    source_text, destination_text = value.split("=", 1)
+    source = Path(source_text).expanduser().resolve()
+    destination = Path(destination_text)
+    if not source.is_file():
+        raise argparse.ArgumentTypeError(f"guest file source not found: {source}")
+    if destination.is_absolute() or ".." in destination.parts or not destination.parts:
+        raise argparse.ArgumentTypeError(
+            "guest file destination must be a safe path relative to the guest checkout"
+        )
+    return source, destination
 
 
 def free_port():
@@ -169,14 +184,28 @@ def main():
     )
     parser.add_argument("--make-target", default="l4s-timeseries-guest-check")
     parser.add_argument("--guest-result-name", default="qemu-run")
+    parser.add_argument("--guest-result-root", default="results/l4s")
+    parser.add_argument("--destination-root", default="results/l4s")
     parser.add_argument("--destination-prefix", default="qemu-timeseries")
     parser.add_argument("--make-variable", action="append", default=[])
+    parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument(
+        "--forward-sidecar-port", type=int, default=0,
+        help="forward this localhost TCP port to guest port 7790 for an interactive 3DGS sidecar",
+    )
+    parser.add_argument(
+        "--guest-file", action="append", type=parse_guest_file, default=[],
+        metavar="SOURCE=RELATIVE_DEST",
+        help="copy a host input into the ephemeral guest checkout",
+    )
     args = parser.parse_args()
 
     if not args.base.is_file():
         raise SystemExit(f"QEMU base image does not exist: {args.base}")
     if args.guest_timeout <= 0:
         raise SystemExit("--guest-timeout must be positive")
+    if args.forward_sidecar_port < 0 or args.forward_sidecar_port > 65535:
+        raise SystemExit("--forward-sidecar-port must be a valid TCP port")
     for command in ("qemu-img", "qemu-system-x86_64", "git", "ssh", "scp"):
         if not shutil_which(command):
             raise SystemExit(f"missing command: {command}")
@@ -187,16 +216,21 @@ def main():
         text=True,
         capture_output=True,
     ).stdout
-    if status:
+    if status and not args.allow_dirty:
         raise SystemExit("refusing to test a dirty worktree; commit the milestone first")
     for assignment in args.make_variable:
         if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=[^\n]*", assignment):
             raise SystemExit(f"invalid make variable: {assignment}")
+    for label, value in (("guest result root", args.guest_result_root),
+                         ("destination root", args.destination_root)):
+        path = Path(value)
+        if path.is_absolute() or ".." in path.parts or not path.parts:
+            raise SystemExit(f"{label} must be a safe relative path")
 
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
-    destination = ROOT / "results" / "l4s" / f"{args.destination_prefix}-{timestamp}"
+    destination = ROOT / args.destination_root / f"{args.destination_prefix}-{timestamp}"
     guest_root = f"/home/{args.user}/imquic-qemu-test"
-    guest_result = f"{guest_root}/results/l4s/{args.guest_result_name}"
+    guest_result = f"{guest_root}/{Path(args.guest_result_root).as_posix()}/{args.guest_result_name}"
     port = free_port()
 
     with tempfile.TemporaryDirectory(prefix="imquic-l4s-qemu-") as temporary:
@@ -205,6 +239,7 @@ def main():
         source_archive = temporary / "imquic.tar.gz"
         imquic_archive = temporary / "imquic-source.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
+        three_dgs_archive = temporary / "3dgs-over-moq.tar.gz"
         picotls_archive = temporary / "picotls-cache.tar.gz"
         source_provenance = temporary / "source-provenance.json"
         serial_log = temporary / "serial.log"
@@ -214,7 +249,10 @@ def main():
                 "-b", str(args.base.resolve()), str(overlay),
             ]
         )
-        run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
+        if status:
+            archive_worktree(ROOT, source_archive)
+        else:
+            run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
         source_provenance.write_text(
             json.dumps(repository_snapshot(ROOT), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
@@ -234,12 +272,25 @@ def main():
             ["git", "archive", "--format=tar.gz", f"--output={imquic_archive}", "HEAD"],
             cwd=ROOT / "deps" / "imquic",
         )
+        three_dgs_root = ROOT / "deps" / "3dgs_over_moq"
+        three_dgs_status = subprocess.run(
+            ["git", "status", "--porcelain", "--untracked-files=normal"],
+            cwd=three_dgs_root, check=True, text=True, capture_output=True,
+        ).stdout
+        if three_dgs_status:
+            archive_worktree(three_dgs_root, three_dgs_archive)
+        else:
+            run(["git", "archive", "--format=tar.gz", f"--output={three_dgs_archive}", "HEAD"],
+                cwd=three_dgs_root)
+        host_forwards = f"hostfwd=tcp:127.0.0.1:{port}-:22"
+        if args.forward_sidecar_port:
+            host_forwards += f",hostfwd=tcp:127.0.0.1:{args.forward_sidecar_port}-:7790"
         qemu = subprocess.Popen(
             [
                 "qemu-system-x86_64", "-enable-kvm", "-cpu", "host",
                 "-m", str(args.memory), "-smp", str(args.cpus),
                 "-drive", f"file={overlay},format=qcow2,if=ide,cache=none,aio=native,discard=unmap",
-                "-netdev", f"user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22",
+                "-netdev", f"user,id=n0,{host_forwards}",
                 "-device", "e1000,netdev=n0", "-boot", "c", "-display", "none",
                 "-serial", f"file:{serial_log}",
             ]
@@ -249,23 +300,41 @@ def main():
             wait_for_authenticated_ssh(
                 port, args.user, args.password, qemu, timeout=args.boot_timeout
             )
+            if args.forward_sidecar_port:
+                print(f"3DGS sidecar forwarding: ws://127.0.0.1:{args.forward_sidecar_port}")
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
+            copy_to_guest(port, args.user, args.password, three_dgs_archive)
             copy_to_guest(port, args.user, args.password, picotls_archive)
             copy_to_guest(port, args.user, args.password, source_provenance)
+            staged_guest_files = []
+            for index, (source, relative) in enumerate(args.guest_file):
+                staged_name = f"codex-guest-input-{index:02d}-{source.name}"
+                staged = temporary / staged_name
+                staged.symlink_to(source)
+                copy_to_guest(port, args.user, args.password, staged)
+                staged_guest_files.append((staged_name, relative))
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
+            install_guest_files = "\n".join(
+                "install -D "
+                f"/home/{shlex.quote(args.user)}/{shlex.quote(staged_name)} "
+                f"{shlex.quote(str(Path(guest_root) / relative))}"
+                for staged_name, relative in staged_guest_files
+            )
             provision = f'''set -e
 if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null || true
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
 fi
 rm -rf {shlex.quote(guest_root)}
-mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic
+mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic {shlex.quote(guest_root)}/deps/3dgs_over_moq
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
 cp /home/{shlex.quote(args.user)}/{source_provenance.name} {shlex.quote(guest_root)}/.source-provenance.json
+{install_guest_files}
 tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
+tar -xzf /home/{shlex.quote(args.user)}/{three_dgs_archive.name} -C {shlex.quote(guest_root)}/deps/3dgs_over_moq
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
 tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
@@ -284,8 +353,11 @@ autoreconf -fi >/dev/null
 make -j{args.cpus} >/dev/null
 make check
 cd {shlex.quote(guest_root)}
+set +e
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}
+make_status=$?
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S chown -R {shlex.quote(args.user)}:{shlex.quote(args.user)} {shlex.quote(guest_result)}
+exit $make_status
 '''
             try:
                 ssh_command(port, args.user, args.password, provision,

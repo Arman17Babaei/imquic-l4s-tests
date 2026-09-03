@@ -1,7 +1,10 @@
 results/
 __pycache__/
 *.pyc
+/build/
+/data/
 deps/imquic/_deps/
 deps/imquic/build/
 deps/picoquic/_deps/
 deps/picoquic/build/
+tmp/
