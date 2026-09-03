@@ -52,6 +52,7 @@ init:
 analyzer-check:
 	python3 tools/l4s/analyze_mininet_benchmark.py --self-test
 	python3 tools/l4s/analyze_sustained_coexistence.py --self-test
+	python3 tools/l4s/thesis_network_matrix.py --self-test
 	python3 tools/l4s/analyze_reno_fairness.py --self-test
 	python3 tools/l4s/analyze_reno_step_join.py --self-test
 
@@ -215,6 +216,18 @@ l4s-3dgs-reordering-matrix-check: build-3dgs-fixture-only
 	modprobe sch_dualpi2
 	sh tools/l4s/build_3dgs_scheduled_fixture.sh
 	python3 tools/l4s/run_3dgs_reordering_matrix.py \
+		--output "$(L4S_RESULT_DIR)" \
+		--source-bundle "$(THREEDGS_BUNDLE)" \
+		--frozen-demand "$(THREEDGS_FROZEN_DEMAND)" \
+		$(THREEDGS_REORDERING_ARGS)
+
+l4s-thesis-3dgs-pair-check: build-3dgs-fixture-only
+	@test -n "$(THREEDGS_BUNDLE)" || { echo "THREEDGS_BUNDLE is required" >&2; exit 2; }
+	@test -n "$(THREEDGS_FROZEN_DEMAND)" || { echo "THREEDGS_FROZEN_DEMAND is required" >&2; exit 2; }
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	modprobe sch_dualpi2
+	sh tools/l4s/build_3dgs_scheduled_fixture.sh
+	python3 tools/l4s/run_thesis_3dgs_pair.py \
 		--output "$(L4S_RESULT_DIR)" \
 		--source-bundle "$(THREEDGS_BUNDLE)" \
 		--frozen-demand "$(THREEDGS_FROZEN_DEMAND)" \

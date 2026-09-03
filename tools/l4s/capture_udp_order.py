@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import csv
 import hashlib
 import ipaddress
@@ -11,6 +12,7 @@ import json
 import signal
 import socket
 import struct
+import subprocess
 from pathlib import Path
 
 RENO_PORT = 4443
@@ -18,6 +20,56 @@ PRAGUE_PORT = 4444
 ETH_P_ALL = 0x0003
 SOL_PACKET = 263
 PACKET_STATISTICS = 6
+SO_ATTACH_FILTER = 26
+SO_RCVBUFFORCE = 33
+
+
+class SockFilter(ctypes.Structure):
+    _fields_ = [
+        ("code", ctypes.c_ushort),
+        ("jt", ctypes.c_ubyte),
+        ("jf", ctypes.c_ubyte),
+        ("k", ctypes.c_uint32),
+    ]
+
+
+class SockFprog(ctypes.Structure):
+    _fields_ = [
+        ("length", ctypes.c_ushort),
+        ("filters", ctypes.POINTER(SockFilter)),
+    ]
+
+
+def attach_capture_filter(packet_socket: socket.socket, interface: str,
+                          server_ip: str) -> None:
+    """Attach the same libpcap filter used by the full-pcap capture path.
+
+    AF_PACKET otherwise delivers every background TCP frame to Python before
+    the userspace parser can reject it, which can overflow the socket during
+    the unlimited-Cubic thesis workload.
+    """
+    expression = (
+        f"src host {server_ip} and udp and "
+        "(src port 4443 or src port 4444)"
+    )
+    output = subprocess.run(
+        ["tcpdump", "-ddd", expression],
+        check=True, text=True, capture_output=True,
+    ).stdout.splitlines()
+    count = int(output[0])
+    rows = [tuple(map(int, line.split())) for line in output[1:]]
+    if len(rows) != count:
+        raise RuntimeError("tcpdump returned an incomplete BPF program")
+    filters = (SockFilter * count)(*(SockFilter(*row) for row in rows))
+    program = SockFprog(count, filters)
+    libc = ctypes.CDLL(None, use_errno=True)
+    result = libc.setsockopt(
+        packet_socket.fileno(), socket.SOL_SOCKET, SO_ATTACH_FILTER,
+        ctypes.byref(program), ctypes.sizeof(program),
+    )
+    if result != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, "failed to attach packet capture filter")
 SO_TIMESTAMPNS = getattr(socket, "SO_TIMESTAMPNS", 35)
 
 running = True
@@ -98,7 +150,15 @@ def main() -> None:
     packet_socket = socket.socket(
         socket.AF_PACKET, socket.SOCK_RAW, socket.htons(ETH_P_ALL)
     )
-    packet_socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024)
+    try:
+        packet_socket.setsockopt(
+            socket.SOL_SOCKET, SO_RCVBUFFORCE, 64 * 1024 * 1024
+        )
+    except OSError:
+        packet_socket.setsockopt(
+            socket.SOL_SOCKET, socket.SO_RCVBUF, 8 * 1024 * 1024
+        )
+    attach_capture_filter(packet_socket, args.interface, args.server_ip)
     packet_socket.setsockopt(socket.SOL_SOCKET, SO_TIMESTAMPNS, 1)
     packet_socket.bind((args.interface, 0))
     packet_socket.settimeout(0.2)

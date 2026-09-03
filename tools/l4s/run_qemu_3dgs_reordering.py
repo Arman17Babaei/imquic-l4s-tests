@@ -40,9 +40,10 @@ def _background_rate(value: str) -> float | None:
 
 
 def _iperf_background_command(
-    host: str, duration_s: float, rate_mbps: float | None, congestion_control: str
+    host: str, duration_s: float, rate_mbps: float | None,
+    congestion_control: str, port: int = 5201,
 ) -> list[str]:
-    command = ["iperf3", "-c", host, "-p", "5201", "-t", f"{duration_s:g}"]
+    command = ["iperf3", "-c", host, "-p", str(port), "-t", f"{duration_s:g}"]
     if rate_mbps is not None:
         command.extend(["-b", f"{rate_mbps}M"])
     command.extend(["-C", congestion_control, "--json"])

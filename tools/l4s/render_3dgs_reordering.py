@@ -266,6 +266,7 @@ def render_case(
     max_gaussians_per_pass: int | None,
     evaluation_lag_ms: float,
     gif_duration_ms: int | None,
+    generate_gif: bool = True,
 ) -> dict[str, object]:
     from streaming.transport.client.cache import SplatCache
     from streaming.transport.client.pipeline import RenderPipeline
@@ -371,7 +372,7 @@ def render_case(
         frames, rendered_frame_indices, gif_duration_ms
     )
     encoded_gif_durations = quantize_gif_durations_ms(gif_durations)
-    if rendered_paths:
+    if rendered_paths and generate_gif:
         images = [Image.open(path).convert("RGB") for path in rendered_paths]
         images[0].save(
             gif_path,
@@ -394,7 +395,7 @@ def render_case(
         "p05_ssim": float(np.percentile(ssims, 5)) if ssims else None,
         "mean_psnr_db": float(np.mean(psnrs)) if psnrs else None,
         "frame_quality_csv": str(metrics_path),
-        "gif": str(gif_path) if gif_path.is_file() else None,
+        "gif": str(gif_path) if generate_gif and gif_path.is_file() else None,
         "gif_timing": "fixed" if gif_duration_ms is not None else "trace timestamps",
         "gif_source_duration_ms": sum(gif_durations),
         "gif_duration_ms": sum(encoded_gif_durations),

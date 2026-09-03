@@ -572,7 +572,7 @@ def _run_case(
                 client_bg_client = client_background_source.popen(
                     _iperf_background_command(
                         client_background_sink.IP(), duration,
-                        args.dc_background_mbps, args.dc_background_cc,
+                        args.dc_background_mbps, args.dc_background_cc, 5202,
                     ),
                     stdout=client_bg_client_log,
                     stderr=subprocess.STDOUT,
@@ -1090,8 +1090,9 @@ def main() -> None:
         net.addLink(provider, downstream)
         net.addLink(downstream, client)
         net.addLink(downstream, background_sink)
-        client_background_source = net.addHost("bg_client_src", ip="10.0.0.4/24")
-        client_background_sink = net.addHost("bg_client_sink", ip="10.0.0.5/24")
+        # Keep generated veth names below Linux IFNAMSIZ (15 visible chars).
+        client_background_source = net.addHost("bg_src", ip="10.0.0.4/24")
+        client_background_sink = net.addHost("bg_sink2", ip="10.0.0.5/24")
         net.addLink(client_background_source, provider)
         net.addLink(client_background_sink, downstream)
 
