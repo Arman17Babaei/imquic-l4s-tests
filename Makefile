@@ -6,7 +6,7 @@ FETCH_CONCURRENCY_FIXTURE := $(IMQUIC_DIR)/src/imquic-fetch-concurrency
 THREEDGS_BACKGROUND_MBPS ?= 150
 DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-priority-mvp-check build-3dgs-priority-mvp build-3dgs-priority-mvp-only 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -129,6 +129,29 @@ build-3dgs-native-only:
 		-o $(CURDIR)/build/sgss-imquic-publisher -L$(IMQUIC_DIR)/src/.libs -limquic \
 		$$(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
 		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
+
+build-3dgs-priority-mvp: build build-3dgs-priority-mvp-only
+
+build-3dgs-priority-mvp-only:
+	mkdir -p $(CURDIR)/build
+	$${CC:-cc} -std=gnu11 -O2 -Wall -Wextra -Werror -I$(IMQUIC_DIR)/src \
+		$$(pkg-config --cflags glib-2.0 jansson) tools/l4s/priority_moq_sidecar.c \
+		-o $(CURDIR)/build/priority-moq-sidecar -L$(IMQUIC_DIR)/src/.libs -limquic \
+		$$(pkg-config --libs glib-2.0 jansson) -lm -pthread \
+		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
+	$${CC:-cc} -std=gnu11 -O2 -Wall -Wextra -Werror -I$(IMQUIC_DIR)/src \
+		$$(pkg-config --cflags glib-2.0 jansson) tools/l4s/priority_moq_publisher.c \
+		-o $(CURDIR)/build/priority-moq-publisher -L$(IMQUIC_DIR)/src/.libs -limquic \
+		$$(pkg-config --libs glib-2.0 jansson) -lm -pthread \
+		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
+
+3dgs-priority-mvp-check:
+	cd $(CURDIR)/deps/gaussian-player && npm test && npm run build
+	for source in tools/l4s/priority_moq_sidecar.c tools/l4s/priority_moq_publisher.c; do \
+		$${CC:-cc} -std=gnu11 -fsyntax-only -Wall -Wextra -Werror -I$(IMQUIC_DIR)/src \
+			$$(pkg-config --cflags glib-2.0 jansson) $$source || exit; \
+	done
+	node --check tools/l4s/priority_ws_bridge.mjs
 
 l4s-timeseries-guest-check:
 	tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
