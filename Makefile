@@ -2,10 +2,11 @@ IMQUIC_DIR := $(CURDIR)/deps/imquic
 PICOQUIC_DIR := $(CURDIR)/deps/picoquic
 THREEDGS_DIR := $(CURDIR)/deps/3dgs_over_moq
 THREEDGS_FIXTURE := $(CURDIR)/build/imquic-3dgs-moq
+FETCH_CONCURRENCY_FIXTURE := $(IMQUIC_DIR)/src/imquic-fetch-concurrency
 THREEDGS_BACKGROUND_MBPS ?= 150
 DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -65,6 +66,10 @@ reno-fairness-check:
 reno-step-join-check:
 	python3 -m unittest discover -s tests -p 'test_reno_step_join.py' -v
 
+fetch-concurrency-check: build-fetch-concurrency-fixture
+	$(FETCH_CONCURRENCY_FIXTURE) self-test
+	python3 tools/l4s/analyze_fetch_concurrency.py --self-test
+
 3dgs-deadline-check:
 	python3 -m unittest discover -s tests -p 'test_3dgs_deadline.py' -v
 
@@ -86,6 +91,17 @@ build: init
 		exit $$status
 
 build-3dgs-fixture: build build-3dgs-fixture-only
+
+build-fetch-concurrency-fixture: build build-fetch-concurrency-fixture-only
+
+build-fetch-concurrency-fixture-only:
+	$${CC:-cc} -std=c11 -O2 -Wall -Wextra -Werror \
+		-I$(IMQUIC_DIR)/src \
+		$$(pkg-config --cflags glib-2.0 libssl libcrypto jansson) \
+		tests/fetch-concurrency-test.c -o $(FETCH_CONCURRENCY_FIXTURE) \
+		-L$(IMQUIC_DIR)/src/.libs -limquic \
+		$$(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
+		-Wl,-rpath,'$$ORIGIN/.libs'
 
 build-3dgs-fixture-only:
 	mkdir -p $(CURDIR)/build
@@ -147,6 +163,20 @@ l4s-sustained-single-switch-check:
 	cp tests/sustained-moq-test.c deps/imquic/src/sustained-moq-test.c
 	$(MAKE) -C deps/imquic/src imquic-sustained-moq
 	python3 tools/l4s/run_sustained_single_switch.py --output $(L4S_RESULT_DIR) $(L4S_SUSTAINED_ARGS)
+
+l4s-fetch-concurrency-check: build-fetch-concurrency-fixture-only
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	$(MAKE) experiment-record-check
+	python3 tools/l4s/run_fetch_concurrency.py --output "$(L4S_RESULT_DIR)" $(FETCH_CONCURRENCY_ARGS)
+
+l4s-fetch-concurrency-qemu-check:
+	python3 tools/l4s/run_qemu_timeseries_test.py \
+		--allow-dirty \
+		--make-target l4s-fetch-concurrency-check \
+		--guest-result-name fetch-concurrency \
+		--destination-prefix qemu-fetch-concurrency \
+		--guest-timeout 1800 \
+		--make-variable 'FETCH_CONCURRENCY_ARGS=$(FETCH_CONCURRENCY_ARGS)'
 
 l4s-reno-fairness-check:
 	python3 tools/l4s/run_reno_fairness.py --output $(L4S_RESULT_DIR) $(L4S_RENO_FAIRNESS_ARGS)

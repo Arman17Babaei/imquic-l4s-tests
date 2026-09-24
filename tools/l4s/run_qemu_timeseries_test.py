@@ -45,6 +45,23 @@ def archive_worktree(repository, destination):
             archive.add(repository / relative, arcname=relative, recursive=False)
 
 
+def archive_repository(repository, destination):
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=normal"],
+        cwd=repository,
+        check=True,
+        text=True,
+        capture_output=True,
+    ).stdout
+    if status:
+        archive_worktree(repository, destination)
+    else:
+        run(
+            ["git", "archive", "--format=tar.gz", f"--output={destination}", "HEAD"],
+            cwd=repository,
+        )
+
+
 def parse_guest_file(value):
     if "=" not in value:
         raise argparse.ArgumentTypeError("guest files must use SOURCE=RELATIVE_DEST")
@@ -257,10 +274,7 @@ def main():
             json.dumps(repository_snapshot(ROOT), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
-        run(
-            ["git", "archive", "--format=tar.gz", f"--output={picoquic_archive}", "HEAD"],
-            cwd=ROOT / "deps" / "picoquic",
-        )
+        archive_repository(ROOT / "deps" / "picoquic", picoquic_archive)
         picotls_source = ROOT / "deps" / "picoquic" / "build" / "_deps" / "picotls-src"
         if not (picotls_source / "include" / "picotls" / "minicrypto.h").exists():
             raise RuntimeError("QEMU validation needs the cached picotls tree; run 'make build' first")
@@ -268,10 +282,7 @@ def main():
             "tar", "-czf", str(picotls_archive),
             "-C", str(picotls_source.parent), picotls_source.name,
         ])
-        run(
-            ["git", "archive", "--format=tar.gz", f"--output={imquic_archive}", "HEAD"],
-            cwd=ROOT / "deps" / "imquic",
-        )
+        archive_repository(ROOT / "deps" / "imquic", imquic_archive)
         three_dgs_root = ROOT / "deps" / "3dgs_over_moq"
         three_dgs_status = subprocess.run(
             ["git", "status", "--porcelain", "--untracked-files=normal"],
