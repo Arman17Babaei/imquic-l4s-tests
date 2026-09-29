@@ -169,6 +169,20 @@ class PromotionTests(unittest.TestCase):
                     conclusion="supports", paper_claim="p", caveats="c",
                 )
 
+    def test_index_accepts_legacy_records_without_titles(self):
+        with tempfile.TemporaryDirectory() as directory:
+            records = Path(directory)
+            legacy = records / "legacy-figure-record"
+            legacy.mkdir()
+            (legacy / "result.json").write_text(json.dumps({
+                "id": "legacy-figure-record",
+                "conclusion": "supports",
+                "repository_commit": "0123456789abcdef",
+            }))
+            promote_result.update_index(records)
+            index = (records / "INDEX.md").read_text()
+            self.assertIn("| `legacy-figure-record` | legacy-figure-record | `supports` |", index)
+
 
 class RunnerIntegrationContractTests(unittest.TestCase):
     def test_network_runners_write_provenance_directly(self):

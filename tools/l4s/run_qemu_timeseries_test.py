@@ -257,6 +257,7 @@ def main():
         imquic_archive = temporary / "imquic-source.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
         three_dgs_archive = temporary / "3dgs-over-moq.tar.gz"
+        gaussian_player_archive = temporary / "gaussian-player.tar.gz"
         picotls_archive = temporary / "picotls-cache.tar.gz"
         source_provenance = temporary / "source-provenance.json"
         serial_log = temporary / "serial.log"
@@ -293,6 +294,7 @@ def main():
         else:
             run(["git", "archive", "--format=tar.gz", f"--output={three_dgs_archive}", "HEAD"],
                 cwd=three_dgs_root)
+        archive_repository(ROOT / "deps" / "gaussian-player", gaussian_player_archive)
         host_forwards = f"hostfwd=tcp:127.0.0.1:{port}-:22"
         if args.forward_sidecar_port:
             host_forwards += f",hostfwd=tcp:127.0.0.1:{args.forward_sidecar_port}-:7790"
@@ -317,6 +319,7 @@ def main():
             copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
             copy_to_guest(port, args.user, args.password, three_dgs_archive)
+            copy_to_guest(port, args.user, args.password, gaussian_player_archive)
             copy_to_guest(port, args.user, args.password, picotls_archive)
             copy_to_guest(port, args.user, args.password, source_provenance)
             staged_guest_files = []
@@ -327,6 +330,12 @@ def main():
                 copy_to_guest(port, args.user, args.password, staged)
                 staged_guest_files.append((staged_name, relative))
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
+            camera_priority = args.make_target == "l4s-camera-priority-guest-check"
+            configure_options = " --enable-moq-examples" if camera_priority else ""
+            imquic_build = (f"make -C src -j{args.cpus} >/dev/null\n"
+                            f"make -C examples imquic-moq-relay -j{args.cpus} >/dev/null\n"
+                            "make -C src check" if camera_priority else
+                            f"make -j{args.cpus} >/dev/null\nmake check")
             install_guest_files = "\n".join(
                 "install -D "
                 f"/home/{shlex.quote(args.user)}/{shlex.quote(staged_name)} "
@@ -339,13 +348,14 @@ if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
 fi
 rm -rf {shlex.quote(guest_root)}
-mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic {shlex.quote(guest_root)}/deps/3dgs_over_moq
+mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic {shlex.quote(guest_root)}/deps/3dgs_over_moq {shlex.quote(guest_root)}/deps/gaussian-player
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
 cp /home/{shlex.quote(args.user)}/{source_provenance.name} {shlex.quote(guest_root)}/.source-provenance.json
 {install_guest_files}
 tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
 tar -xzf /home/{shlex.quote(args.user)}/{three_dgs_archive.name} -C {shlex.quote(guest_root)}/deps/3dgs_over_moq
+tar -xzf /home/{shlex.quote(args.user)}/{gaussian_player_archive.name} -C {shlex.quote(guest_root)}/deps/gaussian-player
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
 tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
@@ -360,9 +370,8 @@ cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX
 cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
 cd {shlex.quote(guest_root)}/deps/imquic
 autoreconf -fi >/dev/null
-./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic >/dev/null
-make -j{args.cpus} >/dev/null
-make check
+./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic{configure_options} >/dev/null
+{imquic_build}
 cd {shlex.quote(guest_root)}
 set +e
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}

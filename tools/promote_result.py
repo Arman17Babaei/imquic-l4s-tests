@@ -131,8 +131,9 @@ def update_index(records: Path) -> None:
         "| --- | --- | --- | --- |",
     ]
     for data in rows:
+        title = data.get("title", data["id"])
         lines.append(
-            f"| `{data['id']}` | {data['title']} | `{data['conclusion']}` | "
+            f"| `{data['id']}` | {title} | `{data['conclusion']}` | "
             f"`{data.get('repository_commit', '')[:12]}` |"
         )
     (records / "INDEX.md").write_text("\n".join(lines) + "\n", encoding="utf-8")

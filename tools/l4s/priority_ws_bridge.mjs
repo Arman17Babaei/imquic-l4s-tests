@@ -7,16 +7,19 @@ const MAX_MESSAGE = 1024 * 1024;
 const MAX_BROWSER_BUFFER = 128 * 1024 * 1024;
 
 function argsOf(argv) {
-    const out = { listen: 8787, relayHost: "127.0.0.1", relayPort: 4443, native: "./priority_moq_sidecar", origins: [] };
+    const out = { listen: 8787, relayHost: "127.0.0.1", relayPort: 4443,
+        native: "./priority_moq_sidecar", transportMode: "reno", origins: [] };
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === "--listen") out.listen = Number(argv[++i]);
         else if (argv[i] === "--relay-host") out.relayHost = argv[++i];
         else if (argv[i] === "--relay-port") out.relayPort = Number(argv[++i]);
         else if (argv[i] === "--native") out.native = argv[++i];
+        else if (argv[i] === "--transport-mode") out.transportMode = argv[++i];
         else if (argv[i] === "--origin") out.origins.push(argv[++i]);
         else throw new Error(`unknown argument ${argv[i]}`);
     }
     if (!out.origins.length) out.origins = ["http://127.0.0.1:5173", "http://localhost:5173"];
+    if (out.transportMode !== "reno" && out.transportMode !== "prague") throw new Error("invalid transport mode");
     return out;
 }
 
@@ -37,11 +40,13 @@ function close(socket, code, reason) {
 
 const options = argsOf(process.argv.slice(2));
 let server;
-const native = spawn(options.native, [options.relayHost, String(options.relayPort)], { stdio: ["pipe", "pipe", "inherit"] });
+const native = spawn(options.native, [options.relayHost, String(options.relayPort), options.transportMode],
+    { stdio: ["pipe", "pipe", "inherit"] });
 let client = null, nativeReady = false, nativeBytes = Buffer.alloc(0), browserBytes = Buffer.alloc(0), pending = [];
+let gracefulClosing = false;
 
 function sendBrowser(opcode, payload) {
-    if (!client || client.destroyed) return;
+    if (!client || client.destroyed || client.writableEnded) return;
     if (client.writableLength + payload.length > MAX_BROWSER_BUFFER) {
         close(client, 1011, "browser output buffer exceeded");
         native.kill("SIGTERM");
@@ -87,7 +92,8 @@ native.stdout.on("data", chunk => {
     }
 });
 native.on("exit", code => {
-    if (client) close(client, 1011, `native sidecar exited (${code})`);
+    if (client && !client.destroyed && !client.writableEnded)
+        close(client, gracefulClosing ? 1000 : 1011, gracefulClosing ? "audit complete" : `native sidecar exited (${code})`);
     server.close(() => process.exit(code ?? 1));
 });
 
@@ -115,7 +121,8 @@ function handleBrowserData(chunk) {
         if (opcode !== 1) { close(client, 1003, "control messages must be text"); return; }
         let command;
         try { command = JSON.parse(payload.toString("utf8")); } catch { close(client, 1007, "invalid JSON"); return; }
-        if (command.type !== "open" && command.type !== "priorities") { close(client, 1008, "unsupported message type"); return; }
+        if (command.type !== "open" && command.type !== "priorities" && command.type !== "close") { close(client, 1008, "unsupported message type"); return; }
+        if (command.type === "close") gracefulClosing = true;
         const line = JSON.stringify(command);
         if (nativeReady) native.stdin.write(`${line}\n`); else pending.push(line);
     }
@@ -135,7 +142,12 @@ server.on("upgrade", (request, socket) => {
     socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\nSec-WebSocket-Protocol: 3dgs-moqt-v1\r\n\r\n`);
     client = socket;
     socket.on("data", handleBrowserData);
-    socket.on("close", () => { client = null; server.close(); native.kill("SIGTERM"); });
+    socket.on("error", () => { if (!gracefulClosing) native.kill("SIGTERM"); });
+    socket.on("close", () => {
+        client = null;
+        server.close();
+        if (!gracefulClosing) native.kill("SIGTERM");
+    });
 });
 server.listen(options.listen, "127.0.0.1", () => console.error(`3DGS MOQT bridge ws://127.0.0.1:${options.listen}`));
 process.on("SIGINT", () => { server.close(); native.kill("SIGTERM"); });

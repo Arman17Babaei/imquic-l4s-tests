@@ -6,7 +6,7 @@ FETCH_CONCURRENCY_FIXTURE := $(IMQUIC_DIR)/src/imquic-fetch-concurrency
 THREEDGS_BACKGROUND_MBPS ?= 150
 DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-priority-mvp-check build-3dgs-priority-mvp build-3dgs-priority-mvp-only 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-priority-mvp-check priority-audit-loopback-check build-3dgs-priority-mvp build-3dgs-priority-mvp-only 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check l4s-camera-priority-guest-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -56,6 +56,8 @@ analyzer-check:
 	python3 tools/l4s/thesis_network_matrix.py --self-test
 	python3 tools/l4s/analyze_reno_fairness.py --self-test
 	python3 tools/l4s/analyze_reno_step_join.py --self-test
+	python3 -m unittest tests.test_analyze_camera_priority tests.test_camera_priority_qemu tests.test_camera_priority_trace tests.test_moq_relay_transport_mode
+	node --test tests/test_priority_ws_bridge.mjs
 
 experiment-record-check:
 	python3 -m unittest discover -s tests -p 'test_experiment_metadata.py' -v
@@ -112,7 +114,6 @@ build-3dgs-fixture-only:
 		-L$(IMQUIC_DIR)/src/.libs -limquic \
 		$$(pkg-config --libs glib-2.0 libssl libcrypto jansson) -lm -pthread \
 		-Wl,-rpath,'$$ORIGIN/../deps/imquic/src/.libs'
-
 build-3dgs-native: build build-3dgs-native-only
 
 build-3dgs-native-only:
@@ -151,7 +152,17 @@ build-3dgs-priority-mvp-only:
 		$${CC:-cc} -std=gnu11 -fsyntax-only -Wall -Wextra -Werror -I$(IMQUIC_DIR)/src \
 			$$(pkg-config --cflags glib-2.0 jansson) $$source || exit; \
 	done
+	$${CC:-cc} -std=c11 -Wall -Wextra -Werror -ffunction-sections -fdata-sections \
+		-I$(IMQUIC_DIR)/src -I$(IMQUIC_DIR) $$(pkg-config --cflags glib-2.0 jansson) \
+		tests/priority_moq_sidecar_unit.c -Wl,--gc-sections -o /tmp/priority-moq-sidecar-unit \
+		$$(pkg-config --libs glib-2.0 jansson)
+	/tmp/priority-moq-sidecar-unit
 	node --check tools/l4s/priority_ws_bridge.mjs
+
+priority-audit-loopback-check: build-3dgs-priority-mvp-only
+	cd $(IMQUIC_DIR)/examples && $(MAKE) imquic-moq-relay
+	cd $(CURDIR)/deps/gaussian-player && npm run build
+	python3 tools/l4s/run_priority_audit_loopback.py
 
 l4s-timeseries-guest-check:
 	tools/l4s/run_timeseries_test.sh $(L4S_RESULT_DIR)
@@ -303,6 +314,25 @@ l4s-3dgs-native-guest-check: build-3dgs-native-only
 l4s-3dgs-native-qemu-check:
 	python3 tools/l4s/run_qemu_3dgs_native.py --bundle $(CURDIR)/results/3dgs/media/point-cloud \
 		$(THREEDGS_QEMU_ARGS)
+
+l4s-camera-priority-guest-check: build-3dgs-priority-mvp-only
+	@test -n "$(L4S_RESULT_DIR)" || { echo "L4S_RESULT_DIR is required" >&2; exit 2; }
+	@test -n "$(CAMERA_PRIORITY_SCENE_ARCHIVE)" || { echo "CAMERA_PRIORITY_SCENE_ARCHIVE is required" >&2; exit 2; }
+	@test -n "$(CAMERA_PRIORITY_TRACE)" || { echo "CAMERA_PRIORITY_TRACE is required" >&2; exit 2; }
+	@test -x "$(CAMERA_PRIORITY_NODE)" || { echo "CAMERA_PRIORITY_NODE is required" >&2; exit 2; }
+	@test -n "$(CAMERA_PRIORITY_RUNTIME_ARCHIVE)" || { echo "CAMERA_PRIORITY_RUNTIME_ARCHIVE is required" >&2; exit 2; }
+	rm -rf $(CURDIR)/results/3dgs/camera-priority-input
+	mkdir -p $(CURDIR)/results/3dgs/camera-priority-input
+	tar -xf "$(CAMERA_PRIORITY_SCENE_ARCHIVE)" -C $(CURDIR)/results/3dgs/camera-priority-input
+	tar -xzf "$(CAMERA_PRIORITY_RUNTIME_ARCHIVE)" -C $(CURDIR)/deps/gaussian-player
+	CAMERA_PRIORITY_NODE="$(abspath $(CAMERA_PRIORITY_NODE))" python3 tools/l4s/run_camera_priority_guest.py \
+		--manifest $(CURDIR)/results/3dgs/camera-priority-input/manifest-v2.json \
+		--trace "$(CAMERA_PRIORITY_TRACE)" --output "$(L4S_RESULT_DIR)" \
+		$$(test "$(CAMERA_PRIORITY_PREFLIGHT)" = 1 && printf '%s' --preflight)
+	python3 tools/l4s/analyze_camera_priority.py --run "$(L4S_RESULT_DIR)" \
+		--manifest $(CURDIR)/results/3dgs/camera-priority-input/manifest-v2.json \
+		--epochs $$(python3 -c 'import json; print(len(json.load(open("$(CAMERA_PRIORITY_TRACE)"))))') \
+		--validate-only $$(test "$(CAMERA_PRIORITY_PREFLIGHT)" = 1 && printf '%s' --preflight)
 
 moq-loopback-check:
 	python3 tools/l4s/run_sustained_moq_loopback.py

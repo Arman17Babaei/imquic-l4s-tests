@@ -1,3 +1,6 @@
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 /* Native draft-19 MOQT half of the localhost 3DGS sidecar.
  *
  * stdin: one compact JSON command per line (from priority_ws_bridge.mjs)
@@ -25,6 +28,9 @@ typedef struct fetch_state {
 	uint8_t applied_priority;
 	uint8_t desired_priority;
 	uint8_t pending_priority;
+	uint64_t applied_epoch;
+	uint64_t desired_epoch;
+	uint64_t pending_epoch;
 	gboolean update_pending;
 	gboolean complete;
 	GHashTable *objects;
@@ -36,6 +42,54 @@ static GHashTable *fetches = NULL;
 static GHashTable *updates = NULL;
 static GMutex state_mutex;
 static GMutex output_mutex;
+
+static gpointer duplicate_bytes(const void *source, gsize size) {
+	gpointer copy = g_malloc(size);
+	memcpy(copy, source, size);
+	return copy;
+}
+
+static json_t *priority_event_message(fetch_state *fetch, const char *type,
+		uint8_t old_priority, uint8_t new_priority, uint64_t epoch, uint64_t update_id) {
+	return json_pack("{s:s,s:I,s:I,s:s,s:i,s:i,s:i,s:I,s:I}",
+		"type", type, "request_id", (json_int_t)fetch->request_id,
+		"update_id", (json_int_t)update_id, "tile_id", fetch->tile_id,
+		"refinement", fetch->refinement, "old_priority", old_priority,
+		"new_priority", new_priority, "epoch", (json_int_t)epoch,
+		"monotonic_us", (json_int_t)g_get_monotonic_time());
+}
+
+static json_t *metrics_event_message(const imquic_transport_metrics *metrics, gint64 monotonic_us) {
+	return json_pack("{s:s,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I}",
+		"type", "transport-metrics", "monotonic_us", (json_int_t)monotonic_us,
+		"rtt_us", (json_int_t)metrics->smoothed_rtt_us,
+		"min_rtt_us", (json_int_t)metrics->min_rtt_us,
+		"cwnd_bytes", (json_int_t)metrics->congestion_window_bytes,
+		"bytes_in_flight", (json_int_t)metrics->bytes_in_flight,
+		"queued_stream_bytes", (json_int_t)metrics->queued_stream_bytes,
+		"pacing_Bps", (json_int_t)metrics->pacing_rate_bytes_per_second,
+		"ect0_packets", (json_int_t)metrics->ect0_packets,
+		"ect1_packets", (json_int_t)metrics->ect1_packets,
+		"ce_packets", (json_int_t)metrics->ce_packets,
+		"alpha_numerator", (json_int_t)metrics->prague_alpha_numerator,
+		"alpha_denominator", (json_int_t)metrics->prague_alpha_denominator,
+		"data_sent_bytes", (json_int_t)metrics->data_sent_bytes,
+		"data_received_bytes", (json_int_t)metrics->data_received_bytes);
+}
+
+static int parse_mode(const char *mode, imquic_congestion_controller *cc, imquic_ecn_mode *ecn) {
+	if(!strcmp(mode, "prague")) {
+		*cc = IMQUIC_CONGESTION_PRAGUE;
+		*ecn = IMQUIC_ECN_ECT1;
+		return 0;
+	}
+	if(!strcmp(mode, "reno")) {
+		*cc = IMQUIC_CONGESTION_RENO;
+		*ecn = IMQUIC_ECN_NOT_ECT;
+		return 0;
+	}
+	return -1;
+}
 
 static void library_log(int level, const char *format, ...) {
 	(void)level;
@@ -99,13 +153,18 @@ static void send_next_update(fetch_state *fetch) {
 	parameters.subscriber_priority = fetch->desired_priority;
 	uint64_t update_id = imquic_moq_get_next_request_id(connection);
 	if(imquic_moq_update_request(connection, update_id, fetch->request_id, &parameters) < 0) {
+		emit_message(priority_event_message(fetch, "priority-failed", fetch->applied_priority,
+			fetch->desired_priority, fetch->desired_epoch, update_id));
 		emit_status(fetch, "failed", "REQUEST_UPDATE send failed");
 		return;
 	}
 	fetch->update_id = update_id;
 	fetch->pending_priority = fetch->desired_priority;
+	fetch->pending_epoch = fetch->desired_epoch;
 	fetch->update_pending = TRUE;
-	g_hash_table_insert(updates, g_memdup2(&update_id, sizeof(update_id)), fetch);
+	g_hash_table_insert(updates, duplicate_bytes(&update_id, sizeof(update_id)), fetch);
+	emit_message(priority_event_message(fetch, "priority-sent", fetch->applied_priority,
+		fetch->pending_priority, fetch->pending_epoch, update_id));
 	emit_status(fetch, "updating", NULL);
 }
 
@@ -162,7 +221,11 @@ static void update_accepted(imquic_connection *conn, uint64_t request_id,
 	if(fetch != NULL) {
 		g_hash_table_remove(updates, &request_id);
 		fetch->update_pending = FALSE;
+		uint8_t old_priority = fetch->applied_priority;
 		fetch->applied_priority = fetch->pending_priority;
+		fetch->applied_epoch = fetch->pending_epoch;
+		emit_message(priority_event_message(fetch, "priority-accepted", old_priority,
+			fetch->applied_priority, fetch->applied_epoch, request_id));
 		emit_status(fetch, "accepted", NULL);
 		send_next_update(fetch);
 	}
@@ -178,6 +241,8 @@ static void update_error(imquic_connection *conn, uint64_t request_id,
 	if(fetch != NULL) {
 		g_hash_table_remove(updates, &request_id);
 		fetch->update_pending = FALSE;
+		emit_message(priority_event_message(fetch, "priority-failed", fetch->applied_priority,
+			fetch->pending_priority, fetch->pending_epoch, request_id));
 		emit_status(fetch, "failed", reason);
 		/* A later browser epoch may retry; the FETCH and its cursor survive. */
 	}
@@ -196,11 +261,14 @@ static void incoming_object(imquic_connection *conn, imquic_moq_object *object) 
 		g_mutex_unlock(&state_mutex);
 		return;
 	}
-	g_hash_table_add(fetch->objects, g_memdup2(&object->object_id, sizeof(object->object_id)));
-	json_t *header = json_pack("{s:s,s:i,s:I,s:I,s:i,s:i}",
+	g_hash_table_add(fetch->objects, duplicate_bytes(&object->object_id, sizeof(object->object_id)));
+	json_t *header = json_pack("{s:s,s:i,s:I,s:I,s:i,s:i,s:i,s:I,s:I}",
 		"tile_id", fetch->tile_id, "refinement", fetch->refinement,
 		"object_id", (json_int_t)object->object_id, "request_id", (json_int_t)object->request_id,
-		"publisher_priority", object->priority, "payload_bytes", (int)object->payload_len);
+		"publisher_priority", object->priority, "payload_bytes", (int)object->payload_len,
+		"subscriber_priority", fetch->applied_priority,
+		"subscriber_epoch", (json_int_t)fetch->applied_epoch,
+		"monotonic_us", (json_int_t)g_get_monotonic_time());
 	write_frame(header, object->payload, object->payload_len);
 	json_decref(header);
 	if(object->end_of_stream) {
@@ -225,6 +293,7 @@ static gboolean track_parts(const char *scene, const char *full, imquic_moq_name
 static void handle_open(json_t *command) {
 	const char *scene = json_string_value(json_object_get(command, "scene"));
 	json_t *items = json_object_get(command, "fetches");
+	json_int_t epoch = json_integer_value(json_object_get(command, "epoch"));
 	if(connection == NULL || scene == NULL || !json_is_array(items))
 		return;
 	size_t index;
@@ -248,8 +317,10 @@ static void handle_open(json_t *command) {
 		fetch->refinement = (int)refinement;
 		fetch->applied_priority = (uint8_t)priority;
 		fetch->desired_priority = (uint8_t)priority;
+		fetch->applied_epoch = (uint64_t)epoch;
+		fetch->desired_epoch = (uint64_t)epoch;
 		fetch->objects = g_hash_table_new_full(g_int64_hash, g_int64_equal, g_free, NULL);
-		g_hash_table_insert(fetches, g_memdup2(&request_id, sizeof(request_id)), fetch);
+		g_hash_table_insert(fetches, duplicate_bytes(&request_id, sizeof(request_id)), fetch);
 		imquic_moq_location_range range = { .start = { 0, 0 }, .end = { 1, 0 } };
 		imquic_moq_request_parameters parameters;
 		imquic_moq_request_parameters_init_defaults(&parameters);
@@ -261,14 +332,17 @@ static void handle_open(json_t *command) {
 			emit_status(fetch, "failed", "FETCH send failed");
 			continue;
 		}
-		json_t *opened = json_pack("{s:s,s:s,s:i,s:I}", "type", "fetch-opened", "tile_id", tile,
-			"refinement", (int)refinement, "request_id", (json_int_t)request_id);
+		json_t *opened = json_pack("{s:s,s:s,s:i,s:I,s:i,s:I,s:I}",
+			"type", "fetch-opened", "tile_id", tile, "refinement", (int)refinement,
+			"request_id", (json_int_t)request_id, "initial_priority", (int)priority,
+			"epoch", epoch, "monotonic_us", (json_int_t)g_get_monotonic_time());
 		emit_message(opened);
 	}
 }
 
 static void handle_priorities(json_t *command) {
 	json_t *items = json_object_get(command, "updates");
+	json_int_t epoch = json_integer_value(json_object_get(command, "epoch"));
 	if(!json_is_array(items))
 		return;
 	size_t index;
@@ -283,9 +357,39 @@ static void handle_priorities(json_t *command) {
 			emit_message(message);
 			continue;
 		}
+		if(fetch->desired_priority == (uint8_t)priority)
+			continue;
+		if(fetch->update_pending)
+			emit_message(priority_event_message(fetch, "priority-superseded",
+				fetch->desired_priority, (uint8_t)priority, (uint64_t)epoch, fetch->update_id));
 		fetch->desired_priority = (uint8_t)priority;
+		fetch->desired_epoch = (uint64_t)epoch;
 		send_next_update(fetch);
 	}
+}
+
+static void handle_close(void) {
+	GHashTableIter iterator;
+	gpointer value;
+	uint64_t unresolved = 0;
+	g_hash_table_iter_init(&iterator, fetches);
+	while(g_hash_table_iter_next(&iterator, NULL, &value)) {
+		fetch_state *fetch = value;
+		if(!fetch->update_pending)
+			continue;
+		json_t *message = priority_event_message(fetch, "priority-failed", fetch->applied_priority,
+			fetch->pending_priority, fetch->pending_epoch, fetch->update_id);
+		json_object_set_new(message, "detail", json_string("shutdown-unresolved"));
+		emit_message(message);
+		fetch->update_pending = FALSE;
+		unresolved++;
+	}
+	g_hash_table_remove_all(updates);
+	json_t *complete = json_pack("{s:s,s:I,s:I}", "type", "audit-complete",
+		"unresolved_updates", (json_int_t)unresolved,
+		"monotonic_us", (json_int_t)g_get_monotonic_time());
+	emit_message(complete);
+	stopping = 1;
 }
 
 static void handle_command(const char *line) {
@@ -303,6 +407,8 @@ static void handle_command(const char *line) {
 		handle_open(command);
 	else if(type != NULL && !strcmp(type, "priorities"))
 		handle_priorities(command);
+	else if(type != NULL && !strcmp(type, "close"))
+		handle_close();
 	g_mutex_unlock(&state_mutex);
 	json_decref(command);
 }
@@ -312,9 +418,31 @@ static void signal_handler(int signum) {
 	stopping = 1;
 }
 
+static gpointer metrics_worker(gpointer user_data) {
+	(void)user_data;
+	while(!stopping) {
+		imquic_transport_metrics metrics = { 0 };
+		gboolean available = FALSE;
+		g_mutex_lock(&state_mutex);
+		if(connection != NULL && imquic_get_transport_metrics(connection, &metrics) == 0)
+			available = TRUE;
+		g_mutex_unlock(&state_mutex);
+		if(available)
+			emit_message(metrics_event_message(&metrics, g_get_monotonic_time()));
+		g_usleep(100000);
+	}
+	return NULL;
+}
+
 int main(int argc, char **argv) {
-	if(argc != 3) {
-		fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT\n", argv[0]);
+	if(argc != 3 && argc != 4) {
+		fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT [reno|prague]\n", argv[0]);
+		return 2;
+	}
+	imquic_congestion_controller cc;
+	imquic_ecn_mode ecn;
+	if(parse_mode(argc == 4 ? argv[3] : "reno", &cc, &ecn) < 0) {
+		fprintf(stderr, "invalid transport mode: %s\n", argv[3]);
 		return 2;
 	}
 	signal(SIGINT, signal_handler);
@@ -330,6 +458,8 @@ int main(int argc, char **argv) {
 		IMQUIC_CONFIG_TLS_NO_VERIFY, TRUE,
 		IMQUIC_CONFIG_REMOTE_HOST, argv[1],
 		IMQUIC_CONFIG_REMOTE_PORT, atoi(argv[2]),
+		IMQUIC_CONFIG_CONGESTION_CONTROL, cc,
+		IMQUIC_CONFIG_ECN, ecn,
 		IMQUIC_CONFIG_RAW_QUIC, TRUE,
 		IMQUIC_CONFIG_WEBTRANSPORT, FALSE,
 		IMQUIC_CONFIG_MOQ_VERSION, IMQUIC_MOQ_VERSION_19,
@@ -348,6 +478,7 @@ int main(int argc, char **argv) {
 	imquic_set_request_update_error_cb(client, update_error);
 	imquic_set_incoming_object_cb(client, incoming_object);
 	imquic_start_endpoint(client);
+	GThread *metrics_thread = g_thread_new("transport-metrics", metrics_worker, NULL);
 	char *line = NULL;
 	size_t capacity = 0;
 	while(!stopping && getline(&line, &capacity, stdin) >= 0) {
@@ -359,6 +490,8 @@ int main(int argc, char **argv) {
 		handle_command(line);
 	}
 	free(line);
+	stopping = 1;
+	g_thread_join(metrics_thread);
 	imquic_shutdown_endpoint(client);
 	imquic_deinit();
 	g_hash_table_unref(updates);

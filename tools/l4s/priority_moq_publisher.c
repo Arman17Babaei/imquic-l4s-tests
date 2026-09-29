@@ -24,6 +24,15 @@ static GHashTable *tracks = NULL;
 static GPtrArray *catalog = NULL;
 static char *scene = NULL;
 static char *root = NULL;
+static volatile gint tracks_queued = 0;
+static imquic_connection *publisher_connection = NULL;
+static char *ready_path = NULL;
+
+static gpointer duplicate_bytes(const void *source, gsize size) {
+	gpointer copy = g_malloc(size);
+	memcpy(copy, source, size);
+	return copy;
+}
 
 static void library_log(int level, const char *format, ...) {
 	(void)level;
@@ -44,6 +53,7 @@ static void track_destroy(published_track *track) {
 static void signal_handler(int signum) { (void)signum; stopping = 1; }
 
 static void publish_ready(imquic_connection *conn) {
+	publisher_connection = conn;
 	for(guint index = 0; index < catalog->len; index++) {
 		published_track *track = g_ptr_array_index(catalog, index);
 		imquic_moq_namespace tns = { .buffer = (uint8_t *)scene, .length = strlen(scene) };
@@ -55,7 +65,7 @@ static void publish_ready(imquic_connection *conn) {
 		parameters.forward_set = TRUE;
 		parameters.forward = TRUE;
 		track->request_id = imquic_moq_get_next_request_id(conn);
-		g_hash_table_insert(tracks, g_memdup2(&track->request_id, sizeof(track->request_id)), track);
+		g_hash_table_insert(tracks, duplicate_bytes(&track->request_id, sizeof(track->request_id)), track);
 		imquic_moq_publish(conn, track->request_id, &tns, &tn, track->alias, &parameters, NULL);
 	}
 }
@@ -90,6 +100,7 @@ static void publish_accepted(imquic_connection *conn, uint64_t request_id, imqui
 		if(imquic_moq_send_object(conn, &object) < 0) { stopping = 1; break; }
 	}
 	g_free(contents);
+	g_atomic_int_inc(&tracks_queued);
 }
 
 static void publish_error(imquic_connection *conn, uint64_t request_id,
@@ -135,8 +146,9 @@ static int load_manifest(const char *manifest_path) {
 }
 
 int main(int argc, char **argv) {
-	if(argc != 4) { fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT MANIFEST\n", argv[0]); return 2; }
+	if(argc != 4 && argc != 5) { fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT MANIFEST [READY_JSON]\n", argv[0]); return 2; }
 	if(load_manifest(argv[3]) < 0) return 1;
+	if(argc == 5) ready_path = g_strdup(argv[4]);
 	signal(SIGINT, signal_handler); signal(SIGTERM, signal_handler);
 	imquic_set_log_function(library_log);
 	imquic_set_log_level(IMQUIC_LOG_WARN);
@@ -153,8 +165,24 @@ int main(int argc, char **argv) {
 	imquic_set_publish_accepted_cb(client, publish_accepted);
 	imquic_set_publish_error_cb(client, publish_error);
 	imquic_start_endpoint(client);
-	while(!stopping) g_usleep(100000);
+	gboolean readiness_written = FALSE;
+	while(!stopping) {
+		if(!readiness_written && ready_path != NULL &&
+				g_atomic_int_get(&tracks_queued) == (gint)catalog->len) {
+			imquic_transport_metrics metrics = { 0 };
+			if(publisher_connection != NULL && imquic_get_transport_metrics(publisher_connection, &metrics) == 0 &&
+					metrics.queued_stream_bytes == 0) {
+				char *document = g_strdup_printf("{\"tracks\":%u,\"data_sent_bytes\":%" G_GUINT64_FORMAT
+					",\"monotonic_us\":%" G_GINT64_FORMAT "}\n", catalog->len,
+					metrics.data_sent_bytes, g_get_monotonic_time());
+				if(!g_file_set_contents(ready_path, document, -1, NULL)) stopping = 1;
+				g_free(document);
+				readiness_written = TRUE;
+			}
+		}
+		g_usleep(100000);
+	}
 	imquic_shutdown_endpoint(client); imquic_deinit();
-	g_hash_table_unref(tracks); g_ptr_array_unref(catalog); g_free(scene); g_free(root);
+	g_hash_table_unref(tracks); g_ptr_array_unref(catalog); g_free(scene); g_free(root); g_free(ready_path);
 	return 0;
 }
