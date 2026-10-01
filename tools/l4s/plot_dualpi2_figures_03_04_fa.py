@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
-"""Render the Persian shared-DualPI2 topology for thesis Figures 3--4."""
+"""Render the Persian or English DualPI2 topology for Figures 3--4."""
 
 from __future__ import annotations
 
 import argparse
 from pathlib import Path
 
-import arabic_reshaper
-from bidi.algorithm import get_display
 import matplotlib
 import matplotlib.font_manager as font_manager
 import matplotlib.pyplot as plt
 
 try:
     from thesis_topology import draw_dualpi2_validation_topology
+    from thesis_localization import FigureLocalizer
 except ModuleNotFoundError:
     from tools.l4s.thesis_topology import draw_dualpi2_validation_topology
+    from tools.l4s.thesis_localization import FigureLocalizer
+
+
+TEXT = FigureLocalizer("fa")
 
 
 def fa(text: str) -> str:
-    return get_display(arabic_reshaper.reshape(text))
+    return TEXT(text)
 
 
 def configure(font: Path) -> None:
@@ -34,19 +37,23 @@ def configure(font: Path) -> None:
 
 
 def main() -> None:
+    global TEXT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path,
                         default=Path("results/figures/thesis-figures-03-04"))
     parser.add_argument("--font", type=Path, default=Path("fonts/XB Niloofar.ttf"))
+    parser.add_argument("--language", choices=("fa", "en"), default="fa")
     args = parser.parse_args()
+    TEXT = FigureLocalizer(args.language)
     if not args.font.is_file():
-        raise SystemExit(f"missing Persian font: {args.font}")
+        raise SystemExit(f"missing figure font: {args.font}")
     args.output.mkdir(parents=True, exist_ok=True)
     configure(args.font)
-    figure, axis = plt.subplots(figsize=(9.4, 3.5))
+    figure, axis = plt.subplots(figsize=(9.4, 2.8))
     draw_dualpi2_validation_topology(axis, fa)
     for suffix in ("pdf", "svg", "png"):
-        figure.savefig(args.output / f"topology-for-figures-03-04-fa.{suffix}",
+        stem = TEXT.stem("topology-for-figures-03-04-fa")
+        figure.savefig(args.output / f"{stem}.{suffix}",
                        bbox_inches="tight", dpi=220 if suffix == "png" else None)
     plt.close(figure)
 

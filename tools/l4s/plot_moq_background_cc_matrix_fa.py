@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render a Persian MoQ/TCP congestion-control matrix from a promoted record."""
+"""Render a Persian or English MoQ/TCP matrix from a promoted record."""
 
 from __future__ import annotations
 
@@ -14,12 +14,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 try:
-    import arabic_reshaper
-    from bidi.algorithm import get_display
-except ModuleNotFoundError as error:
-    raise SystemExit(
-        "Persian shaping dependencies are required: pip install arabic-reshaper python-bidi"
-    ) from error
+    from thesis_localization import FigureLocalizer
+except ModuleNotFoundError:
+    from tools.l4s.thesis_localization import FigureLocalizer
 
 
 INK = "#28323c"
@@ -35,10 +32,11 @@ BACKGROUNDS = (
     ("bbr", "BBR"),
     ("bbr2", "BBRv2"),
 )
+TEXT = FigureLocalizer("fa")
 
 
 def fa(text: str) -> str:
-    return get_display(arabic_reshaper.reshape(text))
+    return TEXT(text)
 
 
 def sha256(path: Path) -> str:
@@ -116,11 +114,14 @@ def draw_heatmap(axis: plt.Axes, values: np.ndarray, *, cmap: str, value_format:
 
 
 def main() -> None:
+    global TEXT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--record-root", type=Path, required=True)
     parser.add_argument("--output-root", type=Path, required=True)
     parser.add_argument("--font", type=Path, default=Path("fonts/XB Niloofar.ttf"))
+    parser.add_argument("--language", choices=("fa", "en"), default="fa")
     args = parser.parse_args()
+    TEXT = FigureLocalizer(args.language)
     configure(args.font)
 
     summary_path = args.record_root / "summary.json"
@@ -141,7 +142,7 @@ def main() -> None:
     figure.subplots_adjust(left=.26, right=.94, bottom=.20, top=.86)
 
     args.output_root.mkdir(parents=True, exist_ok=True)
-    stem = "figure-moq-background-cc-matrix-fa"
+    stem = TEXT.stem("figure-moq-background-cc-matrix-fa")
     for suffix in ("pdf", "svg", "png"):
         figure.savefig(args.output_root / f"{stem}.{suffix}", bbox_inches="tight",
                        dpi=240 if suffix == "png" else None)
@@ -154,6 +155,7 @@ def main() -> None:
     ]
     report = {
         "schema_version": 1,
+        "language": args.language,
         "source_record": str(args.record_root.resolve()),
         "source_summary_sha256": sha256(summary_path),
         "source_result_sha256": sha256(result_path),

@@ -9,10 +9,47 @@ import numpy as np
 
 from tools.l4s import plot_thesis_figures_12_15_fa as figures_12_15
 from tools.l4s import plot_thesis_figures_fa as figures_06_10
+from tools.l4s.thesis_localization import FigureLocalizer
 from tools.l4s.validate_thesis_figure_artifacts import PDF_NAMES
 
 
 class ThesisPlotLayoutTests(unittest.TestCase):
+    def test_figure_13_uses_serialization_time_without_bdp_or_rtt_axes(self):
+        figure, axis = plt.subplots()
+        original_text = figures_12_15.TEXT
+        figures_12_15.TEXT = FigureLocalizer("en")
+        try:
+            figures_12_15.plot_13_gain_bound(axis)
+            line = axis.lines[0]
+            np.testing.assert_allclose(line.get_xdata(), line.get_ydata())
+            self.assertEqual(axis.get_xlabel(), "B / Bandwidth (ms)")
+            self.assertEqual(axis.get_ylabel(), "Maximum possible gain (ms)")
+            self.assertNotIn("BDP", axis.get_xlabel())
+            self.assertNotIn("RTT", axis.get_xlabel())
+        finally:
+            figures_12_15.TEXT = original_text
+            plt.close(figure)
+
+    def test_figure_14_uses_direct_millisecond_coordinates(self):
+        figure, axis = plt.subplots()
+        original_text = figures_12_15.TEXT
+        figures_12_15.TEXT = FigureLocalizer("en")
+        try:
+            xx, yy, gain = figures_12_15.applicability_surface_ms(points=3)
+            np.testing.assert_allclose(xx[1], [0.0, 40.0, 80.0])
+            np.testing.assert_allclose(yy[:, 1], [0.0, 40.0, 80.0])
+            np.testing.assert_allclose(gain,
+                                       [[0.0, 40.0, 80.0],
+                                        [0.0, 0.0, 40.0],
+                                        [0.0, 0.0, 0.0]])
+            figures_12_15.draw_heatmap_ms(axis, colorbar=True, fig=figure)
+            self.assertEqual(axis.get_xlabel(), "B0 / Bandwidth (ms)")
+            self.assertEqual(axis.get_ylabel(), "Lead time until priority change (ms)")
+            self.assertEqual(figure.axes[1].get_ylabel(), "Maximum possible gain (ms)")
+        finally:
+            figures_12_15.TEXT = original_text
+            plt.close(figure)
+
     def test_figure_07_comparison_is_bars_with_external_legend(self):
         figure, axis = plt.subplots()
         try:
@@ -44,6 +81,30 @@ class ThesisPlotLayoutTests(unittest.TestCase):
             self.assertIn("Background: TCP Cubic / Not-ECT", labels)
             self.assertTrue(axis.get_xlabel())
         finally:
+            plt.close(figure)
+
+    def test_figure_08_throughput_uses_absolute_measured_values(self):
+        figure, axis = plt.subplots()
+        original_text = figures_06_10.TEXT
+        figures_06_10.TEXT = FigureLocalizer("en")
+        try:
+            trade = {
+                "reno": {
+                    "foreground_mean_mbps": [7.0, 8.0],
+                    "cubic_aggregate_mean_mbps": [2.0, 3.0],
+                },
+                "prague": {
+                    "foreground_mean_mbps": [11.0, 12.0],
+                    "cubic_aggregate_mean_mbps": [4.0, 5.0],
+                },
+            }
+            figures_06_10.plot_08_throughput(axis, trade, (0, 1))
+            heights = [patch.get_height() for patch in axis.patches]
+            np.testing.assert_allclose(heights, [7.0, 8.0, 2.0, 3.0,
+                                                 11.0, 12.0, 4.0, 5.0])
+            self.assertEqual(axis.get_ylabel(), "Throughput (Mbit/s)")
+        finally:
+            figures_06_10.TEXT = original_text
             plt.close(figure)
 
     def test_completion_cdf_uses_the_larger_delivered_count_as_common_scale(self):

@@ -9,3 +9,4 @@ deps/picoquic/_deps/
 deps/picoquic/build/
 tmp/
 .worktrees/
+presentation figures/

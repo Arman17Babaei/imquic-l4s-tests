@@ -34,9 +34,10 @@ class ThesisTopologyTests(unittest.TestCase):
         labels = self.labels(draw_dualpi2_validation_topology)
         for expected in ("h1", "h2", "10.0.0.1", "10.0.0.2", "10.0.0.3",
                          "TCP 5301", "TCP 5302", "Prague", "Reno", "ECT(1)",
-                         "ECT(0)", "s1", "s2", "DualPI2", "10 Mbit/s",
-                         "Linux", "qdisc", "P4"):
+                         "ECT(0)", "s1", "s2", "DualPI2", "10 Mbit/s"):
             self.assertIn(expected, labels)
+        for removed_note in ("دو جریان TCP", "گلوگاه دوسویه", "Linux", "qdisc", "P4"):
+            self.assertNotIn(removed_note, labels)
 
     def test_pair_shows_one_application_flow_and_one_single_background_route(self):
         labels = self.labels(draw_pair_topology)

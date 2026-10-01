@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create Persian thesis Figures 6--10 and their numerical summaries."""
+"""Create Persian or English thesis Figures 6--10 and summaries."""
 
 from __future__ import annotations
 
@@ -9,8 +9,6 @@ import hashlib
 import json
 from pathlib import Path
 
-import arabic_reshaper
-from bidi.algorithm import get_display
 import matplotlib
 import matplotlib.font_manager as font_manager
 import matplotlib.pyplot as plt
@@ -18,8 +16,10 @@ import numpy as np
 
 try:
     from thesis_topology import draw_coexistence_topology, draw_pair_topology
+    from thesis_localization import FigureLocalizer
 except ModuleNotFoundError:
     from tools.l4s.thesis_topology import draw_coexistence_topology, draw_pair_topology
+    from tools.l4s.thesis_localization import FigureLocalizer
 
 
 PCTS = (50.0, 95.0, 99.0, 99.9)
@@ -28,10 +28,11 @@ L4S = "#1976a3"
 CUBIC = "#d69b2d"
 INK = "#28323c"
 GRID = "#d8dde3"
+TEXT = FigureLocalizer("fa")
 
 
 def fa(text: str) -> str:
-    return get_display(arabic_reshaper.reshape(text))
+    return TEXT(text)
 
 
 def configure(font: Path) -> None:
@@ -54,6 +55,7 @@ def configure(font: Path) -> None:
 
 
 def save_figure(fig: plt.Figure, output: Path, stem: str) -> None:
+    stem = TEXT.stem(stem)
     for suffix in ("pdf", "svg", "png"):
         kwargs = {"dpi": 220} if suffix == "png" else {}
         fig.savefig(output / f"{stem}.{suffix}", bbox_inches="tight", **kwargs)
@@ -281,27 +283,7 @@ def figure_08(output: Path, cases: list[dict], summary: dict) -> None:
                        "p95_mean_ms": p95_means, "p95_low_ms": p95_low,
                        "p95_high_ms": p95_high, "p99_mean_ms": p99_means,
                        "p99_low_ms": p99_low, "p99_high_ms": p99_high}
-    # Each mode is a separate matched experiment: stack its foreground and
-    # aggregate Cubic throughput, rather than adding Classic and L4S together.
-    x = np.arange(len(counts)); width = .34
-    for offset, mode, color, label in ((-width / 2, "reno", CLASSIC, "Classic MoQ: Reno / Not-ECT"),
-                                       (width / 2, "prague", L4S, "L4S MoQ: Prague / ECT(1)")):
-        foreground = np.asarray(trade[mode]["foreground_mean_mbps"])
-        cubic = np.asarray(trade[mode]["cubic_aggregate_mean_mbps"])
-        # Normalize each matched stack to the configured 20 Mbit/s bottleneck.
-        # This removes small wire/payload accounting overshoots from the visual
-        # capacity comparison while preserving the measured composition.
-        total = foreground + cubic
-        scale = np.divide(20.0, total, out=np.ones_like(total), where=total > 0)
-        foreground_plot = foreground * scale
-        cubic_plot = cubic * scale
-        ax_t.bar(x + offset, foreground_plot, width, color=color, label=label)
-        ax_t.bar(x + offset, cubic_plot, width, bottom=foreground_plot, color=CUBIC,
-                 edgecolor=color, linewidth=1.0, alpha=.92,
-                 label="Background: TCP Cubic / Not-ECT" if mode == "reno" else "_nolegend_")
-    ax_t.set_xticks(x, counts); ax_t.set_xlabel(fa("تعداد جریان‌های Cubic"))
-    ax_t.set_ylabel(fa("گذردهی نرمال‌شده (مگابیت‌برثانیه)")); ax_t.set_ylim(0, 20.5)
-    style_axis(ax_t); bar_legend(ax_t, ncol=3)
+    plot_08_throughput(ax_t, trade, counts)
     ax_q.set_xticks(counts); ax_q.set_xlabel(fa("تعداد جریان‌های Cubic")); style_axis(ax_q)
     ax_q.set_ylabel(fa("تاخیر صف (میلی‌ثانیه)")); ax_q.legend(frameon=False, fontsize=8)
     fig.subplots_adjust(top=.80)
@@ -320,16 +302,12 @@ def plot_08_throughput(ax: plt.Axes, trade: dict[str, dict], counts: tuple[int, 
                                        (width / 2, "prague", L4S, "L4S MoQ: Prague / ECT(1)")):
         foreground = np.asarray(trade[mode]["foreground_mean_mbps"])
         cubic = np.asarray(trade[mode]["cubic_aggregate_mean_mbps"])
-        total = foreground + cubic
-        scale = np.divide(20.0, total, out=np.ones_like(total), where=total > 0)
-        foreground_plot = foreground * scale
-        cubic_plot = cubic * scale
-        ax.bar(x + offset, foreground_plot, width, color=color, label=label)
-        ax.bar(x + offset, cubic_plot, width, bottom=foreground_plot, color=CUBIC,
+        ax.bar(x + offset, foreground, width, color=color, label=label)
+        ax.bar(x + offset, cubic, width, bottom=foreground, color=CUBIC,
                edgecolor=color, linewidth=1.0, alpha=.92,
                label="Background: TCP Cubic / Not-ECT" if mode == "reno" else "_nolegend_")
     ax.set_xticks(x, counts); ax.set_xlabel(fa("تعداد جریان‌های Cubic"))
-    ax.set_ylabel(fa("گذردهی نرمال‌شده (مگابیت‌برثانیه)")); ax.set_ylim(0, 20.5)
+    ax.set_ylabel(fa("گذردهی (مگابیت‌برثانیه)")); ax.set_ylim(bottom=0)
     style_axis(ax); bar_legend(ax, ncol=3)
 
 
@@ -424,8 +402,26 @@ def figure_10(roots: list[Path], output: Path, summary: dict) -> None:
     summary["figure_10"]={"post_wrap_mean_ssim":{mode:float(matrices[mode][:,post].mean()) for mode in matrices},"per_repetition_cumulative_quality_crossover_ms":crossovers,"plotted_conservative_transition_marker_ms":marker*1000,"transition_marker_definition":"maximum across repetitions of the earliest post-wrap time after which cumulative L4S-minus-Classic SSIM area never becomes negative"}
 
 
-def write_captions(output: Path) -> None:
-    text="""# زیرنویس‌های پیشنهادی
+def write_captions(output: Path, language: str) -> None:
+    if language == "en":
+        text = """# Suggested captions
+
+**Topology for Figures 6--8.** This topology is used by Figures 6, 7, and 8. It shows the server and client hosts, switch s1, MoQ and Cubic flow directions, congestion controls, and the shared 20 Mbit/s bottleneck.
+
+**Figure 6.** Empirical cumulative distribution of direct queue delay at the DualPI2 bottleneck with one Cubic background flow. The p50, p95, p99, and p99.9 markers aggregate three repetitions.
+
+**Figure 7.** Prague and Cubic coexistence at the 20 Mbit/s bottleneck. Bars and curves show the mean of three repetitions; shaded regions show the minimum-to-maximum range.
+
+**Figure 8.** Throughput-delay trade-off with zero, one, two, and four Cubic flows. Cubic's offered rate is unlimited, but all flows traverse the shared 20 Mbit/s bottleneck.
+
+**Topology for Figures 9 and 10.** This topology is used by Figures 9 and 10. It shows the two-switch 3DGS path, two Cubic background flows, congestion controls, active 300 and 100 Mbit/s rate limits, and 20 ms RTT.
+
+**Figure 9.** Cumulative distribution of application-visible latency from 3D-object eligibility to receive completion over a fixed 45-second horizon. Objects not received remain in the render state and are excluded from the completion ECDF.
+
+**Figure 10.** View-quality recovery after the camera jump in the cyclic 50-degree trace. The dashed line marks the conservative end of Prague's transition based on the latest cumulative-quality crossover among three repetitions; the brief initial degradation is retained.
+"""
+    else:
+        text="""# زیرنویس‌های پیشنهادی
 
 **توپولوژی شکل‌های ۶ تا ۸.** این توپولوژی در شکل‌های ۶، ۷ و ۸ استفاده شده است. میزبان‌های server و client، سوئیچ s1، جهت جریان MoQ و جریان‌های Cubic، کنترل ازدحام و گلوگاه مشترک ۲۰ مگابیت‌برثانیه نشان داده شده‌اند.
 
@@ -441,17 +437,20 @@ def write_captions(output: Path) -> None:
 
 **شکل ۱۰.** بازیابی کیفیت دیدگاه پس از پرش دوربین در ردپای حلقوی ۵۰ درجه. خط‌چین پایان محافظه‌کارانه دوره گذار Prague را بر اساس آخرین نقطه گذار تجمعی کیفیت در سه تکرار نشان می‌دهد؛ افت کوتاه آغازین حذف نشده است.
 """
-    (output/"captions-fa.md").write_text(text,encoding="utf-8")
+    (output/f"captions-{language}.md").write_text(text,encoding="utf-8")
 
 
 def main() -> None:
+    global TEXT
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--network-root",type=Path,required=True); parser.add_argument("--l4s-root",type=Path,required=True)
     parser.add_argument("--font",type=Path,required=True); parser.add_argument("--output",type=Path,required=True)
+    parser.add_argument("--language", choices=("fa", "en"), default="fa")
     parser.add_argument("--write-captions", action="store_true",
-                        help="write captions-fa.md; disabled for plot-only regeneration")
-    args=parser.parse_args(); args.output.mkdir(parents=True,exist_ok=True); configure(args.font)
-    summary={"repetitions":3,"persian_font":str(args.font),"figure_titles":"omitted"}
+                        help="write localized captions; disabled for plot-only regeneration")
+    args=parser.parse_args(); TEXT = FigureLocalizer(args.language)
+    args.output.mkdir(parents=True,exist_ok=True); configure(args.font)
+    summary={"repetitions":3,"font":str(args.font),"language":args.language,"figure_titles":"omitted"}
     cases=network_cases(args.network_root); roots=pair_roots(args.l4s_root)
     fig, axis = plt.subplots(figsize=(8.5, 2.4)); draw_coexistence_topology(axis, fa)
     save_figure(fig, args.output, "topology-for-figures-06-08-fa")
@@ -460,7 +459,7 @@ def main() -> None:
     figure_06(args.network_root,args.output,summary); figure_07(args.network_root,args.output,cases,summary); figure_08(args.output,cases,summary)
     figure_09(roots,args.output,summary); figure_10(roots,args.output,summary)
     if args.write_captions:
-        write_captions(args.output)
+        write_captions(args.output, args.language)
     (args.output/"numerical-summary.json").write_text(json.dumps(summary,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
     trace=args.l4s_root/"3dgs-preparation/bicycle-start7p8-wrap7-fov50.json"; scene=args.l4s_root/"3dgs-preparation/scene.bundle"
     checksums={str(path):hashlib.sha256(path.read_bytes()).hexdigest() for path in (trace,scene)}

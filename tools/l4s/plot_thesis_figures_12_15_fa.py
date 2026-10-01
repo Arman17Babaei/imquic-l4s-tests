@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create Persian thesis Figures 12--15 from stored evidence and theory."""
+"""Create Persian or English thesis Figures 12--15 from stored evidence."""
 
 from __future__ import annotations
 
@@ -18,16 +18,10 @@ import numpy as np
 
 try:
     from thesis_topology import draw_pair_topology, draw_spectrum_topology
+    from thesis_localization import FigureLocalizer
 except ModuleNotFoundError:
     from tools.l4s.thesis_topology import draw_pair_topology, draw_spectrum_topology
-
-try:
-    import arabic_reshaper
-    from bidi.algorithm import get_display
-except ModuleNotFoundError as error:
-    raise SystemExit(
-        "Persian shaping dependencies are required: pip install arabic-reshaper python-bidi"
-    ) from error
+    from tools.l4s.thesis_localization import FigureLocalizer
 
 
 RATE_BPS = 100_000_000.0
@@ -45,10 +39,11 @@ LABELS = {
     0.5: "دو جریان، ۵۰٪ L4S", 0.75: "دو جریان، ۷۵٪ L4S",
     1.0: "تک‌جریان L4S (مبنا)",
 }
+TEXT = FigureLocalizer("fa")
 
 
 def fa(text: str) -> str:
-    return get_display(arabic_reshaper.reshape(text))
+    return TEXT(text)
 
 
 def configure(font: Path) -> None:
@@ -83,6 +78,7 @@ def sha256(path: Path) -> str:
 
 
 def save(fig: plt.Figure, output: Path, stem: str) -> None:
+    stem = TEXT.stem(stem)
     for suffix in ("pdf", "svg", "png"):
         fig.savefig(output / f"{stem}.{suffix}", bbox_inches="tight",
                     dpi=240 if suffix == "png" else None)
@@ -292,23 +288,28 @@ def bound_ms(initial_bdp: np.ndarray, lead_rtt: np.ndarray) -> np.ndarray:
     return RTT_MS * np.maximum(initial_bdp - lead_rtt, 0.0)
 
 
+def plot_13_gain_bound(axis: plt.Axes) -> tuple[np.ndarray, np.ndarray]:
+    serialization_ms = np.linspace(0, CONTROL_MAX * RTT_MS, 81)
+    gain_ms = serialization_ms.copy()
+    axis.plot(serialization_ms, gain_ms, color="#1b7f5b", linewidth=2.5)
+    axis.fill_between(serialization_ms, 0, gain_ms, color="#1b7f5b", alpha=.13)
+    axis.set_xlabel(fa("B / پهنای‌باند (میلی‌ثانیه)"))
+    axis.set_ylabel(fa("بیشینه سود ممکن (میلی‌ثانیه)"))
+    axis.text(.98, .06, fa("حد تحلیلی؛ نه اندازه‌گیری شبکه"), transform=axis.transAxes,
+              ha="right", fontsize=9, color="#8b3a3a")
+    axis.set_xlim(0, 80); axis.set_ylim(0, 84); style(axis)
+    return serialization_ms, gain_ms
+
+
 def figure13(output: Path) -> dict:
-    backlog = np.linspace(0, CONTROL_MAX, 81)
-    gain = bound_ms(backlog, np.zeros_like(backlog))
     fig, ax = plt.subplots(figsize=(6.8, 4.2))
-    ax.plot(backlog, gain, color="#1b7f5b", linewidth=2.5)
-    ax.fill_between(backlog, 0, gain, color="#1b7f5b", alpha=.13)
-    ax.set_xlabel(fa("باقی‌مانده داده کم‌اولویت، B / BDP"))
-    ax.set_ylabel(fa("بیشینه صرفه‌جویی ممکن (میلی‌ثانیه)"))
-    ax.text(.98, .06, fa("حد تحلیلی؛ نه اندازه‌گیری شبکه"), transform=ax.transAxes,
-            ha="right", fontsize=9, color="#8b3a3a")
-    ax.set_xlim(0, 4); ax.set_ylim(0, 84); style(ax)
+    serialization_ms, gain_ms = plot_13_gain_bound(ax)
     save(fig, output, "figure-13-gain-vs-residual-backlog-fa")
-    values = [{"backlog_bdp": float(value), "upper_bound_gain_ms": float(bound)}
-              for value, bound in zip(backlog, gain)]
+    values = [{"serialization_time_ms": float(value), "upper_bound_gain_ms": float(bound)}
+              for value, bound in zip(serialization_ms, gain_ms)]
     write_csv(output / "figure-13-summary.csv", list(values[0]), values)
     return {"claim_type": "analytical_counterfactual_upper_bound",
-            "formula": "gain_max_ms = RTT_ms * B_over_BDP", "rtt_ms": RTT_MS}
+            "formula": "gain_max_ms = B_bytes / bandwidth_bytes_per_ms"}
 
 
 def applicability_surface(points: int = 161) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -316,6 +317,14 @@ def applicability_surface(points: int = 161) -> tuple[np.ndarray, np.ndarray, np
     lead = np.linspace(0, CONTROL_MAX, points)
     xx, yy = np.meshgrid(initial, lead)
     return xx, yy, bound_ms(xx, yy)
+
+
+def applicability_surface_ms(points: int = 161) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    maximum_ms = CONTROL_MAX * RTT_MS
+    serialization = np.linspace(0, maximum_ms, points)
+    lead = np.linspace(0, maximum_ms, points)
+    xx, yy = np.meshgrid(serialization, lead)
+    return xx, yy, np.maximum(xx - yy, 0.0)
 
 
 def draw_heatmap(axis: plt.Axes, *, colorbar: bool, fig: plt.Figure):
@@ -331,16 +340,31 @@ def draw_heatmap(axis: plt.Axes, *, colorbar: bool, fig: plt.Figure):
     return image
 
 
+def draw_heatmap_ms(axis: plt.Axes, *, colorbar: bool, fig: plt.Figure):
+    xx, yy, gain = applicability_surface_ms()
+    maximum_ms = CONTROL_MAX * RTT_MS
+    image = axis.pcolormesh(xx, yy, gain, shading="auto", cmap="YlGnBu",
+                            vmin=0, vmax=maximum_ms)
+    axis.plot([0, maximum_ms], [0, maximum_ms], color="white", linestyle=":",
+              linewidth=1.3, label=fa("مرز تخلیه کامل"))
+    axis.set_xlim(0, maximum_ms); axis.set_ylim(0, maximum_ms)
+    axis.set_xlabel(fa("B0 / پهنای‌باند (میلی‌ثانیه)"))
+    axis.set_ylabel(fa("فاصله تا تغییر اولویت (میلی‌ثانیه)"))
+    if colorbar:
+        fig.colorbar(image, ax=axis, label=fa("بیشینه سود ممکن (میلی‌ثانیه)"))
+    return image
+
+
 def figure14(output: Path) -> dict:
     fig, ax = plt.subplots(figsize=(6.6, 5.0))
-    draw_heatmap(ax, colorbar=True, fig=fig)
+    draw_heatmap_ms(ax, colorbar=True, fig=fig)
     ax.legend(frameon=False, loc="upper left")
     ax.text(.98, .04, fa("مدل تخلیه با نرخ گلوگاه"), transform=ax.transAxes,
             ha="right", color="white", fontsize=9)
     save(fig, output, "figure-14-applicability-region-fa")
     return {"claim_type": "analytical_counterfactual_upper_bound",
-            "formula": "gain_max_ms = RTT_ms * max(B0_over_BDP - delta_t_over_RTT, 0)",
-            "domain": {"initial_backlog_bdp": [0, 4], "lead_rtt": [0, 4]}}
+            "formula": "gain_max_ms = max(B0_over_bandwidth_ms - delta_t_ms, 0)",
+            "domain": {"backlog_serialization_ms": [0, 80], "lead_ms": [0, 80]}}
 
 
 def pair_roots(root: Path) -> list[Path]:
@@ -493,16 +517,19 @@ def figure15(pair_root: Path, output: Path) -> tuple[dict, list[dict]]:
 
 
 def main() -> None:
+    global TEXT
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--spectrum-root", type=Path, required=True)
     parser.add_argument("--pair-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--font", type=Path, default=Path("fonts/XB Niloofar.ttf"))
+    parser.add_argument("--language", choices=("fa", "en"), default="fa")
     parser.add_argument("--write-captions", action="store_true",
-                        help="write captions-fa.md; disabled for plot-only regeneration")
+                        help="write localized captions; disabled for plot-only regeneration")
     args = parser.parse_args()
+    TEXT = FigureLocalizer(args.language)
     if not args.font.is_file():
-        raise SystemExit(f"missing Persian font: {args.font}")
+        raise SystemExit(f"missing figure font: {args.font}")
     args.output.mkdir(parents=True, exist_ok=True)
     configure(args.font)
     fig, axis = plt.subplots(figsize=(9.2, 2.5)); draw_spectrum_topology(axis, fa)
@@ -524,27 +551,37 @@ def main() -> None:
     }
     (args.output / "figures-12-15-summary.json").write_text(json.dumps(summary, indent=2) + "\n")
     if args.write_captions:
-        (args.output / "captions-fa.md").write_text(
+        captions = (
+            "# Figures 12--15 captions\n\n"
+            "- **Figure 12 topology:** Used only for Figure 12. It shows the hosts, two switches, 3DGS and Reno background paths, congestion controls, active 300 and 50 Mbit/s rates, and 20 ms RTT.\n"
+            "- **Figure 12:** The same fixed fraction of important bytes is tracked for every method. Objects not received within 30 seconds are censored rather than dropped. The line is the median of two repetitions and the band is their range.\n"
+            "- **Figure 13:** Counterfactual upper bound on the saving if B's competing effect were removed completely. This is an analytical curve without an experimental topology or congestion control.\n"
+            "- **Figure 14:** Analytical upper bound over B0 and lead time, assuming drainage at the bottleneck rate. This map is not a network measurement and has no experimental topology.\n"
+            "- **Figure 15 topology:** Used only for Figure 15. It shows the two-switch Prague/ECT(1) path, two Cubic flows, and active 300 and 100 Mbit/s rates.\n"
+            "- **Figure 15:** Real 3DGS events, aggregated as the median of three repetitions, are overlaid on the analytical region; the second panel shows the actual residual-backlog distribution.\n"
+            if args.language == "en" else
             "# شرح شکل‌های ۱۲ تا ۱۵\n\n"
             "- **توپولوژی شکل ۱۲:** این توپولوژی فقط در شکل ۱۲ استفاده شده است. میزبان‌ها، دو سوئیچ، مسیرهای 3DGS و پس‌زمینه Reno، کنترل ازدحام، نرخ‌های ۳۰۰ و ۵۰ مگابیت‌برثانیه و RTT برابر ۲۰ میلی‌ثانیه نشان داده شده‌اند.\n"
             "- **شکل ۱۲:** درصد ثابت و یکسانی از بایت‌های مهم برای همه روش‌ها دنبال می‌شود؛ اشیای نرسیده تا ۳۰ ثانیه سانسور می‌شوند و حذف نمی‌شوند. خط، میانه دو تکرار و ناحیه، بازه آن‌هاست.\n"
             "- **شکل ۱۳:** حد بالای پادواقعی صرفه‌جویی اگر اثر رقابتی B کاملاً حذف شود؛ این منحنی تحلیلی است و توپولوژی یا کنترل ازدحام تجربی ندارد.\n"
             "- **شکل ۱۴:** حد بالای تحلیلی در فضای B₀ و Δt با فرض تخلیه در نرخ گلوگاه؛ این نگاشت اندازه‌گیری شبکه نیست و توپولوژی تجربی ندارد.\n"
             "- **توپولوژی شکل ۱۵:** این توپولوژی فقط در شکل ۱۵ استفاده شده است. مسیر دوسوئیچ Prague/ECT(1)، دو جریان Cubic و نرخ‌های فعال ۳۰۰ و ۱۰۰ مگابیت‌برثانیه نشان داده شده‌اند.\n"
-            "- **شکل ۱۵:** رخدادهای واقعی 3DGS پس از تجمیع میانه سه تکرار روی ناحیه تحلیلی قرار گرفته‌اند و پنل دوم توزیع باقی‌مانده واقعی را نشان می‌دهد.\n")
+            "- **شکل ۱۵:** رخدادهای واقعی 3DGS پس از تجمیع میانه سه تکرار روی ناحیه تحلیلی قرار گرفته‌اند و پنل دوم توزیع باقی‌مانده واقعی را نشان می‌دهد.\n"
+        )
+        (args.output / f"captions-{args.language}.md").write_text(captions)
     verification = {
         "all_four_figures_present": all(
-            (args.output / f"figure-{number:02d}-{stem}.pdf").is_file()
+            (args.output / TEXT.stem(f"figure-{number:02d}-{stem}.pdf")).is_file()
             for number, stem in ((12, "single-sender-vs-differentiated-fa"),
                                  (13, "gain-vs-residual-backlog-fa"),
                                  (14, "applicability-region-fa"),
                                  (15, "real-3dgs-applicability-fa"))),
         "all_topology_figures_present": all(
-            (args.output / name).is_file()
+            (args.output / TEXT.stem(name)).is_file()
             for name in ("topology-for-figure-12-fa.pdf",
                          "topology-for-figure-15-fa.pdf")),
         "all_split_panel_figures_present": all(
-            (args.output / name).is_file()
+            (args.output / TEXT.stem(name)).is_file()
             for name in ("figure-12-a-release-relative-completion-fa.pdf",
                          "figure-12-b-wall-clock-completion-fa.pdf",
                          "figure-15-a-applicability-fa.pdf",
@@ -554,7 +591,8 @@ def main() -> None:
         "figure_13_14_claim_type": "analytical_counterfactual_upper_bound",
         "figure_15_unique_events": fig15["unique_events"],
         "spectrum_roots_accepted": sum(row["accepted"] for row in spectrum_audit),
-        "persian_shaping": True,
+        "language": args.language,
+        "persian_shaping": args.language == "fa",
     }
     (args.output / "verification-summary.json").write_text(json.dumps(verification, indent=2) + "\n")
     artifacts = {path.name: sha256(path) for path in sorted(args.output.iterdir())

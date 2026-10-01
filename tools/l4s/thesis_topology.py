@@ -87,7 +87,7 @@ def draw_coexistence_topology(axis: Axes, fa: Callable[[str], str]) -> None:
               ha="center", va="center", fontsize=7.1, color=CLASSIC)
     axis.text(.50, .80, "L4S MoQ: server -> s1 -> client; Prague / ECT(1)",
               ha="center", va="center", fontsize=7.1, color=L4S)
-    axis.text(.50, .20, fa("پس‌زمینه") + ": bg_src -> s1 -> bg_sink؛ " +
+    axis.text(.50, .20, fa("پس‌زمینه") + ": bg_src -> s1 -> bg_sink" + fa("؛") + " " +
               "0/1/2/4 × TCP Cubic / Not-ECT",
               ha="center", va="center", fontsize=6.8, color=CUBIC)
 
@@ -95,35 +95,25 @@ def draw_coexistence_topology(axis: Axes, fa: Callable[[str], str]) -> None:
 def draw_dualpi2_validation_topology(axis: Axes, fa: Callable[[str], str]) -> None:
     """Figures 3--4: two competing TCP flows through a shared DualPI2 link."""
     _base(axis)
-    _node(axis, .10, .68, .19, .22,
-          "h1\n10.0.0.1\nPrague / ECT(1) / TCP 5301", fontsize=6.7)
-    _node(axis, .10, .32, .19, .22,
-          "h2\n10.0.0.2\nReno / ECT(0) / TCP 5302", fontsize=6.7)
-    _node(axis, .37, .50, .20, .33,
-          fa("سوییچ s1") + "\nDualPI2 " + fa("روی خروجی"),
-          switch=True, fontsize=7.2)
-    _node(axis, .63, .50, .20, .33,
-          fa("سوییچ s2") + "\nDualPI2 " + fa("روی خروجی"),
-          switch=True, fontsize=7.2)
-    _node(axis, .90, .50, .19, .22,
-          "server\n10.0.0.3\niperf3 " + fa("گیرنده"), fontsize=6.8)
+    _node(axis, .10, .70, .21, .32,
+          "h1\n10.0.0.1\nPrague / ECT(1)\nTCP 5301", fontsize=9.2)
+    _node(axis, .10, .30, .21, .32,
+          "h2\n10.0.0.2\nReno / ECT(0)\nTCP 5302", fontsize=9.2)
+    _node(axis, .37, .50, .21, .40,
+          fa("سوییچ s1") + "\nDualPI2 " + fa("روی خروجی") + "\n10 Mbit/s",
+          switch=True, fontsize=9.6)
+    _node(axis, .63, .50, .21, .40,
+          fa("سوییچ s2") + "\nDualPI2 " + fa("روی خروجی") + "\n10 Mbit/s",
+          switch=True, fontsize=9.6)
+    _node(axis, .90, .50, .20, .27,
+          "server\n10.0.0.3\niperf3 " + fa("گیرنده"), fontsize=9.2)
 
     # Both coloured routes are concurrent TCP flows.  They share the central
     # bidirectional bottleneck but retain their endpoint/controller identity.
-    for y, color in ((.57, L4S), (.43, CLASSIC)):
-        _arrow(axis, (.195, .68 if color == L4S else .32), (.27, y), color=color)
-        _arrow(axis, (.47, y), (.53, y), color=color)
-        _arrow(axis, (.73, y), (.805, y), color=color)
-
-    axis.text(.50, .88,
-              fa("دو جریان TCP هم‌زمان از گلوگاه میان‌سوییچی مشترک عبور می‌کنند"),
-              ha="center", va="center", fontsize=7.4, color=INK)
-    axis.text(.94, .25,
-              fa("گلوگاه دوسویهٔ مشترک میان s1 و s2 با ظرفیت 10 Mbit/s در هر جهت"),
-              ha="right", va="center", fontsize=7.7, color=INK)
-    axis.text(.94, .14,
-              fa("در Linux، شکل‌دهی و AQM با qdisc اجرا می‌شود؛ در P4، برنامهٔ P4 روی هر دو سوییچ اجرا می‌شود"),
-              ha="right", va="center", fontsize=7.0, color=INK)
+    for y, color in ((.59, L4S), (.41, CLASSIC)):
+        _arrow(axis, (.205, .70 if color == L4S else .30), (.265, y), color=color)
+        _arrow(axis, (.475, y), (.525, y), color=color)
+        _arrow(axis, (.735, y), (.80, y), color=color)
 
 
 def draw_pair_topology(axis: Axes, fa: Callable[[str], str], *,
@@ -171,7 +161,7 @@ def draw_pair_topology(axis: Axes, fa: Callable[[str], str], *,
               fa("یک جریان 3DGS") + ": server -> s1 -> s2 -> client",
               ha="center", va="center", fontsize=8.0, color=INK)
     axis.text(.50, .025,
-              fa("جریان پس‌زمینه") + ": bg_src -> s1 -> s2 -> bg_sink؛ " +
+              fa("جریان پس‌زمینه") + ": bg_src -> s1 -> s2 -> bg_sink" + fa("؛") + " " +
               "TCP Cubic / Not-ECT; RTT = 20 ms",
               ha="center", va="center", fontsize=7.0, color=INK)
 
