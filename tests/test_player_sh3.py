@@ -11,9 +11,43 @@ from plyfile import PlyData, PlyElement
 SPEC = importlib.util.spec_from_file_location('prepare_player_sh3', Path(__file__).resolve().parents[1] / 'tools/l4s/prepare_player_sh3.py')
 MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(MODULE)
+CONVERT_SPEC = importlib.util.spec_from_file_location('convert_ply', Path(__file__).resolve().parents[1] / 'tools/l4s/convert_3dgs_ply_to_splat.py')
+CONVERTER = importlib.util.module_from_spec(CONVERT_SPEC)
+CONVERT_SPEC.loader.exec_module(CONVERTER)
 
 
 class PlayerSh3Tests(unittest.TestCase):
+    def test_compatibility_splat_export_is_globally_opacity_ordered(self):
+        names = ['x', 'y', 'z', 'nx', 'ny', 'nz'] + [f'f_dc_{i}' for i in range(3)] + [f'f_rest_{i}' for i in range(45)] + ['opacity'] + [f'scale_{i}' for i in range(3)] + [f'rot_{i}' for i in range(4)]
+        data = np.zeros(3, dtype=[(name, '<f4') for name in names])
+        data['x'] = [1, 2, 3]; data['opacity'] = [1, -2, 3]; data['rot_0'] = 1
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); source, target = root / 'scene.ply', root / 'scene.splat'
+            PlyData([PlyElement.describe(data, 'vertex')], text=False).write(source)
+            metadata = CONVERTER.convert(source, target, chunk_size=1, part_splats=0)
+            self.assertEqual(metadata['gaussian_count'], 3)
+            self.assertEqual([struct.unpack_from('<f', target.read_bytes(), i * 32)[0] for i in range(3)], [3, 1, 2])
+            self.assertEqual(metadata['ordering'], 'opacity-descending-stable-source-order')
+
+    def test_default_export_keeps_four_opacity_quarters_and_scene_identity(self):
+        names = ['x', 'y', 'z', 'opacity'] + [f'f_dc_{i}' for i in range(3)] + [f'f_rest_{i}' for i in range(45)] + [f'scale_{i}' for i in range(3)] + [f'rot_{i}' for i in range(4)]
+        data = np.zeros(8, dtype=[(name, '<f4') for name in names])
+        data['x'] = np.arange(8); data['opacity'] = np.arange(8); data['rot_0'] = 1
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory); source = root / 'garden.ply'
+            PlyData([PlyElement.describe(data, 'vertex')], text=False).write(source)
+            manifest = MODULE.export_scene(source, root / 'export', grid=(1, 1, 1))
+            self.assertEqual(manifest['scene']['id'], 'garden')
+            self.assertEqual(manifest['progression']['layer_fractions'], [.25, .25, .25, .25])
+            seen = []
+            for layer in manifest['tiles'][0]['refinements']:
+                payload = (root / 'export' / layer['file']).read_bytes()
+                header = struct.unpack_from('<10I', payload)
+                cursor = 40 + header[3] + header[4]
+                count = struct.unpack_from('<I', payload, cursor)[0] // 4
+                seen.extend(np.frombuffer(payload, '<u4', count=count, offset=cursor + 4).tolist())
+            self.assertEqual(seen, [7, 6, 5, 4, 3, 2, 1, 0])
+
     def test_adaptive_tiles_bound_fetch_granularity_and_preserve_every_source_id(self):
         names = ['x', 'y', 'z', 'opacity'] + [f'f_dc_{i}' for i in range(3)] + [f'f_rest_{i}' for i in range(45)] + [f'scale_{i}' for i in range(3)] + [f'rot_{i}' for i in range(4)]
         data = np.zeros(20, dtype=[(name, '<f4') for name in names])

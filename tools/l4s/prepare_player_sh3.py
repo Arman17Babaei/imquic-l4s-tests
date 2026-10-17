@@ -40,9 +40,13 @@ def encode_object(vertices, indices, tile: str, layer: int, object_id: int) -> b
                        layer, object_id, count, 3, len(payload)) + payload
 
 
-def export_scene(source: Path, output: Path, grid=(10, 10, 3), fractions=(.1, .2, .3, .4), chunk=256, max_tile_gaussians: int | None = None):
+def export_scene(source: Path, output: Path, grid=(10, 10, 3), fractions=(.25, .25, .25, .25), chunk=256, max_tile_gaussians: int | None = None):
     if output.exists():
         raise ValueError('output must not exist; preserve earlier evidence')
+    if len(grid) != 3 or any(value < 1 for value in grid):
+        raise ValueError('grid dimensions must be positive')
+    if len(fractions) != 4 or any(value <= 0 for value in fractions) or not np.isclose(sum(fractions), 1):
+        raise ValueError('four positive layer fractions summing to one required')
     vertices = PlyData.read(source, mmap='r')['vertex'].data
     if not len(vertices) or not 1 <= chunk <= 256:
         raise ValueError('nonempty scene and chunk size 1..256 required (64 KiB object budget)')
@@ -99,14 +103,14 @@ def export_scene(source: Path, output: Path, grid=(10, 10, 3), fractions=(.1, .2
                         'sha256': hashlib.sha256(encoded).hexdigest()})
                     offset += len(encoded)
             layers.append({'index': layer, 'name': 'base' if layer == 0 else f'enhancement{layer}',
-                'file': file_name, 'track': f'bicycle/{tile_id}/refinement/{layer}', 'gaussian_count': len(selected),
+                'file': file_name, 'track': f'{source.stem}/{tile_id}/refinement/{layer}', 'gaussian_count': len(selected),
                 'bytes': offset, 'object_count': object_count, 'object_bytes': max((o['bytes'] for o in descriptions), default=0),
                 'objects': descriptions, 'sha256': digest.hexdigest(), 'fraction': fractions[layer]})
         tiles.append({'id': tile_id, 'grid_index': grid_index, 'min': low.tolist(), 'max': high.tolist(),
             'centroid': ((low + high) / 2).tolist(), 'gaussian_count': len(indices), 'refinements': layers})
     center = (bounds_min + bounds_max) / 2
     manifest = {'schema_version': 2, 'payload_encoding': 'gsp2', 'coordinate_system': 'source',
-        'scene': {'id': 'bicycle', 'source_sha256': sha256_file(source), 'source_gaussian_count': len(vertices),
+        'scene': {'id': source.stem, 'source_sha256': sha256_file(source), 'source_gaussian_count': len(vertices),
             'sampling': 'full', 'splat_size': 240, 'gaussian_count': len(vertices), 'min': bounds_min.tolist(),
             'max': bounds_max.tolist(), 'center': center.tolist(), 'radius': float(np.linalg.norm(bounds_max - bounds_min) / 2)},
         'tiling': {'type': 'adaptive-aabb-grid' if max_tile_gaussians else 'uniform-aabb-grid', 'dimensions': list(grid), 'occupied_tiles': len(tiles), 'max_gaussians_per_tile': max_tile_gaussians},
@@ -122,10 +126,11 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--chunk-gaussians', type=int, default=256)
     parser.add_argument('--max-tile-gaussians', type=int)
+    parser.add_argument('--grid', default='10x10x3', help='Spatial grid, e.g. 10x10x3')
     args = parser.parse_args()
     if not args.output.resolve().is_relative_to(Path(__file__).resolve().parents[2] / 'results'):
         parser.error('output must be under results/')
-    export_scene(args.source, args.output, chunk=args.chunk_gaussians, max_tile_gaussians=args.max_tile_gaussians)
+    export_scene(args.source, args.output, grid=tuple(map(int, args.grid.split('x'))), chunk=args.chunk_gaussians, max_tile_gaussians=args.max_tile_gaussians)
 
 
 if __name__ == '__main__':

@@ -47,6 +47,10 @@ def convert(source: Path, output: Path, chunk_size: int, part_splats: int) -> di
     if source.stat().st_size != header_bytes + count * record_bytes:
         raise ValueError("PLY size does not match its vertex declaration")
     vertices = np.memmap(source, dtype="<f4", mode="r", offset=header_bytes, shape=(count, len(EXPECTED_PROPERTIES)))
+    # MoQSplat-style importance ordering. Stable ties preserve source order;
+    # no Gaussian is pruned. Higher SH is preserved by prepare_player_sh3.py,
+    # since the compatibility 32-byte SPLAT layout has no fields for it.
+    order = np.argsort(-vertices[:, 54], kind="stable")
     output.parent.mkdir(parents=True, exist_ok=True)
     digest = hashlib.sha256()
     minimum = np.full(3, np.inf)
@@ -66,7 +70,7 @@ def convert(source: Path, output: Path, chunk_size: int, part_splats: int) -> di
                 part_count = 0
                 parts.append({"path": part_path.name, "gaussian_count": 0})
             take = min(chunk_size, count - start, part_splats - part_count if part_splats > 0 else chunk_size)
-            values = np.asarray(vertices[start:start + take])
+            values = np.asarray(vertices[order[start:start + take]])
             positions = values[:, 0:3]
             scales = np.exp(values[:, 55:58]).astype("<f4")
             colors = np.clip((values[:, 6:9] * SH_C0 + 0.5) * 255, 0, 255).astype(np.uint8)
@@ -94,6 +98,7 @@ def convert(source: Path, output: Path, chunk_size: int, part_splats: int) -> di
     total_bytes = sum((output.parent / str(part["path"])).stat().st_size for part in parts)
     return {"gaussian_count": count, "bytes": total_bytes, "sha256": digest.hexdigest(), "parts": parts,
             "min": minimum.tolist(), "max": maximum.tolist(), "representation": "antimatter15-splat",
+            "ordering": "opacity-descending-stable-source-order",
             "preserved": ["position", "scale", "rotation", "opacity", "dc_color"], "omitted": ["sh1", "sh2", "sh3"]}
 
 
