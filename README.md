@@ -208,6 +208,12 @@ python3 tools/l4s/run_camera_trace_player.py \
   --format all
 ```
 
+The same launcher replaces the older MVP loopback demo and separate validation
+launcher. For a software-rendered native MoQ smoke, use `--no-record --headless
+--gpu-mode software` with a prepared manifest and trace. The distinct
+`make priority-audit-loopback-check` gate remains available for native accepted
+priority-update validation.
+
 Use `--no-dye --no-record` when their rendering overhead is unwanted. Recorded
 playback is explicitly visualization evidence and must not be treated as a
 network-performance result.

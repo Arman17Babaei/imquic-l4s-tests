@@ -67,3 +67,24 @@ HTTP fixed-frame launcher, verifies a saved image and software renderer, and
 checks that browser failure telemetry survives an unwritable failure screenshot.
 A timing-sensitive frame assertion now waits for settled captures before
 comparing streamed and one-shot images. No QEMU runtime acceptance is claimed.
+
+## Retired MVP demo and probe
+
+Removed `run_priority_moq_loopback.py`, `priority_moq_browser_probe.mjs`, and
+their two dedicated tests. Their replacement is the consolidated launcher:
+use a prepared manifest and camera trace with `--transport moqt
+--network-path loopback --no-record --headless --gpu-mode software`. The
+priority-audit loopback gate is retained because it validates accepted
+scheduling updates rather than browser playback alone.
+
+The preservation audit inspected 19 metadata files across all six promoted
+records. Its conservative source/import closure contains 59 files from 48
+evidence/figure roots; none of the three retired tools appears in that closure.
+The local audit is saved in `results/branch-cleanup/evidence-dependencies.json`.
+
+Both reordering workload modules remain imported. The historical camera-priority
+runner supports a retained negative result. Coexistence and Reno runners,
+fetch-concurrency diagnostics, backlog/bounds analysis, and Persian/English
+figure generators remain available for retained or candidate thesis evidence.
+Older optional native/deadline/training paths have no confirmed replacement and
+are retained rather than inferred obsolete from age or naming.
