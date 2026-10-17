@@ -1,12 +1,12 @@
 [submodule "deps/imquic"]
 	path = deps/imquic
 	url = https://github.com/Arman17Babaei/imquic.git
-	branch = imquic-l4s-prague
+	branch = main
 [submodule "deps/picoquic"]
 	path = deps/picoquic
 	url = https://github.com/Arman17Babaei/picoquic.git
-	branch = prague-params
+	branch = master
 [submodule "deps/gaussian-player"]
 	path = deps/gaussian-player
 	url = https://github.com/Arman17Babaei/gaussian-player.git
-	branch = feat/abr-moq-adapter
+	branch = main
