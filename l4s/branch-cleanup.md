@@ -98,3 +98,25 @@ and SHA-256 hashes; every archived hash was verified after moving. Open file
 descriptors were checked before moving. The harness and picoquic now ignore
 `*.qlog`, keeping future generated diagnostics out of source status. No retained
 result data was deleted and no existing services were stopped.
+
+## Final verification
+
+- Fresh local `npm ci` followed by `make cpu-check`: PASS in 45.50 seconds,
+  including all four SwiftShader playback cases, the HTTP launcher capture,
+  and failure telemetry preservation. The target uses simulated native delivery.
+- `make analyzer-check`, `make camera-trace-player-check`, and the two CPU SH3
+  export regressions: PASS. Native transport tests passed before the baseline;
+  subsequent transport changes are limited to ignoring generated qlogs.
+- All 59 preserved source dependencies still exist; all five retired source/test
+  files are absent. No live source, README, or Make target references a retired
+  launcher/probe. Python sources parse successfully.
+- Fresh-context read-only review found no important cleanup regressions.
+- Harness and changed submodule source worktrees are clean after commits. No
+  branch is pushed or merged. Existing endpoints and retained evidence remain
+  untouched. QEMU/Mininet runtime behavior and exact CUDA reference quality
+  were not revalidated by this cleanup.
+
+The cleanup is intentionally conservative: it removes three confirmed duplicate
+tools and two obsolete tests, rather than treating every older experiment as
+deprecated. The baseline and each retirement group remain separately reversible
+in Git.
