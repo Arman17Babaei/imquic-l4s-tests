@@ -6,7 +6,7 @@ This repository owns the PLY-to-splats, configurable QEMU topology, Gaussian pla
 
 ## Build, Test, and Development Commands
 
-- `make init` initializes the two required submodules.
+- `make init` initializes the three required submodules.
 - `make cpu-check` builds the player and runs focused Python/browser/bridge checks using forced SwiftShader.
 - `make camera-trace-player-check` additionally checks native source syntax and the C sidecar unit fixture.
 - `make experiment-record-check` checks run provenance metadata.
@@ -15,7 +15,7 @@ This repository owns the PLY-to-splats, configurable QEMU topology, Gaussian pla
 - Edit `tools/l4s/player_topology.py` directly to configure the guest graph, link rates, delay and DualPI2 queues.
 - Launch video/quality runs with `tools/l4s/run_camera_trace_player.py`; see `README.md` for commands.
 
-Set `JOBS`, for example `make build JOBS=8`, to control build parallelism. Consult `l4s/validation-report.md` before using the QEMU wrapper.
+Set `JOBS`, for example `make build JOBS=8`, to control build parallelism. Consult `README.md` before using the QEMU wrapper; reports under `l4s/` describe historical experiments.
 
 ## Coding Style & Naming Conventions
 

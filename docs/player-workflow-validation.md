@@ -49,3 +49,12 @@ training/CUDA tooling and their dedicated tests/docs. The earlier analyzer resul
 above describes the pre-pruning tree. Recover historical source from `d7d6cab`;
 stored evidence under `l4s/` and `results/` remains unchanged. The earlier
 branch-wide usefulness inventory remains in `results/file-review/`.
+
+After pruning, `make cpu-check` passed in 53.57 seconds. All 29 retained Python
+checks passed in the NumPy/plyfile environment; native syntax/sidecar checks and
+`make priority-audit-loopback-check` passed. The latter verified accepted
+scheduling updates with 131,072 synthetic splats over native loopback. QEMU
+remains unrun. Active imports, Make targets and documentation links were checked;
+independent review found no blocking cleanup regressions. The source tree now
+contains 19 pipeline tools and ten test files. Historical source is recoverable
+at `d7d6cab`; no new maintenance or archival source hierarchy was added.

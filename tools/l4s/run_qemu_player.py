@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the privileged IMQUIC Prague test in an ephemeral QEMU overlay."""
+"""Run the Gaussian player transport in an ephemeral QEMU overlay."""
 
 import argparse
 import base64
@@ -205,11 +205,11 @@ def main():
         "--guest-timeout", type=int, default=1800,
         help="seconds to allow the guest provisioning and test command (default: 1800)",
     )
-    parser.add_argument("--make-target", default="l4s-timeseries-guest-check")
+    parser.add_argument("--make-target", default="l4s-camera-player-guest-check")
     parser.add_argument("--guest-result-name", default="qemu-run")
     parser.add_argument("--guest-result-root", default="results/l4s")
     parser.add_argument("--destination-root", default="results/l4s")
-    parser.add_argument("--destination-prefix", default="qemu-timeseries")
+    parser.add_argument("--destination-prefix", default="qemu-player")
     parser.add_argument("--make-variable", action="append", default=[])
     parser.add_argument("--allow-dirty", action="store_true")
     parser.add_argument(
@@ -262,7 +262,6 @@ def main():
         source_archive = temporary / "imquic.tar.gz"
         imquic_archive = temporary / "imquic-source.tar.gz"
         picoquic_archive = temporary / "picoquic.tar.gz"
-        three_dgs_archive = temporary / "3dgs-over-moq.tar.gz"
         gaussian_player_archive = temporary / "gaussian-player.tar.gz"
         picotls_archive = temporary / "picotls-cache.tar.gz"
         source_provenance = temporary / "source-provenance.json"
@@ -290,16 +289,6 @@ def main():
             "-C", str(picotls_source.parent), picotls_source.name,
         ])
         archive_repository(ROOT / "deps" / "imquic", imquic_archive)
-        three_dgs_root = ROOT / "deps" / "3dgs_over_moq"
-        three_dgs_status = subprocess.run(
-            ["git", "status", "--porcelain", "--untracked-files=normal"],
-            cwd=three_dgs_root, check=True, text=True, capture_output=True,
-        ).stdout
-        if three_dgs_status:
-            archive_worktree(three_dgs_root, three_dgs_archive)
-        else:
-            run(["git", "archive", "--format=tar.gz", f"--output={three_dgs_archive}", "HEAD"],
-                cwd=three_dgs_root)
         archive_repository(ROOT / "deps" / "gaussian-player", gaussian_player_archive)
         host_forwards = f"hostfwd=tcp:127.0.0.1:{port}-:22"
         if args.forward_sidecar_port:
@@ -324,7 +313,6 @@ def main():
             copy_to_guest(port, args.user, args.password, source_archive)
             copy_to_guest(port, args.user, args.password, imquic_archive)
             copy_to_guest(port, args.user, args.password, picoquic_archive)
-            copy_to_guest(port, args.user, args.password, three_dgs_archive)
             copy_to_guest(port, args.user, args.password, gaussian_player_archive)
             copy_to_guest(port, args.user, args.password, picotls_archive)
             copy_to_guest(port, args.user, args.password, source_provenance)
@@ -336,12 +324,9 @@ def main():
                 copy_to_guest(port, args.user, args.password, staged)
                 staged_guest_files.append((staged_name, relative))
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
-            camera_priority = args.make_target in ("l4s-camera-priority-guest-check", "l4s-camera-player-guest-check")
-            configure_options = " --enable-moq-examples" if camera_priority else ""
             imquic_build = (f"make -C src -j{args.cpus} >/dev/null\n"
                             f"make -C examples imquic-moq-relay -j{args.cpus} >/dev/null\n"
-                            "make -C src check" if camera_priority else
-                            f"make -j{args.cpus} >/dev/null\nmake check")
+                            "make -C src check")
             install_guest_files = "\n".join(
                 "install -D "
                 f"/home/{shlex.quote(args.user)}/{shlex.quote(staged_name)} "
@@ -354,13 +339,12 @@ if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
   printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
 fi
 rm -rf {shlex.quote(guest_root)}
-mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic {shlex.quote(guest_root)}/deps/3dgs_over_moq {shlex.quote(guest_root)}/deps/gaussian-player
+mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic {shlex.quote(guest_root)}/deps/gaussian-player
 tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
 cp /home/{shlex.quote(args.user)}/{source_provenance.name} {shlex.quote(guest_root)}/.source-provenance.json
 {install_guest_files}
 tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
 tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
-tar -xzf /home/{shlex.quote(args.user)}/{three_dgs_archive.name} -C {shlex.quote(guest_root)}/deps/3dgs_over_moq
 tar -xzf /home/{shlex.quote(args.user)}/{gaussian_player_archive.name} -C {shlex.quote(guest_root)}/deps/gaussian-player
 mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
 tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
@@ -376,7 +360,7 @@ cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX
 cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
 cd {shlex.quote(guest_root)}/deps/imquic
 autoreconf -fi >/dev/null
-./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic{configure_options} >/dev/null
+./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic --enable-moq-examples >/dev/null
 {imquic_build}
 cd {shlex.quote(guest_root)}
 set +e

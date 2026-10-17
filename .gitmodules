@@ -6,10 +6,6 @@
 	path = deps/picoquic
 	url = https://github.com/Arman17Babaei/picoquic.git
 	branch = prague-params
-[submodule "deps/3dgs_over_moq"]
-	path = deps/3dgs_over_moq
-	url = https://github.com/Arman17Babaei/3dgs_over_moq.git
-	branch = agent/sgss-wiewport-foundation
 [submodule "deps/gaussian-player"]
 	path = deps/gaussian-player
 	url = https://github.com/Arman17Babaei/gaussian-player.git

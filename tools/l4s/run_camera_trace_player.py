@@ -277,7 +277,7 @@ def run(args) -> int:
                 prefix = f'camera-player-{output.name}'
                 topology_path = args.topology_script.expanduser().resolve()
                 shutil.copy2(topology_path, output / 'player-topology.py')
-                command = [sys.executable, str(ROOT / 'tools/l4s/run_qemu_timeseries_test.py'),
+                command = [sys.executable, str(ROOT / 'tools/l4s/run_qemu_player.py'),
                     '--base', str(args.qemu_base.expanduser().resolve()), '--make-target', 'l4s-camera-player-guest-check',
                     '--guest-result-name', 'player', '--guest-result-root', 'results/l4s', '--destination-root', 'results/l4s',
                     '--destination-prefix', prefix, '--allow-dirty', '--memory', str(getattr(args, 'qemu_memory', 4096)),

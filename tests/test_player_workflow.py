@@ -17,7 +17,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / 'tools/l4s'))
 import player_topology
 from run_camera_player_guest import load_topology
-from run_qemu_timeseries_test import archive_worktree
+from run_qemu_player import archive_worktree
 from compare_player_sequence import compare_sequence
 from run_priority_audit_loopback import validate_object_coverage
 
