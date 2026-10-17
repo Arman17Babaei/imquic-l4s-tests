@@ -10,10 +10,8 @@ from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools" / "l4s"))
-sys.path.insert(0, str(ROOT / "tools"))
 
 import experiment_metadata
-import promote_result
 
 
 class FakeNode:
@@ -107,103 +105,6 @@ class MetadataTests(unittest.TestCase):
             experiment_metadata.main()
             data = json.loads((Path(directory) / "provenance.json").read_text())
         self.assertEqual(data["configuration"], {"rate": "2mbit", "target": "1ms"})
-
-
-class PromotionTests(unittest.TestCase):
-    def make_run(self, root: Path):
-        run = root / "scratch-run"
-        run.mkdir()
-        (run / "provenance.json").write_text(json.dumps({
-            "repository": {"commit": "0123456789abcdef"},
-            "command": {"shell": "python3 runner.py --x 1"},
-            "configuration": {"bottleneck": "20mbit", "repetitions": 3},
-            "topology": "client--s1--server",
-        }))
-        (run / "metrics.csv").write_text("t,value\n0,1\n")
-        (run / "analysis.json").write_text(json.dumps({"acceptance_passed": True}))
-        return run
-
-    def test_promotion_moves_run_and_creates_readable_record(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            run = self.make_run(root)
-            records = root / "records"
-            result = promote_result.promote(
-                run, records,
-                id="2026-08-17-reno-reentry",
-                title="Reno re-entry",
-                question="Does re-entry preserve fairness?",
-                hypothesis="The returning flow recovers equal share.",
-                result="It did not recover equal share in the measured window.",
-                conclusion="falsifies",
-                paper_claim="Re-entry history affected short-term sharing in this setup.",
-                caveats="Single bottleneck configuration.",
-            )
-            self.assertFalse(run.exists())
-            self.assertTrue((result / "metrics.csv").is_file())
-            readme = (result / "README.md").read_text()
-            self.assertIn("## Hypothesis", readme)
-            self.assertIn("20mbit", readme)
-            self.assertIn("## Paper notes", readme)
-            self.assertIn("falsifies", readme)
-            self.assertIn("2026-08-17-reno-reentry", (records / "INDEX.md").read_text())
-
-    def test_promotion_refuses_missing_provenance_and_overwrite(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            bad = root / "bad"
-            bad.mkdir()
-            with self.assertRaises(ValueError):
-                promote_result.promote(
-                    bad, root / "records", id="x", title="x",
-                    question="q", hypothesis="h", result="r",
-                    conclusion="inconclusive", paper_claim="p", caveats="c",
-                )
-            run = self.make_run(root)
-            records = root / "records"
-            (records / "x").mkdir(parents=True)
-            with self.assertRaises(FileExistsError):
-                promote_result.promote(
-                    run, records, id="x", title="x",
-                    question="q", hypothesis="h", result="r",
-                    conclusion="supports", paper_claim="p", caveats="c",
-                )
-
-    def test_index_accepts_legacy_records_without_titles(self):
-        with tempfile.TemporaryDirectory() as directory:
-            records = Path(directory)
-            legacy = records / "legacy-figure-record"
-            legacy.mkdir()
-            (legacy / "result.json").write_text(json.dumps({
-                "id": "legacy-figure-record",
-                "conclusion": "supports",
-                "repository_commit": "0123456789abcdef",
-            }))
-            promote_result.update_index(records)
-            index = (records / "INDEX.md").read_text()
-            self.assertIn("| `legacy-figure-record` | legacy-figure-record | `supports` |", index)
-
-
-class RunnerIntegrationContractTests(unittest.TestCase):
-    def test_network_runners_write_provenance_directly(self):
-        repo = ROOT
-        for relative in (
-            "tools/l4s/run_mininet_benchmark.py",
-            "tools/l4s/run_sustained_coexistence.py",
-            "tools/l4s/run_reno_fairness.py",
-            "tools/l4s/run_reno_step_join.py",
-            "tools/l4s/run_timeseries_test.sh",
-        ):
-            path = repo / relative
-            if not path.exists():
-                self.skipTest("integration files are only present after applying the patch")
-            source = path.read_text(encoding="utf-8")
-            if relative.endswith(".sh"):
-                self.assertIn("experiment_metadata.py", source, relative)
-            else:
-                self.assertIn("write_experiment_record", source, relative)
-                self.assertIn("capture_mininet_state", source, relative)
-            self.assertNotIn("_recorded.py", source, relative)
 
 
 if __name__ == "__main__":

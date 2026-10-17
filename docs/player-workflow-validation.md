@@ -44,7 +44,8 @@ The editable topology path is covered by import, shaping-command and launcher
 checks; actual guest provisioning, shaping and native delivery still require a
 separate authorized run with a suitable QEMU base image.
 
-The previous README is preserved in `docs/historical-experiments.md`. Historical
-scripts, retained results, figure generators and Persian originals are retained.
-Their presence does not make them part of the maintained workflow. The earlier
+Subsequent source pruning removed historical runners, analyzers, figures code,
+training/CUDA tooling and their dedicated tests/docs. The earlier analyzer result
+above describes the pre-pruning tree. Recover historical source from `d7d6cab`;
+stored evidence under `l4s/` and `results/` remains unchanged. The earlier
 branch-wide usefulness inventory remains in `results/file-review/`.

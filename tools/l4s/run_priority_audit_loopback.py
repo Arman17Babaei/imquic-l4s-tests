@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import csv
 import json
+import math
+import struct
 import os
 import signal
 import socket
@@ -13,12 +15,64 @@ import sys
 import time
 from collections import defaultdict
 from pathlib import Path
-
-from analyze_camera_priority import validate_object_coverage
-from run_qemu_camera_priority import make_scene, preflight_source, preflight_trace
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[2]
 
+
+def preflight_source(path: Path, bytes_total: int = 8 * 1024 * 1024) -> None:
+    records = bytes_total // 32
+    data = bytearray(records * 32)
+    for index in range(records):
+        angle = 2 * math.pi * index / records
+        radius = 0.5 + (index % 101) / 400
+        struct.pack_into("<fff", data, index * 32, radius * math.cos(angle),
+                         ((index % 257) / 256 - 0.5), radius * math.sin(angle))
+        data[index * 32 + 27] = 255 - index % 128
+    path.write_bytes(data)
+
+def preflight_trace(path: Path, epochs: int = 31) -> None:
+    frames = []
+    for epoch in range(epochs):
+        yaw = -360 * epoch / (epochs - 1)
+        angle = math.radians(yaw)
+        frames.append({"timestamp_ms": epoch * 100, "camera_position": [0, 0, 3],
+            "camera_forward": [-math.sin(angle), 0, -math.cos(angle)],
+            "camera_up": [0, 1, 0],
+            "yaw_degrees": yaw, "fov": 40, "aspect_ratio": 16 / 9})
+    path.write_text(json.dumps(frames, indent=2) + "\n", encoding="utf-8")
+
+def key(row: dict[str, Any]) -> tuple[str, int, int]:
+    return str(row["tile_id"]), int(row["refinement"]), int(row["object_id"])
+
+def expected_objects(manifest: dict[str, Any]) -> dict[tuple[str, int, int], dict[str, Any]]:
+    return {(tile["id"], int(refinement["index"]), int(obj["id"])): obj
+            for tile in manifest["tiles"] for refinement in tile["refinements"]
+            for obj in refinement["objects"]}
+
+def validate_object_coverage(manifest: dict[str, Any], rows: list[dict[str, str]]) -> None:
+    expected = expected_objects(manifest)
+    actual: dict[tuple[str, int, int], dict[str, str]] = {}
+    for row in rows:
+        row_key = key(row)
+        if row_key in actual:
+            raise ValueError(f"duplicate object delivery row {row_key}")
+        actual[row_key] = row
+    if set(actual) != set(expected):
+        raise ValueError(f"manifest coverage mismatch missing={set(expected)-set(actual)} extra={set(actual)-set(expected)}")
+    for row_key, row in actual.items():
+        obj = expected[row_key]
+        if int(row["payload_bytes"]) != int(obj["bytes"]):
+            raise ValueError(f"byte mismatch for {row_key}")
+        if row["sha256"] != obj["sha256"]:
+            raise ValueError(f"manifest hash mismatch for {row_key}")
+        if row["status"] == "delivered":
+            if row["actual_sha256"] != obj["sha256"]:
+                raise ValueError(f"delivered hash mismatch for {row_key}")
+            if not row["request_id"] or not row["monotonic_us"]:
+                raise ValueError(f"delivered object lacks request/time mapping {row_key}")
+        elif row["status"] != "undelivered":
+            raise ValueError(f"invalid terminal status for {row_key}")
 
 def free_port(kind: int) -> int:
     with socket.socket(socket.AF_INET, kind) as sock:
@@ -53,7 +107,10 @@ def main() -> None:
     output.mkdir(parents=True)
     source = output / "synthetic.splat"
     preflight_source(source, 4 * 1024 * 1024)
-    manifest_path = make_scene(source, output / "scene", "1x1x1", "0.1,0.2,0.3,0.4")
+    manifest_path = output / "scene/manifest-v2.json"
+    subprocess.run(["node", str(ROOT / "deps/gaussian-player/split-splat.mjs"), str(source),
+        "--output", str(manifest_path.parent), "--grid", "1x1x1",
+        "--layer-fractions", "0.1,0.2,0.3,0.4", "--scene-id", "synthetic"], check=True)
     trace_path = output / "trace.json"
     preflight_trace(trace_path, 31)
     certificate, key_path = output / "cert.pem", output / "key.pem"

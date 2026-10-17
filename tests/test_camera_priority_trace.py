@@ -1,5 +1,4 @@
 import importlib.util
-import json
 import math
 import unittest
 from pathlib import Path
@@ -13,9 +12,10 @@ SPEC.loader.exec_module(MODULE)
 
 
 class CameraPriorityTraceTest(unittest.TestCase):
-    def test_generates_exact_approved_trace_from_first_bicycle_frame(self) -> None:
-        source = json.loads((Path(__file__).resolve().parents[1] /
-            "deps/3dgs_over_moq/assets/user102_bicycle_500.json").read_text())
+    def test_generates_yaw_trace_from_source_camera_basis(self) -> None:
+        source = [{"camera_position": [1.25, -2, 3], "fov": 60,
+            "view_matrix": [[1, 0, 0, 0], [0, 1, 0, 0],
+                            [0, 0, 1, 0], [0, 0, 0, 1]]}]
 
         frames = MODULE.generate_trace(source)
 
@@ -24,8 +24,7 @@ class CameraPriorityTraceTest(unittest.TestCase):
                          [0, 15000, 25000, 50000])
         self.assertEqual([frames[index]["yaw_degrees"] for index in (0, 150, 250, 500)],
                          [0.0, -180.0, -90.0, -360.0])
-        self.assertEqual(frames[0]["camera_position"], [
-            -3.1984000000000004, -0.576640814336, -0.06699586588800002])
+        self.assertEqual(frames[0]["camera_position"], [1.25, -2.0, 3.0])
         self.assertTrue(all(frame["fov"] == source[0]["fov"] for frame in frames))
         first = frames[0]["camera_forward"]
         last = frames[-1]["camera_forward"]

@@ -19,6 +19,7 @@ import player_topology
 from run_camera_player_guest import load_topology
 from run_qemu_timeseries_test import archive_worktree
 from compare_player_sequence import compare_sequence
+from run_priority_audit_loopback import validate_object_coverage
 
 
 def png(path: Path, color: int):
@@ -106,6 +107,27 @@ class QualityTests(unittest.TestCase):
             reference.write_text(json.dumps(data))
             with self.assertRaisesRegex(ValueError, 'incomplete'):
                 compare_sequence(candidate, reference, root / 'quality')
+
+
+class PriorityAuditTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.manifest = {"tiles": [{"id": "tile", "refinements": [{"index": 0,
+            "objects": [{"id": 0, "bytes": 32, "sha256": "abc",
+                         "publisher_priority": 0}]}]}]}
+        self.delivery = {"tile_id": "tile", "refinement": "0", "object_id": "0",
+            "request_id": "7", "sha256": "abc", "actual_sha256": "abc",
+            "payload_bytes": "32", "publisher_priority": "0", "status": "delivered",
+            "subscriber_priority": "8", "subscriber_epoch": "1", "monotonic_us": "200"}
+
+    def test_duplicate_or_hash_mismatch_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate"):
+            validate_object_coverage(self.manifest, [self.delivery, self.delivery])
+        wrong = {**self.delivery, "actual_sha256": "bad"}
+        with self.assertRaisesRegex(ValueError, "hash"):
+            validate_object_coverage(self.manifest, [wrong])
+
+    def test_complete_object_coverage_is_accepted(self):
+        validate_object_coverage(self.manifest, [self.delivery])
 
 
 if __name__ == '__main__':

@@ -122,5 +122,7 @@ video. `--fixed-frame --no-record` retains the single-frame capture mode.
 an automatic trace. Existing endpoints are owned by their launcher.
 
 The CPU smoke leaves a tiny example video and quality CSV under `results/cpu-check/`.
-Older studies and their evidence are indexed in
-[historical experiment workflows](docs/historical-experiments.md).
+Historical runner, plotting, training and CUDA-reference code was removed from
+the active tree. Recover it from Git revision `d7d6cab` if needed. Stored evidence
+under `l4s/` and `results/` is unchanged. Only the current player workflow and its
+checks are maintained here.

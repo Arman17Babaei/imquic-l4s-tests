@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate the fixed-position 50-second bicycle priority trace."""
+"""Generate the fixed-position 50-second yaw trace from a source camera pose."""
 
 from __future__ import annotations
 
