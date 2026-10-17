@@ -25,7 +25,7 @@ function parseArgs(argv) {
 const options = parseArgs(process.argv.slice(2));
 const gpuArgs = options.gpu_mode === "hardware"
     ? ["--enable-gpu", "--use-gl=angle", "--use-angle=gl"]
-    : ["--enable-unsafe-swiftshader"];
+    : ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"];
 const browser = await chromium.launch({ headless: options.headless, args: gpuArgs });
 const context = await browser.newContext({ viewport: { width: options.width, height: options.height },
     serviceWorkers: "block", acceptDownloads: true });

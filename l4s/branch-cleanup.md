@@ -52,3 +52,18 @@ on this host. Native builds and CUDA reference checks remain optional.
 
 Prerequisite checks were verified to reject missing local Playwright with an
 explicit `npm ci` instruction, rather than resolving the home-directory copy.
+
+## Consolidated player launcher
+
+`run_camera_trace_player.py` now owns one process lifecycle for visualization,
+recording, HTTP validation, loopback MoQ, and QEMU MoQ, including interactive
+Play gating and fixed-frame/camera captures. `run_player_validation.py` is
+removed; its README commands now use the consolidated launcher with
+`--no-record`. Both QEMU resource controls and `--gpu-mode` reach their consumers.
+
+Regression coverage rejects nonpositive browser/launcher timeouts and QEMU
+budgets before opening inputs. The CPU browser fixture also invokes the real
+HTTP fixed-frame launcher, verifies a saved image and software renderer, and
+checks that browser failure telemetry survives an unwritable failure screenshot.
+A timing-sensitive frame assertion now waits for settled captures before
+comparing streamed and one-shot images. No QEMU runtime acceptance is claimed.

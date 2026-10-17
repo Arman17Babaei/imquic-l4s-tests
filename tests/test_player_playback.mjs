@@ -13,6 +13,27 @@ const root = path.resolve(import.meta.dirname, '..');
 const artifacts = path.join(root, 'results/cpu-check');
 fs.mkdirSync(artifacts, { recursive: true });
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
+async function runProcess(command, args) {
+    const child = spawn(command, args, { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    let log = '';
+    child.stdout.on('data', chunk => { log += chunk; });
+    child.stderr.on('data', chunk => { log += chunk; });
+    const [code] = await once(child, 'close');
+    return { code, log };
+}
+async function settledFrame(page, trace) {
+    let previous;
+    for (let attempt = 0; attempt < 60; attempt++) {
+        if (trace) await page.evaluate(frames => window.__priorityMoqSeek(frames, 0), trace);
+        else await page.evaluate(() => window.__priorityMoqFreeze());
+        const current = await page.evaluate(() => ({ ready: window.__priorityMoqMvp.renderReady,
+            image: document.querySelector('canvas').toDataURL() }));
+        if (current.ready && current.image === previous) return current.image;
+        previous = current.image;
+        await page.waitForTimeout(50);
+    }
+    throw new Error('comparison frame did not settle');
+}
 function object(id) {
     const arrays = [new Uint32Array([id]), new Float32Array([id ? .2 : -.2, 0, -3]),
         new Float32Array([0]), new Float32Array(Array.from({ length: 48 }, (_, i) => (id + 1) * .01 * (i % 3 + 1))), new Float32Array([-2, -2, -2]), new Float32Array([1, 0, 0, 0])];
@@ -26,7 +47,7 @@ function object(id) {
     return Buffer.concat([header, payload]);
 }
 
-for (const [playRequired, autoplay, dyeEnabled] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled})`, { timeout: 30000 }, async () => {
+for (const [playRequired, autoplay, dyeEnabled] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled})`, { timeout: 60000 }, async () => {
     const resultFile = path.join(artifacts, `play-${playRequired}-auto-${autoplay}-dye-${dyeEnabled}.json`);
     fs.rmSync(resultFile, { force: true });
     const objects = [object(0), object(1)], combined = Buffer.concat(objects);
@@ -150,15 +171,55 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         assert.equal(state.rejected, 0); assert.equal(state.events.filter(event => event.type === 'object').length, 2);
         if (dyeEnabled) assert.ok(state.trace.activeDyes > 0, 'new refinement must be dyed');
         if (!dyeEnabled) {
-            await page.evaluate(async trace => window.__priorityMoqSeek(trace, 0), trace);
-            const streamed = await page.evaluate(() => document.querySelector('canvas').toDataURL());
+            const streamed = await settledFrame(page, trace);
             const reference = await browser.newPage({ viewport: { width: 640, height: 360 } });
             await reference.goto(`http://127.0.0.1:${port}/?transport=http&trace=/trace.json&fixedFrame=1&overlays=0&dye=0`);
             await reference.waitForFunction(() => window.__priorityMoqMvp.renderReady);
-            await reference.evaluate(() => window.__priorityMoqFreeze());
-            const complete = await reference.evaluate(() => document.querySelector('canvas').toDataURL());
-            assert.equal(streamed, complete, 'incremental SH3 GPU textures must match one-shot rendering');
+            const complete = await settledFrame(reference);
+            assert.equal(hash(Buffer.from(streamed)), hash(Buffer.from(complete)),
+                'incremental SH3 textures must match settled one-shot rendering');
             await reference.close();
+            await browser.close();
+
+            // Exercise the canonical launcher with no native transport build.
+            const scene = structuredClone(manifest);
+            scene.scene.sampling = 'full';
+            scene.tiling.dimensions = [10, 10, 3];
+            fs.writeFileSync(path.join(temporary, 'not-served.gsp2'), combined);
+            for (let index = 1; index < 4; index++) {
+                const file = `empty-${index}.gsp2`;
+                fs.writeFileSync(path.join(temporary, file), Buffer.alloc(0));
+                scene.tiles[0].refinements.push({ index, name: `layer${index}`, file,
+                    track: `tile0/layer${index}`, gaussian_count: 0, bytes: 0, object_count: 0,
+                    object_bytes: 0, fraction: 0, sha256: hash(Buffer.alloc(0)), objects: [] });
+            }
+            fs.writeFileSync(path.join(temporary, 'manifest-v2.json'), JSON.stringify(scene));
+            fs.writeFileSync(path.join(temporary, 'trace.json'), JSON.stringify(trace));
+            const output = path.join(temporary, 'http-run');
+            const launched = await runProcess('python3', [path.join(root, 'tools/l4s/run_camera_trace_player.py'),
+                '--manifest', path.join(temporary, 'manifest-v2.json'), '--trace', path.join(temporary, 'trace.json'),
+                '--output', output, '--transport', 'http', '--fixed-frame', '--no-record',
+                '--headless', '--gpu-mode', 'software', '--timeout-seconds', '15', '--width', '640', '--height', '360']);
+            if (launched.code !== 0) {
+                fs.cpSync(output, path.join(artifacts, 'launcher-failure'), { recursive: true });
+            }
+            assert.equal(launched.code, 0, launched.log);
+            const summary = JSON.parse(fs.readFileSync(path.join(output, 'validation-summary.json'), 'utf8'));
+            assert.equal(summary.status, 'PASS');
+            assert.equal(summary.complete_scene, true);
+            const telemetry = JSON.parse(fs.readFileSync(path.join(output, 'player-telemetry.json'), 'utf8'));
+            assert.match(telemetry.browserContext.graphics.renderer, /SwiftShader/i);
+            assert.ok(fs.statSync(path.join(output, 'browser.png')).size > 0);
+
+            // A timeout and an unwritable failure screenshot must still save telemetry.
+            const failedTelemetry = path.join(temporary, 'failed-telemetry.json');
+            const failed = await runProcess(process.execPath, [path.join(root, 'tools/l4s/camera_trace_browser_runner.mjs'),
+                '--url', `http://127.0.0.1:${port}/?transport=http&trace=/trace.json&fixedFrame=1&overlays=0&dye=0`,
+                '--telemetry', failedTelemetry, '--timeout-ms', '1', '--snapshot', path.join(temporary, 'missing/frame.png'),
+                '--headless', '--gpu-mode', 'software', '--no-record']);
+            assert.equal(failed.code, 1, failed.log);
+            const failedState = JSON.parse(fs.readFileSync(failedTelemetry, 'utf8'));
+            assert.ok(failedState.runnerFailure);
         }
         const { openedAt, lastObjectAt, closedAt } = JSON.parse(fs.readFileSync(timingFile, 'utf8'));
         assert.ok(lastObjectAt >= openedAt + 1900); assert.ok(closedAt >= lastObjectAt);

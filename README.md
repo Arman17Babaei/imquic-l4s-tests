@@ -228,10 +228,10 @@ cd deps/gaussian-player
 npm test
 npm run build
 cd ../..
-python3 tools/l4s/run_player_validation.py \
+python3 tools/l4s/run_camera_trace_player.py \
   --manifest results/player-sh3-new/manifest-v2.json \
   --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
-  --output results/player-http-new --transport http --fixed-frame --headless
+  --output results/player-http-new --transport http --fixed-frame --headless --no-record
 results/venvs/3dgs/bin/python tools/l4s/compare_player_frame.py \
   --source data/point_cloud.ply \
   --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
@@ -260,11 +260,11 @@ The 50-second sequence rotates about the converted source up axis.
 For the isolated QEMU path, use the same export and trace with:
 
 ```sh
-python3 tools/l4s/run_player_validation.py \
+python3 tools/l4s/run_camera_trace_player.py \
   --manifest results/player-sh3-new/manifest-v2.json \
   --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
   --output results/player-qemu-prague-new --transport moqt --network-path qemu \
-  --transport-mode prague --fixed-frame --headless --bottleneck 100mbit
+  --transport-mode prague --fixed-frame --headless --bottleneck 100mbit --no-record
 ```
 
 Repeat with `--transport-mode reno` and a new output directory for the control.
@@ -288,11 +288,11 @@ results/venvs/3dgs/bin/python tools/l4s/prepare_player_sh3.py \
   --source data/point_cloud.ply --output results/player-sh3-interactive \
   --max-tile-gaussians 16384
 
-python3 tools/l4s/run_player_validation.py \
+python3 tools/l4s/run_camera_trace_player.py \
   --manifest results/player-sh3-interactive/manifest-v2.json \
   --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
   --output results/player-moq-10mbps-new --transport moqt --network-path qemu \
-  --transport-mode prague --bottleneck 10mbit --interactive --timeout-seconds 43200
+  --transport-mode prague --bottleneck 10mbit --interactive --timeout-seconds 43200 --no-record
 ```
 
 The launcher prints the browser URL and writes `endpoint.json` once the guest

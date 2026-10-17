@@ -9,6 +9,7 @@ import tempfile
 import threading
 import unittest
 import sys
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -45,6 +46,27 @@ def write_manifest(root: Path) -> Path:
 
 
 class CameraTracePlayerTest(unittest.TestCase):
+    def test_browser_timeout_must_be_positive(self) -> None:
+        for timeout in (0, -1):
+            with self.subTest(timeout=timeout), self.assertRaisesRegex(ValueError, "positive"):
+                RUNNER.browser_command("http://example/", Path("out.webm"), Path("telemetry.json"),
+                    timeout_ms=timeout, width=640, height=360, headless=True, record=False)
+
+    def test_software_mode_and_requested_timeout_reach_browser(self) -> None:
+        command = RUNNER.browser_command("http://example/", Path("out.webm"), Path("telemetry.json"),
+            timeout_ms=1234, width=640, height=360, headless=True, record=False, gpu_mode="software")
+        self.assertEqual(command[command.index("--timeout-ms") + 1], "1234")
+        self.assertEqual(command[command.index("--gpu-mode") + 1], "software")
+
+    def test_launcher_rejects_invalid_budgets_before_opening_inputs(self) -> None:
+        for flag in ("--timeout-seconds", "--qemu-memory", "--qemu-cpus"):
+            with self.subTest(flag=flag):
+                result = subprocess.run([sys.executable, str(ROOT / "tools/l4s/run_camera_trace_player.py"),
+                    "--manifest", "unused", "--trace", "unused", "--output", "results/unused", flag, "0"],
+                    capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("must be positive", result.stderr)
+
     def test_manifest_and_trace_contracts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
