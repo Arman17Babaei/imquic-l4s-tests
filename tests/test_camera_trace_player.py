@@ -46,6 +46,15 @@ def write_manifest(root: Path) -> Path:
 
 
 class CameraTracePlayerTest(unittest.TestCase):
+    def test_qemu_and_http_can_record_and_measure_quality(self) -> None:
+        for transport, network in (("moqt", "qemu"), ("http", "loopback")):
+            with self.subTest(transport=transport):
+                args = RUNNER.parse_args(["--manifest", "unused", "--trace", "unused",
+                    "--output", "results/unused", "--transport", transport,
+                    "--network-path", network, "--quality", "--quality-fps", "2"])
+                self.assertFalse(args.no_record)
+                self.assertTrue(args.quality)
+
     def test_browser_timeout_must_be_positive(self) -> None:
         for timeout in (0, -1):
             with self.subTest(timeout=timeout), self.assertRaisesRegex(ValueError, "positive"):
@@ -81,9 +90,9 @@ class CameraTracePlayerTest(unittest.TestCase):
             ]), encoding="utf-8")
             self.assertEqual(len(RUNNER.validate_trace(trace_path)), 2)
             document = json.loads((root / "manifest-v2.json").read_text())
-            document["tiling"]["dimensions"] = [5, 5, 2]
+            document["tiling"]["dimensions"] = [5, 0, 2]
             (root / "manifest-v2.json").write_text(json.dumps(document))
-            with self.assertRaisesRegex(ValueError, "10x10x3"):
+            with self.assertRaisesRegex(ValueError, "positive dimensions"):
                 RUNNER.validate_manifest(root / "manifest-v2.json")
 
     def test_browser_and_conversion_commands_obey_flags(self) -> None:

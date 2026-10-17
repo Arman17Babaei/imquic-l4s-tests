@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import importlib.util
+import shlex
+import signal
 import json
 import os
 import subprocess
@@ -11,14 +15,61 @@ import time
 from pathlib import Path
 
 from experiment_metadata import capture_mininet_state, write_experiment_record
-from run_camera_priority_guest import (BRIDGE, NODE, PUBLISHER, RELAY, SIDECAR, ROOT,
-                                      configure_device, counters, start, stop, wait_path, write_tc)
+ROOT = Path(__file__).resolve().parents[2]
+BRIDGE = ROOT / 'tools/l4s/priority_ws_bridge.mjs'
+NODE = os.environ.get('CAMERA_PRIORITY_NODE', 'node')
+PUBLISHER = ROOT / 'build/priority-moq-publisher'
+RELAY = ROOT / 'deps/imquic/examples/imquic-moq-relay'
+SIDECAR = ROOT / 'build/priority-moq-sidecar'
+
+
+def load_topology(path: Path):
+    spec = importlib.util.spec_from_file_location('player_topology_run', path)
+    if spec is None or spec.loader is None:
+        raise ValueError(f'cannot load topology script: {path}')
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def stop(process):
+    if process.poll() is None:
+        process.send_signal(signal.SIGTERM)
+        try: process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill(); process.wait()
+
+
+def wait_path(path, processes, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if path.is_file(): return
+        if any(process.poll() is not None for process in processes):
+            raise RuntimeError(f'process exited before readiness: {path}')
+        time.sleep(.1)
+    raise TimeoutError(f'publisher readiness timed out: {path}')
+
+
+def device_command(node, command):
+    if node is None:
+        return subprocess.check_output(command, text=True)
+    return node.cmd(shlex.join(command))
+
+
+def counters(node, device):
+    return json.loads(device_command(node, ['ip', '-s', '-j', 'link', 'show', 'dev', device]))[0]
+
+
+def write_tc(output, phase, devices):
+    with (output / f'tc-state-{phase}.txt').open('w') as stream:
+        for name, (node, device) in devices.items():
+            stream.write(f'[{name}] device={device}\n')
+            for kind in ('qdisc', 'class'):
+                stream.write(device_command(node, ['tc', '-s', '-d', kind, 'show', 'dev', device]) + '\n')
 
 
 def main():
-    from mininet.link import TCLink
-    from mininet.net import Mininet
-    from mininet.node import OVSBridge
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
@@ -26,27 +77,24 @@ def main():
     parser.add_argument('--duration', type=float, default=600)
     parser.add_argument('--origin', default='')
     parser.add_argument('--admission-delay-us', type=int, default=0)
-    parser.add_argument('--bottleneck', choices=('10mbit', '20mbit', '50mbit', '100mbit'), default='20mbit')
+    parser.add_argument('--bottleneck', default=None, help='Optional override of the topology script rate')
+    parser.add_argument('--topology-script', type=Path, default=ROOT / 'tools/l4s/player_topology.py')
     parser.add_argument('--persistent', action='store_true')
     parser.add_argument('--admission-queue-bytes', type=int, default=262144)
     args = parser.parse_args()
     if not 65536 <= args.admission_queue_bytes <= 2097152:
         parser.error('--admission-queue-bytes must be in 65536..2097152')
     args.output.mkdir(parents=True, exist_ok=False)
-    net = Mininet(controller=None, link=TCLink, switch=OVSBridge, autoSetMacs=True)
-    client = net.addHost('client', ip='10.0.0.1/24')
-    switch = net.addSwitch('s1', failMode='standalone')
-    server = net.addHost('server', ip='10.0.0.2/24')
-    first, second = net.addLink(client, switch), net.addLink(switch, server)
+    topology = load_topology(args.topology_script.resolve())
+    net, client, server, devices = topology.build_topology()
     processes, handles = [], []
-    devices = {'client_to_s1': (client, first.intf1.name), 's1_to_client': (None, first.intf2.name),
-               's1_to_server': (None, second.intf1.name), 'server_to_s1': (server, second.intf2.name)}
     def launch(node, name, command, env=None):
         if node is None:
             handle = (args.output / f'{name}.log').open('wb')
             process = subprocess.Popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env)
         else:
-            process, handle = start(node, command, args.output / f'{name}.log', env=env)
+            handle = (args.output / f'{name}.log').open('wb')
+            process = node.popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env)
         processes.append(process); handles.append(handle)
         return process
     def evidence(phase):
@@ -55,15 +103,13 @@ def main():
             name: counters(node, device) for name, (node, device) in devices.items()}, indent=2) + '\n')
     try:
         net.start()
-        subprocess.run(['modprobe', 'sch_dualpi2'], check=True)
-        for node, device in devices.values():
-            configure_device(node, device, args.bottleneck, player_propagation=node is None)
+        topology.configure_topology(devices, args.bottleneck or None)
         evidence('before')
         write_experiment_record(args.output, scenario='camera-player-qemu',
             configuration={'manifest': str(args.manifest), 'controller': args.transport_mode,
-                'duration_limit_seconds': args.duration, 'rate': args.bottleneck,
-                'delay_switch_egress': '40ms', 'aqm_host_egress': 'HTB -> DualPI2',
-                'dualpi2_step_thresh': '5ms',
+                'duration_limit_seconds': args.duration, 'rate_override': args.bottleneck,
+                'topology_script': str(args.topology_script),
+                'topology_sha256': hashlib.sha256(args.topology_script.read_bytes()).hexdigest(),
                 'admission_delay_us': args.admission_delay_us,
                 'admission_queue_bytes': args.admission_queue_bytes,
                 'relay_congestion_options': 'pacing_interval=1/1000,sudden_ce_threshold=off' if args.transport_mode == 'prague' else '',
@@ -74,9 +120,10 @@ def main():
                 'question': 'Does the host browser receive hashed SH3 MoQ objects through guest DualPI2?',
                 'hypothesis': 'Browser-applied objects match the publisher and all data crosses shaped guest interfaces.',
                 'control': 'Reno with the same scene and topology', 'capture_mode': 'transport-metrics'},
-            topology={'path': 'host browser -> QEMU TCP forward -> guest proxy -> client bridge/subscriber -> s1 -> server relay/publisher',
+            topology={'path': 'host browser -> QEMU TCP forward -> guest proxy -> client bridge/subscriber -> topology script network -> server relay/publisher',
+                'nodes': [node.name for node in net.hosts + net.switches],
                 'moq_client': client.IP(), 'moq_server': server.IP(), 'relay_port': 4443, 'guest_forward_port': 7790},
-            observed_network=capture_mininet_state(client, server, switch))
+            observed_network={switch.name: capture_mininet_state(client, server, switch) for switch in net.switches})
         certificate, key = args.output / 'cert.pem', args.output / 'key.pem'
         subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-subj', '/CN=10.0.0.2',
             '-keyout', str(key), '-out', str(certificate), '-days', '1'], check=True,

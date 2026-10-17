@@ -178,6 +178,13 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             const complete = await settledFrame(reference);
             assert.equal(hash(Buffer.from(streamed)), hash(Buffer.from(complete)),
                 'incremental SH3 textures must match settled one-shot rendering');
+            const recaptured = await page.evaluate(() => {
+                const gl = document.querySelector('canvas').getContext('webgl2');
+                gl.clearColor(0, 0, 0, 1); gl.clear(gl.COLOR_BUFFER_BIT);
+                return window.__priorityMoqCapture();
+            });
+            assert.equal(hash(Buffer.from(recaptured.image)), hash(Buffer.from(streamed)),
+                'frame capture must render before readback, even after the display buffer was cleared');
             await reference.close();
             await browser.close();
 
@@ -194,12 +201,13 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
                     object_bytes: 0, fraction: 0, sha256: hash(Buffer.alloc(0)), objects: [] });
             }
             fs.writeFileSync(path.join(temporary, 'manifest-v2.json'), JSON.stringify(scene));
-            fs.writeFileSync(path.join(temporary, 'trace.json'), JSON.stringify(trace));
+            fs.writeFileSync(path.join(temporary, 'trace.json'), JSON.stringify(
+                trace.map(frame => ({ ...frame, timestamp_ms: frame.timestamp_ms * 10 }))));
             const output = path.join(temporary, 'http-run');
             const launched = await runProcess('python3', [path.join(root, 'tools/l4s/run_camera_trace_player.py'),
                 '--manifest', path.join(temporary, 'manifest-v2.json'), '--trace', path.join(temporary, 'trace.json'),
-                '--output', output, '--transport', 'http', '--fixed-frame', '--no-record',
-                '--headless', '--gpu-mode', 'software', '--timeout-seconds', '15', '--width', '640', '--height', '360']);
+                '--output', output, '--transport', 'http', '--quality', '--quality-fps', '2', '--format', 'mp4',
+                '--headless', '--gpu-mode', 'software', '--timeout-seconds', '20', '--width', '320', '--height', '180']);
             if (launched.code !== 0) {
                 fs.cpSync(output, path.join(artifacts, 'launcher-failure'), { recursive: true });
             }
@@ -207,9 +215,31 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             const summary = JSON.parse(fs.readFileSync(path.join(output, 'validation-summary.json'), 'utf8'));
             assert.equal(summary.status, 'PASS');
             assert.equal(summary.complete_scene, true);
+            assert.equal(summary.rendering.status, 'PASS');
+            assert.ok(summary.rendering.frames >= 2);
+            const qualityRows = fs.readFileSync(path.join(output, 'quality/frame-quality.csv'), 'utf8').trim().split('\n');
+            assert.ok(Number(qualityRows.at(-1).split(',')[2]) > .99,
+                'complete HTTP scene must match the same-player reference; capturing a cleared canvas is invalid');
             const telemetry = JSON.parse(fs.readFileSync(path.join(output, 'player-telemetry.json'), 'utf8'));
             assert.match(telemetry.browserContext.graphics.renderer, /SwiftShader/i);
-            assert.ok(fs.statSync(path.join(output, 'browser.png')).size > 0);
+            assert.ok(fs.statSync(path.join(output, 'camera-trace.mp4')).size > 0);
+            fs.copyFileSync(path.join(output, 'camera-trace.mp4'), path.join(artifacts, 'cpu-workflow.mp4'));
+            fs.copyFileSync(path.join(output, 'quality/frame-quality.csv'), path.join(artifacts, 'cpu-frame-quality.csv'));
+            fs.copyFileSync(path.join(output, 'quality/comparison.json'), path.join(artifacts, 'cpu-comparison.json'));
+            const captures = JSON.parse(fs.readFileSync(path.join(output, 'candidate-frames/frames.json'), 'utf8'));
+            const lastFile = captures.frames.at(-1).file;
+            fs.copyFileSync(path.join(output, 'candidate-frames', lastFile), path.join(artifacts, 'cpu-candidate.png'));
+            fs.copyFileSync(path.join(output, 'reference-frames', lastFile), path.join(artifacts, 'cpu-reference.png'));
+            const decoded = path.join(artifacts, 'cpu-video-last.png');
+            const decode = await runProcess('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-y',
+                '-sseof', '-0.1', '-i', path.join(output, 'camera-trace.mp4'), '-frames:v', '1', decoded]);
+            assert.equal(decode.code, 0, decode.log);
+            const videoQuality = await runProcess('ffmpeg', ['-hide_banner', '-i', decoded,
+                '-i', path.join(artifacts, 'cpu-reference.png'), '-filter_complex',
+                '[0:v]format=gbrp[c];[1:v]format=gbrp[r];[c][r]ssim', '-f', 'null', '-']);
+            assert.equal(videoQuality.code, 0, videoQuality.log);
+            assert.ok(Number(videoQuality.log.match(/All:([\d.]+)/)?.[1]) > .98,
+                'encoded video must contain the visible scene, not just a valid container');
 
             // A timeout and an unwritable failure screenshot must still save telemetry.
             const failedTelemetry = path.join(temporary, 'failed-telemetry.json');

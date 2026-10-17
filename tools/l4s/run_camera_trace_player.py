@@ -12,6 +12,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+import tarfile
 import time
 from pathlib import Path
 from typing import Any
@@ -43,8 +44,9 @@ def validate_manifest(path: Path) -> dict[str, Any]:
         raise ValueError("manifest schema_version must be 2")
     if manifest.get("payload_encoding", "splat") not in ("splat", "gsp2"):
         raise ValueError("unsupported payload encoding")
-    if manifest.get("tiling", {}).get("dimensions") != [10, 10, 3]:
-        raise ValueError("camera-trace player requires a 10x10x3 spatial grid")
+    dimensions = manifest.get("tiling", {}).get("dimensions", [])
+    if len(dimensions) != 3 or any(not isinstance(value, int) or value < 1 for value in dimensions):
+        raise ValueError("spatial grid requires three positive dimensions")
     if manifest.get("scene", {}).get("sampling") != "full":
         raise ValueError("camera-trace player requires full-scene sampling")
     tiles = manifest.get("tiles")
@@ -74,6 +76,19 @@ def validate_manifest(path: Path) -> dict[str, Any]:
     if refinement_total != manifest.get("scene", {}).get("gaussian_count"):
         raise ValueError("scene Gaussian accounting is inconsistent")
     return manifest
+
+
+def scene_archive(manifest_path: Path, destination: Path) -> None:
+    manifest = json.loads(manifest_path.read_text())
+    with tarfile.open(destination, 'w') as archive:
+        archive.add(manifest_path, arcname='manifest-v2.json', recursive=False)
+        for tile in manifest['tiles']:
+            for refinement in tile['refinements']:
+                name = refinement['file']
+                path = (manifest_path.parent / name).resolve()
+                if not path.is_relative_to(manifest_path.parent.resolve()):
+                    raise ValueError(f'refinement path escapes scene directory: {name}')
+                archive.add(path, arcname=name, recursive=False)
 
 
 def validate_trace(path: Path) -> list[dict[str, Any]]:
@@ -182,8 +197,8 @@ def run(args) -> int:
     interactive = args.interactive
     validation = interactive or args.fixed_frame or args.camera_check or args.transport == 'http' or args.network_path == 'qemu'
     record = not args.no_record
-    overlays = interactive or not validation
-    dye = not args.no_dye and (interactive or not validation)
+    overlays = (interactive or not validation) and not args.quality
+    dye = not args.no_dye and (interactive or not validation) and not args.quality
     if interactive:
         def stop_interactive(signum, frame):
             raise KeyboardInterrupt
@@ -209,7 +224,7 @@ def run(args) -> int:
     for path in required:
         if not path.exists():
             raise ValueError(f'missing build artifact: {path}; build the player or native MoQ fixtures first')
-    if record and shutil.which('ffmpeg') is None:
+    if (record or args.quality) and shutil.which('ffmpeg') is None:
         raise ValueError('ffmpeg is required to normalize recordings')
     output.mkdir(parents=True)
     raw_webm, webm = output / 'camera-trace.raw.webm', output / 'camera-trace.webm'
@@ -229,6 +244,7 @@ def run(args) -> int:
         return process
     browser_result = 1
     failure = None
+    comparison = None
     with tempfile.TemporaryDirectory(prefix='camera-player-input-') as temp:
         temporary = Path(temp)
         try:
@@ -255,11 +271,12 @@ def run(args) -> int:
                 wait_port(ports['bridge'], [relay, publisher, bridge])
             elif args.transport == 'moqt':
                 archive = temporary / 'scene.tar'
-                from run_qemu_camera_priority import scene_archive
                 scene_archive(manifest_path, archive)
                 node = shutil.which('node')
                 if not node: raise RuntimeError('Node.js is required')
                 prefix = f'camera-player-{output.name}'
+                topology_path = args.topology_script.expanduser().resolve()
+                shutil.copy2(topology_path, output / 'player-topology.py')
                 command = [sys.executable, str(ROOT / 'tools/l4s/run_qemu_timeseries_test.py'),
                     '--base', str(args.qemu_base.expanduser().resolve()), '--make-target', 'l4s-camera-player-guest-check',
                     '--guest-result-name', 'player', '--guest-result-root', 'results/l4s', '--destination-root', 'results/l4s',
@@ -267,12 +284,14 @@ def run(args) -> int:
                     '--cpus', str(getattr(args, 'qemu_cpus', 4)),
                     '--guest-timeout', str(int(args.timeout_seconds + 900)), '--forward-sidecar-port', str(ports['bridge']),
                     '--guest-file', f'{archive}=inputs/player-scene.tar', '--guest-file', f'{node}=inputs/node',
+                    '--guest-file', f'{output / "player-topology.py"}=inputs/player-topology.py',
+                    '--make-variable', 'CAMERA_PLAYER_TOPOLOGY_SCRIPT=inputs/player-topology.py',
                     '--make-variable', 'CAMERA_PRIORITY_SCENE_ARCHIVE=inputs/player-scene.tar', '--make-variable',
                     'CAMERA_PRIORITY_NODE=inputs/node', '--make-variable', f'CAMERA_PLAYER_MODE={args.transport_mode}',
                     '--make-variable', f'CAMERA_PLAYER_DURATION={args.timeout_seconds}', '--make-variable',
                     f"CAMERA_PLAYER_ORIGIN=http://127.0.0.1:{ports['web']}", '--make-variable',
                     f'CAMERA_PLAYER_ADMISSION_DELAY_US={args.admission_delay_us}', '--make-variable',
-                    f'CAMERA_PLAYER_BOTTLENECK={args.bottleneck}', '--make-variable',
+                    f'CAMERA_PLAYER_BOTTLENECK={args.bottleneck or ""}', '--make-variable',
                     f'CAMERA_PLAYER_PERSISTENT={1 if interactive else 0}']
                 qemu = start('qemu', command)
                 # SLIRP opens the host port before provisioning is complete. Require
@@ -302,7 +321,10 @@ def run(args) -> int:
                     'background': 'black', 'overlays': overlays, 'dye': dye, 'record': record,
                     'gpu_mode': args.gpu_mode, 'recording': {'width': args.width, 'height': args.height, 'fps': args.fps, 'format': args.format},
                     'play_required': interactive, 'interactive': interactive, 'threshold_ssim': .90, 'ports': ports,
-                    'admission_delay_us': args.admission_delay_us, 'bottleneck': args.bottleneck},
+                    'admission_delay_us': args.admission_delay_us, 'bottleneck_override': args.bottleneck,
+                    'quality_requested': args.quality, 'quality_fps': args.quality_fps,
+                    'topology_script': str(args.topology_script),
+                    'topology_sha256': sha256(output / 'player-topology.py') if args.network_path == 'qemu' else None},
                 topology='host browser -> forwarded WebSocket -> guest client IMQUIC -> DualPI2 -> relay/publisher'
                     if args.network_path == 'qemu' else 'browser -> HTTP or loopback WebSocket/IMQUIC -> relay/publisher',
                 observed_network={'launcher_processes': [process.pid for process in processes]})
@@ -317,6 +339,7 @@ def run(args) -> int:
                 timeout_ms=int(args.timeout_seconds * 1000), width=args.width, height=args.height,
                 headless=args.headless, record=record, gpu_mode=args.gpu_mode)
             if args.fixed_frame: command += ['--snapshot', str(output / 'browser.png')]
+            if args.quality: command += ['--capture-frames', str(output / 'candidate-frames'), '--capture-fps', str(args.quality_fps)]
             if getattr(args, 'camera_check', False):
                 from generate_camera_priority_trace import generate_trace
                 yaw_path = output / 'yaw-trace.json'
@@ -330,6 +353,27 @@ def run(args) -> int:
                 if qemu.wait(timeout=90): raise RuntimeError('QEMU validation failed after browser completion')
                 candidates = list((ROOT / 'results/l4s').glob(f'{prefix}-*'))
                 (output / 'guest-evidence.json').write_text(json.dumps({'directories': [str(path) for path in candidates]}, indent=2) + '\n')
+            if args.quality and browser_result == 0:
+                reference_port = free_port(socket.SOCK_STREAM)
+                reference_web = start('reference-web', [sys.executable,
+                    str(ROOT / 'tools/l4s/camera_trace_player_server.py'), '--dist', str(output / 'player-ui'),
+                    '--manifest', str(manifest_path), '--trace', str(trace_path), '--port', str(reference_port)])
+                wait_port(reference_port, [reference_web])
+                reference_url = f'http://127.0.0.1:{reference_port}/?' + urlencode({
+                    'transport': 'http', 'trace': '/camera-trace.json', 'fixedFrame': '1',
+                    'autoplay': '0', 'overlays': '0', 'dye': '0', 'record': '0'})
+                reference_command = browser_command(reference_url, output / 'unused.webm',
+                    output / 'reference-telemetry.json', timeout_ms=int(args.timeout_seconds * 1000),
+                    width=args.width, height=args.height, headless=args.headless, record=False, gpu_mode=args.gpu_mode)
+                reference_command += ['--capture-frames', str(output / 'reference-frames'),
+                    '--reference-frames', str(output / 'candidate-frames/frames.json'), '--motion-trace', str(trace_path)]
+                reference_browser = start('reference-browser', reference_command)
+                if reference_browser.wait(timeout=args.timeout_seconds + 45):
+                    raise RuntimeError('same-player reference rendering failed; see reference-browser.log')
+                from compare_player_sequence import compare_sequence
+                comparison = compare_sequence(output / 'candidate-frames/frames.json',
+                    output / 'reference-frames/frames.json', output / 'quality')
+
         except KeyboardInterrupt:
             failure = 'Interactive endpoint stopped'
         except Exception as error:
@@ -364,7 +408,7 @@ def run(args) -> int:
     summary = {'status': 'PASS' if success else 'FAIL', 'failure': failure, 'browser_exit_code': browser_result,
         'complete_scene': complete, 'transport': args.transport, 'network_path': args.network_path,
         'controller': args.transport_mode, 'process_exit_codes': exits,
-        'rendering': 'NOT_EVALUATED: run compare_player_frame.py against exact reference'}
+        'rendering': comparison if args.quality else 'NOT_EVALUATED'}
     if not validation:
         artifacts = {path.name: {'bytes': path.stat().st_size, 'sha256': sha256(path)}
             for path in (webm, output / 'camera-trace.mp4', output / 'camera-trace.gif') if path.is_file()}
@@ -398,7 +442,10 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--qemu-base", type=Path, default=Path("~/sandbox/p4/work.qcow2"))
     parser.add_argument("--timeout-seconds", type=float, default=600)
     parser.add_argument("--admission-delay-us", type=int, default=0)
-    parser.add_argument("--bottleneck", choices=("10mbit", "20mbit", "50mbit", "100mbit"), default="20mbit")
+    parser.add_argument("--bottleneck", help="Optional tc rate override; otherwise use the topology script")
+    parser.add_argument("--topology-script", type=Path, default=ROOT / "tools/l4s/player_topology.py")
+    parser.add_argument("--quality", action="store_true", help="Sample clean frames and compare with a full-scene same-player reference")
+    parser.add_argument("--quality-fps", type=float, default=2, help="Similarity capture rate; independent of video FPS")
     parser.add_argument("--no-dye", action="store_true")
     parser.add_argument("--no-record", action="store_true")
     parser.add_argument("--headless", action="store_true", help="CI/testing override; visible Chromium is the default")
@@ -412,9 +459,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     if args.interactive and args.fixed_frame: parser.error("interactive playback cannot use --fixed-frame")
     if args.camera_check and not args.fixed_frame: parser.error("--camera-check requires --fixed-frame")
     if args.network_path == "qemu" and args.transport != "moqt": parser.error("QEMU path requires MoQ transport")
-    if args.interactive or args.fixed_frame or args.camera_check or args.network_path == "qemu" or args.transport == "http":
+    if args.interactive or args.fixed_frame or args.camera_check:
         if not args.no_record:
-            parser.error("HTTP/fixed-frame/interactive/QEMU validation requires --no-record")
+            parser.error("fixed-frame/interactive validation requires --no-record")
+    if args.quality and (args.fixed_frame or args.interactive or args.camera_check):
+        parser.error("--quality requires automated trace playback")
+    if not 0 < args.quality_fps <= 60:
+        parser.error("quality FPS must be positive and at most 60")
     if min(args.width, args.height, args.fps) <= 0: parser.error("width, height, and fps must be positive")
     if args.no_record and args.format != "webm": parser.error("video conversion requires recording")
     return args

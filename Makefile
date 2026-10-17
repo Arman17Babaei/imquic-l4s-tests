@@ -54,7 +54,7 @@ init:
 cpu-check:
 	node tools/l4s/check_cpu_prerequisites.mjs
 	cd $(CURDIR)/deps/gaussian-player && npm test && npm run build
-	python3 -m unittest tests.test_camera_trace_player tests.test_camera_priority_trace tests.test_priority_publisher_supervisor tests.test_tcp_forward
+	python3 -m unittest tests.test_camera_trace_player tests.test_player_workflow tests.test_priority_publisher_supervisor tests.test_tcp_forward
 	node --test tests/test_priority_ws_bridge.mjs tests/test_player_playback.mjs
 
 analyzer-check:
@@ -348,7 +348,8 @@ l4s-camera-priority-guest-check: build-3dgs-priority-mvp-only
 
 .PHONY: l4s-camera-player-guest-check
 CAMERA_PLAYER_ADMISSION_DELAY_US ?= 0
-CAMERA_PLAYER_BOTTLENECK ?= 20mbit
+CAMERA_PLAYER_BOTTLENECK ?=
+CAMERA_PLAYER_TOPOLOGY_SCRIPT ?= tools/l4s/player_topology.py
 CAMERA_PLAYER_PERSISTENT ?= 0
 l4s-camera-player-guest-check: build-3dgs-priority-mvp-only
 	@test -n "$(L4S_RESULT_DIR)" -a -n "$(CAMERA_PRIORITY_SCENE_ARCHIVE)"
@@ -360,6 +361,7 @@ l4s-camera-player-guest-check: build-3dgs-priority-mvp-only
 		--output "$(L4S_RESULT_DIR)" --transport-mode "$(CAMERA_PLAYER_MODE)" \
 		--duration "$(CAMERA_PLAYER_DURATION)" --origin "$(CAMERA_PLAYER_ORIGIN)" \
 		--admission-delay-us "$(CAMERA_PLAYER_ADMISSION_DELAY_US)" --bottleneck "$(CAMERA_PLAYER_BOTTLENECK)" \
+		--topology-script "$(CAMERA_PLAYER_TOPOLOGY_SCRIPT)" \
 		$(if $(filter 1,$(CAMERA_PLAYER_PERSISTENT)),--persistent,)
 
 moq-loopback-check:

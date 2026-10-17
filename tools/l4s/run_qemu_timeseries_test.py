@@ -18,12 +18,6 @@ from pathlib import Path
 
 from experiment_metadata import repository_snapshot
 
-try:
-    import pexpect
-except ImportError as exc:
-    raise SystemExit("run_qemu_timeseries_test.py requires python3-pexpect") from exc
-
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -43,7 +37,9 @@ def archive_worktree(repository, destination):
             if not encoded:
                 continue
             relative = os.fsdecode(encoded)
-            archive.add(repository / relative, arcname=relative, recursive=False)
+            path = repository / relative
+            if path.exists() or path.is_symlink():
+                archive.add(path, arcname=relative, recursive=False)
 
 
 def archive_repository(repository, destination):
@@ -85,6 +81,10 @@ def free_port():
 
 
 def password_command(command, password, timeout, stream=True, accepted=(0,)):
+    try:
+        import pexpect
+    except ImportError as exc:
+        raise RuntimeError("QEMU provisioning requires python3-pexpect") from exc
     child = pexpect.spawn("/bin/sh", ["-c", command], encoding="utf-8", timeout=timeout)
     if stream:
         child.logfile_read = sys.stdout
