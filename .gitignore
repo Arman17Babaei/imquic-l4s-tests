@@ -10,3 +10,4 @@ deps/picoquic/build/
 tmp/
 .worktrees/
 presentation figures/
+/node_modules/

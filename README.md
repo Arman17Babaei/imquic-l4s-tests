@@ -97,6 +97,31 @@ checkout, `make -C deps/imquic check` runs the fixture and both analyzer
 self-tests; it requires picoquic and picotls libraries to be exposed at the
 paths selected by that checkout's `./configure --with-picoquic=...` command.
 
+### Lightweight CPU-only player check
+
+With Python 3 and Node.js 20.19+ (or 22.12+), install the locked dependencies once:
+
+```sh
+npm ci
+npm --prefix deps/gaussian-player ci
+npx --no-install playwright install chromium
+make cpu-check
+```
+
+Chromium also needs its normal OS libraries (on supported Linux systems,
+`npx --no-install playwright install-deps chromium` can install them). The check
+itself runs without root, CUDA, a GPU, native transport builds, QEMU, Mininet,
+or downloaded scenes. After setup it is intended to complete within a minute.
+It builds the player and tests two synthetic hashed SH3 objects using forced
+SwiftShader, asserting the renderer, Play gating, progressive loading, late
+objects, reloads, and streamed/HTTP frame consistency. Focused player, bridge,
+camera, and lifecycle unit tests run too. Browser case summaries go under
+`results/cpu-check/`.
+
+This checks the player and real WebSocket bridge with simulated native delivery;
+it does not validate QUIC, L4S performance, ECN marking, or CUDA reference quality.
+`make analyzer-check` remains the separate lightweight scientific-analyzer gate.
+
 ### Prerequisites for live tests
 
 The preferred route is the QEMU wrapper. It requires:

@@ -50,6 +50,13 @@ init:
 	$(DYNAMIC_LAPIS_PYTHON) $(THREEDGS_DIR)/tools/dynamic_lapis_8i.py all --scene "$(SCENE)" --full
 	node $(THREEDGS_DIR)/tools/verify_dynamic_bundle.mjs $(CURDIR)/results/3dgs/dynamic-lapis/media/$(SCENE)/manifest.json
 
+.PHONY: cpu-check
+cpu-check:
+	node tools/l4s/check_cpu_prerequisites.mjs
+	cd $(CURDIR)/deps/gaussian-player && npm test && npm run build
+	python3 -m unittest tests.test_camera_trace_player tests.test_camera_priority_trace tests.test_priority_publisher_supervisor tests.test_tcp_forward
+	node --test tests/test_priority_ws_bridge.mjs tests/test_player_playback.mjs
+
 analyzer-check:
 	python3 tools/l4s/analyze_mininet_benchmark.py --self-test
 	python3 tools/l4s/analyze_sustained_coexistence.py --self-test

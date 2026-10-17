@@ -41,3 +41,14 @@ The six entries in `results/records/INDEX.md`, the thesis candidate inventory,
 and retained thesis figure generators are preservation roots. Supporting and
 negative results have the same retention priority as positive results.
 Further removals and their replacements are recorded below as they complete.
+
+## CPU check
+
+`make cpu-check` now uses repository-locked Playwright, rebuilds the player,
+runs focused Python/player/bridge tests, and runs all four two-object browser
+cases. Each case reports an ANGLE SwiftShader renderer; results are in
+`results/cpu-check/`. The browser/bridge portion completed in about 20 seconds
+on this host. Native builds and CUDA reference checks remain optional.
+
+Prerequisite checks were verified to reject missing local Playwright with an
+explicit `npm ci` instruction, rather than resolving the home-directory copy.

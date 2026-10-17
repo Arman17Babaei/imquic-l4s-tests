@@ -1,0 +1,11 @@
+{
+  "name": "imquic-l4s-tests",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.19.0"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}

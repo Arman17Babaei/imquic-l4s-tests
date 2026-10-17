@@ -10,6 +10,8 @@ import test from 'node:test';
 import { chromium } from 'playwright';
 
 const root = path.resolve(import.meta.dirname, '..');
+const artifacts = path.join(root, 'results/cpu-check');
+fs.mkdirSync(artifacts, { recursive: true });
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function object(id) {
     const arrays = [new Uint32Array([id]), new Float32Array([id ? .2 : -.2, 0, -3]),
@@ -25,6 +27,8 @@ function object(id) {
 }
 
 for (const [playRequired, autoplay, dyeEnabled] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled})`, { timeout: 30000 }, async () => {
+    const resultFile = path.join(artifacts, `play-${playRequired}-auto-${autoplay}-dye-${dyeEnabled}.json`);
+    fs.rmSync(resultFile, { force: true });
     const objects = [object(0), object(1)], combined = Buffer.concat(objects);
     const manifest = { schema_version: 2, payload_encoding: 'gsp2', coordinate_system: 'source',
         scene: { id: 'late-objects', source_sha256: hash(combined), gaussian_count: 2, splat_size: 0,
@@ -100,7 +104,8 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             if (bridge.exitCode !== null || Date.now() > deadline) throw new Error(logs);
             await new Promise(resolve => setTimeout(resolve, 20));
         }
-        browser = await chromium.launch({ headless: true, args: ['--enable-unsafe-swiftshader'] });
+        browser = await chromium.launch({ headless: true,
+            args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
         const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
         const requests = [], sockets = [];
         page.on('request', request => requests.push(new URL(request.url()).pathname));
@@ -132,6 +137,12 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             await page.evaluate(() => window.__priorityMoqClose());
         }
         const state = await page.evaluate(() => window.__priorityMoqMvp);
+        const graphics = await page.evaluate(() => {
+            const gl = document.querySelector('canvas').getContext('webgl2');
+            const debug = gl.getExtension('WEBGL_debug_renderer_info');
+            return { renderer: gl.getParameter(debug ? debug.UNMASKED_RENDERER_WEBGL : gl.RENDERER) };
+        });
+        assert.match(graphics.renderer, /SwiftShader/i, 'CPU smoke must use software rendering');
         assert.equal(state.failure, null);
         if (autoplay) assert.equal(state.trace.state, 'complete');
         assert.equal(state.receivedGaussians, 2); assert.equal(state.appliedGaussians, 2);
@@ -162,9 +173,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             await page.waitForFunction(() => window.__priorityMoqMvp?.trace.state === 'complete');
             assert.equal(await page.evaluate(() => window.__priorityMoqMvp.appliedGaussians), 2);
         }
-        fs.writeFileSync(path.join(root, 'results/player-playback-regression.json'), JSON.stringify({
+        fs.writeFileSync(resultFile, JSON.stringify({
             status: 'PASS', fixture: 'two hashed SH3 objects; 100 ms motion; final object after 2000 ms',
-            openedAt, lastObjectAt, closedAt, telemetry: state }, null, 2) + '\n');
+            transport: 'simulated native delivery through the real WebSocket bridge',
+            graphics, openedAt, lastObjectAt, closedAt, telemetry: state }, null, 2) + '\n');
     } finally {
         await browser?.close();
         bridge.kill('SIGTERM');
