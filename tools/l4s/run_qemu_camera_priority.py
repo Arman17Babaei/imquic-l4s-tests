@@ -75,6 +75,7 @@ def preflight_trace(path: Path, epochs: int = 31) -> None:
         angle = math.radians(yaw)
         frames.append({"timestamp_ms": epoch * 100, "camera_position": [0, 0, 3],
             "camera_forward": [-math.sin(angle), 0, -math.cos(angle)],
+            "camera_up": [0, 1, 0],
             "yaw_degrees": yaw, "fov": 40, "aspect_ratio": 16 / 9})
     path.write_text(json.dumps(frames, indent=2) + "\n", encoding="utf-8")
 

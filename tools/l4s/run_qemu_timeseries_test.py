@@ -7,6 +7,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import socket
 import subprocess
 import sys
@@ -99,7 +100,9 @@ def password_command(command, password, timeout, stream=True, accepted=(0,)):
     child.close()
     status = child.exitstatus if child.exitstatus is not None else child.signalstatus
     if status not in accepted:
-        raise subprocess.CalledProcessError(status, command)
+        # The SSH command can contain a base64-encoded provisioning script with
+        # sudo credentials. Keep that command out of exception tracebacks.
+        raise RuntimeError(f"guest command exited with status {status}")
 
 
 def ssh_command(port, user, password, script, timeout=1200, accepted=(0,)):
@@ -179,6 +182,9 @@ def wait_for_authenticated_ssh(port, user, password, process, timeout=60):
 
 
 def main():
+    def terminate_run(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, terminate_run)
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--base",
@@ -330,7 +336,7 @@ def main():
                 copy_to_guest(port, args.user, args.password, staged)
                 staged_guest_files.append((staged_name, relative))
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
-            camera_priority = args.make_target == "l4s-camera-priority-guest-check"
+            camera_priority = args.make_target in ("l4s-camera-priority-guest-check", "l4s-camera-player-guest-check")
             configure_options = " --enable-moq-examples" if camera_priority else ""
             imquic_build = (f"make -C src -j{args.cpus} >/dev/null\n"
                             f"make -C examples imquic-moq-relay -j{args.cpus} >/dev/null\n"

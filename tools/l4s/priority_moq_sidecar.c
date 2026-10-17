@@ -42,6 +42,63 @@ static GHashTable *fetches = NULL;
 static GHashTable *updates = NULL;
 static GMutex state_mutex;
 static GMutex output_mutex;
+static GCond output_ready;
+static GCond output_space;
+static GQueue output_frames = G_QUEUE_INIT;
+static GThread *output_thread = NULL;
+static gsize output_bytes = 0, output_peak_bytes = 0;
+static gsize output_limit_bytes = 4 * 1024 * 1024;
+static gboolean output_closing = FALSE, output_failed = FALSE;
+static gint64 output_full_since = 0, output_full_us = 0;
+
+typedef struct output_frame {
+	uint8_t *data;
+	gsize length;
+} output_frame;
+
+static gpointer output_worker(gpointer unused) {
+	(void)unused;
+	for(;;) {
+		g_mutex_lock(&output_mutex);
+		while(g_queue_is_empty(&output_frames) && !output_closing)
+			g_cond_wait(&output_ready, &output_mutex);
+		output_frame *frame = g_queue_pop_head(&output_frames);
+		g_mutex_unlock(&output_mutex);
+		if(frame == NULL) break;
+		gboolean ok = fwrite(frame->data, 1, frame->length, stdout) == frame->length && fflush(stdout) == 0;
+		g_mutex_lock(&output_mutex);
+		output_bytes -= frame->length;
+		g_free(frame->data); g_free(frame);
+		if(!ok) { output_failed = TRUE; output_closing = TRUE; stopping = 1; }
+		g_cond_broadcast(&output_space);
+		g_mutex_unlock(&output_mutex);
+		if(!ok) break;
+	}
+	return NULL;
+}
+
+static void output_start(void) {
+	output_closing = FALSE; output_failed = FALSE;
+	output_bytes = output_peak_bytes = 0;
+	output_full_since = output_full_us = 0;
+	output_thread = g_thread_new("moq-output", output_worker, NULL);
+}
+
+static void output_stop(void) {
+	g_mutex_lock(&output_mutex);
+	output_closing = TRUE;
+	g_cond_broadcast(&output_ready);
+	g_cond_broadcast(&output_space);
+	g_mutex_unlock(&output_mutex);
+	g_thread_join(output_thread);
+	output_thread = NULL;
+	output_frame *frame;
+	while((frame = g_queue_pop_head(&output_frames)) != NULL) {
+		g_free(frame->data); g_free(frame);
+	}
+	output_bytes = 0;
+}
+
 
 static gpointer duplicate_bytes(const void *source, gsize size) {
 	gpointer copy = g_malloc(size);
@@ -60,7 +117,7 @@ static json_t *priority_event_message(fetch_state *fetch, const char *type,
 }
 
 static json_t *metrics_event_message(const imquic_transport_metrics *metrics, gint64 monotonic_us) {
-	return json_pack("{s:s,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I}",
+	json_t *message = json_pack("{s:s,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I,s:I}",
 		"type", "transport-metrics", "monotonic_us", (json_int_t)monotonic_us,
 		"rtt_us", (json_int_t)metrics->smoothed_rtt_us,
 		"min_rtt_us", (json_int_t)metrics->min_rtt_us,
@@ -75,6 +132,22 @@ static json_t *metrics_event_message(const imquic_transport_metrics *metrics, gi
 		"alpha_denominator", (json_int_t)metrics->prague_alpha_denominator,
 		"data_sent_bytes", (json_int_t)metrics->data_sent_bytes,
 		"data_received_bytes", (json_int_t)metrics->data_received_bytes);
+	json_object_set_new(message, "prague_pacing_interval_us", json_integer(metrics->prague_pacing_interval_us));
+	json_object_set_new(message, "pacing_quantum_bytes", json_integer(metrics->pacing_quantum_bytes));
+	json_object_set_new(message, "packets_sent", json_integer(metrics->packets_sent));
+	json_object_set_new(message, "packets_lost", json_integer(metrics->packets_lost));
+	json_object_set_new(message, "spurious_losses", json_integer(metrics->spurious_losses));
+	json_object_set_new(message, "timer_losses", json_integer(metrics->timer_losses));
+	json_object_set_new(message, "max_reorder_delay_us", json_integer(metrics->max_reorder_delay_us));
+	json_object_set_new(message, "max_reorder_gap", json_integer(metrics->max_reorder_gap));
+	g_mutex_lock(&output_mutex);
+	json_object_set_new(message, "output_queue_bytes", json_integer(output_bytes));
+	json_object_set_new(message, "output_queue_peak_bytes", json_integer(output_peak_bytes));
+	json_object_set_new(message, "output_queue_limit_bytes", json_integer(output_limit_bytes));
+	json_object_set_new(message, "output_queue_full_us", json_integer(output_full_us +
+		(output_full_since ? g_get_monotonic_time() - output_full_since : 0)));
+	g_mutex_unlock(&output_mutex);
+	return message;
 }
 
 static int parse_mode(const char *mode, imquic_congestion_controller *cc, imquic_ecn_mode *ecn) {
@@ -115,13 +188,46 @@ static void write_frame(json_t *header, const uint8_t *payload, size_t payload_l
 		return;
 	uint32_t header_len = (uint32_t)strlen(encoded);
 	uint32_t network_len = htonl(header_len);
-	g_mutex_lock(&output_mutex);
-	if(fwrite(&network_len, sizeof(network_len), 1, stdout) == 1 &&
-			fwrite(encoded, 1, header_len, stdout) == header_len && payload_len > 0)
-		fwrite(payload, 1, payload_len, stdout);
-	fflush(stdout);
-	g_mutex_unlock(&output_mutex);
+	if(output_thread == NULL) {
+		/* Also used by startup/unit helpers before the writer is started. */
+		g_mutex_lock(&output_mutex);
+		if(fwrite(&network_len, sizeof(network_len), 1, stdout) == 1 &&
+				fwrite(encoded, 1, header_len, stdout) == header_len && payload_len > 0)
+			fwrite(payload, 1, payload_len, stdout);
+		fflush(stdout);
+		g_mutex_unlock(&output_mutex);
+		free(encoded);
+		return;
+	}
+	gsize length = sizeof(network_len) + header_len + payload_len;
+	if(length > output_limit_bytes) {
+		fprintf(stderr, "native output frame exceeds bounded queue\n");
+		free(encoded); stopping = 1; return;
+	}
+	output_frame *frame = g_malloc0(sizeof(*frame));
+	frame->length = length; frame->data = g_malloc(length);
+	memcpy(frame->data, &network_len, sizeof(network_len));
+	memcpy(frame->data + sizeof(network_len), encoded, header_len);
+	if(payload_len) memcpy(frame->data + sizeof(network_len) + header_len, payload, payload_len);
 	free(encoded);
+	g_mutex_lock(&output_mutex);
+	while(!output_closing && !output_failed && output_bytes + length > output_limit_bytes) {
+		if(!output_full_since) output_full_since = g_get_monotonic_time();
+		g_cond_wait(&output_space, &output_mutex);
+	}
+	if(output_full_since) {
+		output_full_us += g_get_monotonic_time() - output_full_since;
+		output_full_since = 0;
+	}
+	if(output_closing || output_failed) {
+		g_mutex_unlock(&output_mutex);
+		g_free(frame->data); g_free(frame); return;
+	}
+	output_bytes += length;
+	output_peak_bytes = MAX(output_peak_bytes, output_bytes);
+	g_queue_push_tail(&output_frames, frame);
+	g_cond_signal(&output_ready);
+	g_mutex_unlock(&output_mutex);
 }
 
 static void emit_message(json_t *message) {
@@ -155,7 +261,7 @@ static void send_next_update(fetch_state *fetch) {
 	if(imquic_moq_update_request(connection, update_id, fetch->request_id, &parameters) < 0) {
 		emit_message(priority_event_message(fetch, "priority-failed", fetch->applied_priority,
 			fetch->desired_priority, fetch->desired_epoch, update_id));
-		emit_status(fetch, "failed", "REQUEST_UPDATE send failed");
+		emit_status(fetch, "priority-failed", "REQUEST_UPDATE send failed");
 		return;
 	}
 	fetch->update_id = update_id;
@@ -243,7 +349,7 @@ static void update_error(imquic_connection *conn, uint64_t request_id,
 		fetch->update_pending = FALSE;
 		emit_message(priority_event_message(fetch, "priority-failed", fetch->applied_priority,
 			fetch->pending_priority, fetch->pending_epoch, request_id));
-		emit_status(fetch, "failed", reason);
+		emit_status(fetch, "priority-failed", reason);
 		/* A later browser epoch may retry; the FETCH and its cursor survive. */
 	}
 	g_mutex_unlock(&state_mutex);
@@ -251,9 +357,11 @@ static void update_error(imquic_connection *conn, uint64_t request_id,
 
 static void incoming_object(imquic_connection *conn, imquic_moq_object *object) {
 	(void)conn;
+	if(stopping)
+		return;
 	g_mutex_lock(&state_mutex);
 	fetch_state *fetch = lookup_fetch(object->request_id);
-	if(fetch == NULL || fetch->complete) {
+	if(stopping || fetch == NULL || fetch->complete) {
 		g_mutex_unlock(&state_mutex);
 		return;
 	}
@@ -269,13 +377,15 @@ static void incoming_object(imquic_connection *conn, imquic_moq_object *object) 
 		"subscriber_priority", fetch->applied_priority,
 		"subscriber_epoch", (json_int_t)fetch->applied_epoch,
 		"monotonic_us", (json_int_t)g_get_monotonic_time());
-	write_frame(header, object->payload, object->payload_len);
-	json_decref(header);
+	gboolean complete = object->end_of_stream;
 	if(object->end_of_stream) {
 		fetch->complete = TRUE;
-		emit_status(fetch, "complete", NULL);
 	}
 	g_mutex_unlock(&state_mutex);
+	write_frame(header, object->payload, object->payload_len);
+	json_decref(header);
+	if(complete)
+		emit_status(fetch, "complete", NULL);
 }
 
 static gboolean track_parts(const char *scene, const char *full, imquic_moq_namespace *tns, imquic_moq_track *tn) {
@@ -402,6 +512,8 @@ static void handle_command(const char *line) {
 		return;
 	}
 	const char *type = json_string_value(json_object_get(command, "type"));
+	if(type != NULL && !strcmp(type, "close"))
+		stopping = 1;
 	g_mutex_lock(&state_mutex);
 	if(type != NULL && !strcmp(type, "open"))
 		handle_open(command);
@@ -435,13 +547,13 @@ static gpointer metrics_worker(gpointer user_data) {
 }
 
 int main(int argc, char **argv) {
-	if(argc != 3 && argc != 4) {
-		fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT [reno|prague]\n", argv[0]);
+	if(argc < 3 || argc > 5) {
+		fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT [reno|prague [CONGESTION_OPTIONS]]\n", argv[0]);
 		return 2;
 	}
 	imquic_congestion_controller cc;
 	imquic_ecn_mode ecn;
-	if(parse_mode(argc == 4 ? argv[3] : "reno", &cc, &ecn) < 0) {
+	if(parse_mode(argc >= 4 ? argv[3] : "reno", &cc, &ecn) < 0) {
 		fprintf(stderr, "invalid transport mode: %s\n", argv[3]);
 		return 2;
 	}
@@ -459,6 +571,7 @@ int main(int argc, char **argv) {
 		IMQUIC_CONFIG_REMOTE_HOST, argv[1],
 		IMQUIC_CONFIG_REMOTE_PORT, atoi(argv[2]),
 		IMQUIC_CONFIG_CONGESTION_CONTROL, cc,
+		IMQUIC_CONFIG_CONGESTION_OPTIONS, argc == 5 ? argv[4] : NULL,
 		IMQUIC_CONFIG_ECN, ecn,
 		IMQUIC_CONFIG_RAW_QUIC, TRUE,
 		IMQUIC_CONFIG_WEBTRANSPORT, FALSE,
@@ -477,6 +590,8 @@ int main(int argc, char **argv) {
 	imquic_set_request_update_accepted_cb(client, update_accepted);
 	imquic_set_request_update_error_cb(client, update_error);
 	imquic_set_incoming_object_cb(client, incoming_object);
+	signal(SIGPIPE, SIG_IGN);
+	output_start();
 	imquic_start_endpoint(client);
 	GThread *metrics_thread = g_thread_new("transport-metrics", metrics_worker, NULL);
 	char *line = NULL;
@@ -494,7 +609,8 @@ int main(int argc, char **argv) {
 	g_thread_join(metrics_thread);
 	imquic_shutdown_endpoint(client);
 	imquic_deinit();
+	output_stop();
 	g_hash_table_unref(updates);
 	g_hash_table_unref(fetches);
-	return 0;
+	return output_failed ? 1 : 0;
 }

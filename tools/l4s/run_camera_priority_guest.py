@@ -32,14 +32,14 @@ def case_order() -> list[tuple[str, int]]:
             ("prague", 2), ("prague", 3), ("reno", 3)]
 
 
-def shaping_commands(device: str) -> list[list[str]]:
+def shaping_commands(device: str, rate: str = "20mbit") -> list[list[str]]:
     return [
         ["tc", "qdisc", "replace", "dev", device, "root", "handle", "1:",
          "netem", "delay", "20ms", "limit", "100000"],
         ["tc", "qdisc", "replace", "dev", device, "parent", "1:1", "handle",
          "10:", "htb", "default", "1"],
         ["tc", "class", "replace", "dev", device, "parent", "10:", "classid",
-         "10:1", "htb", "rate", "20mbit", "burst", "32k", "cburst", "32k"],
+         "10:1", "htb", "rate", rate, "burst", "32k", "cburst", "32k"],
         ["tc", "qdisc", "replace", "dev", device, "parent", "10:1", "handle",
          "20:", "dualpi2", "target", "15ms", "tupdate", "16ms",
          "step_thresh", "1ms"],
@@ -94,8 +94,30 @@ def counters(node: Any | None, device: str) -> dict[str, Any]:
     return json.loads(text)[0]
 
 
-def configure_device(node: Any | None, device: str) -> None:
-    for command in shaping_commands(device):
+def player_shaping_commands(device: str, rate: str, *, propagation: bool) -> list[list[str]]:
+    """Separate propagation from dropping AQM: netem must not parent DualPI2.
+
+    On the guest kernel, child drops under netem can underflow its queue
+    accounting and permanently block the interface. The player puts the AQM
+    on host egress and 40 ms propagation on switch egress, in each direction.
+    """
+    if propagation:
+        return [["tc", "qdisc", "replace", "dev", device, "root", "handle", "1:",
+                 "netem", "delay", "40ms", "limit", "100000"]]
+    return [
+        ["tc", "qdisc", "replace", "dev", device, "root", "handle", "10:", "htb", "default", "1"],
+        ["tc", "class", "replace", "dev", device, "parent", "10:", "classid", "10:1",
+         "htb", "rate", rate, "burst", "32k", "cburst", "32k"],
+        ["tc", "qdisc", "replace", "dev", device, "parent", "10:1", "handle", "20:",
+         "dualpi2", "target", "15ms", "tupdate", "16ms", "step_thresh", "5ms"],
+    ]
+
+
+def configure_device(node: Any | None, device: str, rate: str = "20mbit", *,
+                     player_propagation: bool | None = None) -> None:
+    commands = (shaping_commands(device, rate) if player_propagation is None else
+                player_shaping_commands(device, rate, propagation=player_propagation))
+    for command in commands:
         if node is None:
             subprocess.run(command, check=True)
         else:

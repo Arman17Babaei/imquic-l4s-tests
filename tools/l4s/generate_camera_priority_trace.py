@@ -11,8 +11,8 @@ from typing import Any
 
 
 def _player_coordinates(vector: list[float]) -> list[float]:
-    """Apply the player's -90 degree X rotation."""
-    return [float(vector[0]), float(vector[2]), -float(vector[1])]
+    """Keep source world coordinates, including view-dependent SH directions."""
+    return [float(value) for value in vector]
 
 
 def _yaw_at(timestamp_ms: int) -> float:
@@ -23,11 +23,26 @@ def _yaw_at(timestamp_ms: int) -> float:
     return -90.0 - 270.0 * (timestamp_ms - 25_000) / 25_000.0
 
 
-def _rotate_y(vector: list[float], degrees: float) -> list[float]:
+def _normalize(vector: list[float]) -> list[float]:
+    norm = math.sqrt(sum(value * value for value in vector))
+    if norm < 1e-12:
+        raise ValueError("camera basis contains a zero vector")
+    return [value / norm for value in vector]
+
+
+def _rotate_axis(vector: list[float], axis: list[float], degrees: float) -> list[float]:
+    """Rotate a direction around the recorded camera-up axis."""
     angle = math.radians(degrees)
     cosine, sine = math.cos(angle), math.sin(angle)
-    x, _, z = vector
-    return [cosine * x + sine * z, 0.0, -sine * x + cosine * z]
+    x, y, z = vector
+    ux, uy, uz = axis
+    dot = ux * x + uy * y + uz * z
+    cross = [uy * z - uz * y, uz * x - ux * z, ux * y - uy * x]
+    return [
+        x * cosine + cross[0] * sine + ux * dot * (1 - cosine),
+        y * cosine + cross[1] * sine + uy * dot * (1 - cosine),
+        z * cosine + cross[2] * sine + uz * dot * (1 - cosine),
+    ]
 
 
 def generate_trace(source_frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -35,13 +50,13 @@ def generate_trace(source_frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
         raise ValueError("source trace is empty")
     first = source_frames[0]
     view = first["view_matrix"]
-    source_forward = [-float(view[2][axis]) for axis in range(3)]
-    transformed = _player_coordinates(source_forward)
-    horizontal = [transformed[0], 0.0, transformed[2]]
-    norm = math.hypot(horizontal[0], horizontal[2])
-    if norm < 1e-12:
-        raise ValueError("first camera frame has no horizontal heading")
-    initial_forward = [horizontal[0] / norm, 0.0, horizontal[2] / norm]
+    initial_forward = _normalize(_player_coordinates([-float(view[2][axis]) for axis in range(3)]))
+    recorded_up = _normalize(_player_coordinates([float(view[1][axis]) for axis in range(3)]))
+    projection = sum(a * b for a, b in zip(recorded_up, initial_forward))
+    yaw_axis = _normalize([value - projection * forward
+                           for value, forward in zip(recorded_up, initial_forward)])
+    yaw_axis = [-value for value in yaw_axis]
+    camera_up = list(yaw_axis)
     position = _player_coordinates(first["camera_position"])
     frames = []
     for timestamp_ms in range(0, 50_001, 100):
@@ -49,9 +64,10 @@ def generate_trace(source_frames: list[dict[str, Any]]) -> list[dict[str, Any]]:
         frames.append({
             "timestamp_ms": timestamp_ms,
             "camera_position": position,
-            "camera_forward": _rotate_y(initial_forward, yaw),
+            "camera_forward": _rotate_axis(initial_forward, yaw_axis, yaw),
+            "camera_up": camera_up,
             "yaw_degrees": yaw,
-            "fov": 40.0,
+            "fov": float(first["fov"]),
             "aspect_ratio": 16.0 / 9.0,
         })
     return frames

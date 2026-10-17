@@ -25,24 +25,27 @@ class CameraPriorityTraceTest(unittest.TestCase):
         self.assertEqual([frames[index]["yaw_degrees"] for index in (0, 150, 250, 500)],
                          [0.0, -180.0, -90.0, -360.0])
         self.assertEqual(frames[0]["camera_position"], [
-            -3.1984000000000004, -0.06699586588800002, 0.576640814336])
-        self.assertTrue(all(frame["fov"] == 40.0 for frame in frames))
+            -3.1984000000000004, -0.576640814336, -0.06699586588800002])
+        self.assertTrue(all(frame["fov"] == source[0]["fov"] for frame in frames))
         first = frames[0]["camera_forward"]
         last = frames[-1]["camera_forward"]
-        self.assertAlmostEqual(first[1], 0.0)
+        up = frames[0]["camera_up"]
         self.assertAlmostEqual(math.sqrt(sum(value * value for value in first)), 1.0)
+        self.assertAlmostEqual(math.sqrt(sum(value * value for value in up)), 1.0)
+        self.assertAlmostEqual(sum(a * b for a, b in zip(first, up)), 0.0)
+        self.assertTrue(all(frame["camera_up"] == up for frame in frames))
         self.assertGreater(sum(a * b for a, b in zip(first, last)), 1.0 - 1e-12)
 
-    def test_rejects_a_vertical_first_heading(self) -> None:
+    def test_rejects_a_zero_camera_basis(self) -> None:
         source = [{
             "timestamp_ms": 0,
             "camera_position": [0.0, 0.0, 0.0],
             "view_matrix": [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
-                            [0.0, 0.0, 1.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
+                            [0.0, 0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]],
             "fov": 60.0,
         }]
 
-        with self.assertRaisesRegex(ValueError, "horizontal heading"):
+        with self.assertRaisesRegex(ValueError, "zero vector"):
             MODULE.generate_trace(source)
 
 

@@ -41,12 +41,14 @@ def copy(source: socket.socket, destination: socket.socket) -> None:
 def handle(client: socket.socket, target: tuple[str, int], network_ns: int | None,
            root_ns: int | None) -> None:
     client.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+    client.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     client.settimeout(None)
     try:
         if network_ns is not None:
             set_network_namespace(network_ns)
         upstream = socket.create_connection(target, timeout=10)
         upstream.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
+        upstream.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
         upstream.settimeout(None)
     except OSError:
         client.close()
@@ -54,8 +56,20 @@ def handle(client: socket.socket, target: tuple[str, int], network_ns: int | Non
     finally:
         if network_ns is not None and root_ns is not None:
             set_network_namespace(root_ns)
-    threading.Thread(target=copy, args=(client, upstream), daemon=True).start()
+    inbound = threading.Thread(target=copy, args=(client, upstream), daemon=True)
+    inbound.start()
     copy(upstream, client)
+    # EOF in one direction is a TCP half-close. Let the browser return its
+    # remaining ACKs/close frame before closing a socket with unread input,
+    # which can reset the connection and discard the final audit in flight.
+    inbound.join(timeout=10)
+    if inbound.is_alive():
+        for peer in (client, upstream):
+            try:
+                peer.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+        inbound.join(timeout=1)
     upstream.close()
     client.close()
 

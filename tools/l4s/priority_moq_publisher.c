@@ -8,6 +8,7 @@
 #include <string.h>
 
 #include <glib.h>
+#include <glib/gstdio.h>
 #include <imquic/imquic.h>
 #include <imquic/moq.h>
 
@@ -27,6 +28,8 @@ static char *root = NULL;
 static volatile gint tracks_queued = 0;
 static imquic_connection *publisher_connection = NULL;
 static char *ready_path = NULL;
+static GMutex publisher_mutex;
+static volatile gint publication_failed = 0;
 
 static gpointer duplicate_bytes(const void *source, gsize size) {
 	gpointer copy = g_malloc(size);
@@ -52,8 +55,34 @@ static void track_destroy(published_track *track) {
 
 static void signal_handler(int signum) { (void)signum; stopping = 1; }
 
+static void publisher_failed(void *user_data) {
+	(void)user_data;
+	fprintf(stderr, "publisher: connection failed\n");
+	g_atomic_int_set(&publication_failed, 1);
+	if(ready_path != NULL) g_unlink(ready_path);
+	stopping = 1;
+}
+
+static void publisher_gone(imquic_connection *conn, uint64_t code, const char *reason) {
+	fprintf(stderr, "publisher: connection gone (%"PRIu64"): %s\n", code, reason ? reason : "closed");
+	g_mutex_lock(&publisher_mutex);
+	if(publisher_connection == conn) {
+		publisher_connection = NULL;
+		imquic_connection_unref(conn);
+	}
+	g_mutex_unlock(&publisher_mutex);
+	if(!stopping) {
+		g_atomic_int_set(&publication_failed, 1);
+		if(ready_path != NULL) g_unlink(ready_path);
+		stopping = 1;
+	}
+}
+
 static void publish_ready(imquic_connection *conn) {
+	g_mutex_lock(&publisher_mutex);
+	imquic_connection_ref(conn);
 	publisher_connection = conn;
+	g_mutex_unlock(&publisher_mutex);
 	for(guint index = 0; index < catalog->len; index++) {
 		published_track *track = g_ptr_array_index(catalog, index);
 		imquic_moq_namespace tns = { .buffer = (uint8_t *)scene, .length = strlen(scene) };
@@ -107,6 +136,8 @@ static void publish_error(imquic_connection *conn, uint64_t request_id,
 		imquic_moq_request_error_code code, const char *reason, uint64_t retry, imquic_moq_redirect *redirect) {
 	(void)conn; (void)request_id; (void)code; (void)retry; (void)redirect;
 	fprintf(stderr, "publisher: PUBLISH rejected: %s\n", reason != NULL ? reason : "unknown error");
+	g_atomic_int_set(&publication_failed, 1);
+	if(ready_path != NULL) g_unlink(ready_path);
 	stopping = 1;
 }
 
@@ -161,6 +192,8 @@ int main(int argc, char **argv) {
 		IMQUIC_CONFIG_MAX_BIDI_STREAMS, 8192, IMQUIC_CONFIG_MAX_UNI_STREAMS, 8192,
 		IMQUIC_CONFIG_MOQ_MAX_REQUEST_UPDATES, 4096, IMQUIC_CONFIG_DONE, NULL);
 	if(client == NULL) return 1;
+	imquic_set_connection_failed_cb(client, publisher_failed);
+	imquic_set_moq_connection_gone_cb(client, publisher_gone);
 	imquic_set_moq_ready_cb(client, publish_ready);
 	imquic_set_publish_accepted_cb(client, publish_accepted);
 	imquic_set_publish_error_cb(client, publish_error);
@@ -170,6 +203,7 @@ int main(int argc, char **argv) {
 		if(!readiness_written && ready_path != NULL &&
 				g_atomic_int_get(&tracks_queued) == (gint)catalog->len) {
 			imquic_transport_metrics metrics = { 0 };
+			g_mutex_lock(&publisher_mutex);
 			if(publisher_connection != NULL && imquic_get_transport_metrics(publisher_connection, &metrics) == 0 &&
 					metrics.queued_stream_bytes == 0) {
 				char *document = g_strdup_printf("{\"tracks\":%u,\"data_sent_bytes\":%" G_GUINT64_FORMAT
@@ -179,10 +213,12 @@ int main(int argc, char **argv) {
 				g_free(document);
 				readiness_written = TRUE;
 			}
+			g_mutex_unlock(&publisher_mutex);
 		}
 		g_usleep(100000);
 	}
+	if(ready_path != NULL) g_unlink(ready_path);
 	imquic_shutdown_endpoint(client); imquic_deinit();
 	g_hash_table_unref(tracks); g_ptr_array_unref(catalog); g_free(scene); g_free(root); g_free(ready_path);
-	return 0;
+	return g_atomic_int_get(&publication_failed) ? 1 : 0;
 }

@@ -1,0 +1,3076 @@
+{
+  "date": "2026-10-14",
+  "root": "/home/arman-babaei/sharif/thesis/imquic-l4s-tests",
+  "threshold_bytes": 50000000,
+  "rule": "Delete a >50 MB file only when its nearest provenance.json records both a repository commit and executable command argv. Retain every other candidate.",
+  "candidate_count": 339,
+  "delete_count": 307,
+  "retain_count": 32,
+  "deleted_bytes": 79400682730,
+  "deleted_by_extension": {
+    ".bundle": 293,
+    ".gif": 11,
+    ".pcap": 3
+  },
+  "files": [
+    {
+      "path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/inputs/l4s-0p25/high-priority.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/inputs/l4s-0p25/low-priority.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/inputs/l4s-0p25/high-priority-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 50482249,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 58326972,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-two-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/inputs/l4s-0p25/high-priority.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/inputs/l4s-0p25/low-priority.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/inputs/l4s-0p25/high-priority-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/l4s-0p25-rep-01/classic_egress.pcap",
+      "bytes": 188203103,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/l4s-0p25-rep-01/l4s_ingress.pcap",
+      "bytes": 188198609,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/l4s-0p25-rep-01/l4s_egress.pcap",
+      "bytes": 188203103,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 86021046,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 89135198,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/records/3dgs-reordering-l4s025-single-l4s-20260820/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 51458133,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 127689938,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 231713409,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 231713409,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 231584089,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 231584089,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 231584089,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/l4s-0p75-rep-01/high-prague/received.bundle",
+      "bytes": 254542727,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/inputs/l4s-0p75/reno.bundle",
+      "bytes": 115720811,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 115720811,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/inputs/l4s-0p75/high-prague-ordered.bundle",
+      "bytes": 347576687,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/inputs/l4s-0p75/prague.bundle",
+      "bytes": 347576687,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/l4s-1-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 51425631,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 265661508,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/inputs/l4s-1/prague.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 237078192,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-classic-20260822T180326Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-step10-20260822-20260822T064925Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 164225751,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-step10-20260822-20260822T064925Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-step10-20260822-20260822T064925Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-step10-20260822-20260822T064925Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-step10-20260822-20260822T064925Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-step10-20260822-20260822T064925Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "2f6b55311a659adb701b11d16a9ac9b0b062e21b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "2f6b55311a659adb701b11d16a9ac9b0b062e21b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "2f6b55311a659adb701b11d16a9ac9b0b062e21b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "2f6b55311a659adb701b11d16a9ac9b0b062e21b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 177592295,
+      "decision": "delete",
+      "commit": "2f6b55311a659adb701b11d16a9ac9b0b062e21b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160710Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/classic/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 268958241,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/classic/inputs/l4s-0/reno.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/classic/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/l4s/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/l4s/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/l4s/inputs/l4s-1/prague.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-03-rerun-final-20260825T195325Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/l4s-0p75-rep-01/low-reno/received.bundle",
+      "bytes": 71460217,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/l4s-0p75-rep-01/high-prague/received.bundle",
+      "bytes": 97510632,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/l4s-0p75-rep-02/low-reno/received.bundle",
+      "bytes": 63215371,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/l4s-0p75-rep-02/high-prague/received.bundle",
+      "bytes": 108791175,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/inputs/l4s-0p75/reno.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/inputs/l4s-0p75/high-prague-ordered.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/inputs/l4s-0p75/prague.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-75retry-20260822-20260822T034708Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 51200961,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 205175301,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-classic-0p25-links400-100-20260823T050114Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-classic-1rep-b-20260821-20260821T175914Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 177350564,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-classic-1rep-b-20260821-20260821T175914Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-classic-1rep-b-20260821-20260821T175914Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-classic-1rep-b-20260821-20260821T175914Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-classic-1rep-b-20260821-20260821T175914Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-classic-1rep-b-20260821-20260821T175914Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160223Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 123225380,
+      "decision": "delete",
+      "commit": "228c1a7e4be775232efec7968d1b60375842f954",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160223Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160223Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "228c1a7e4be775232efec7968d1b60375842f954",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160223Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160223Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "228c1a7e4be775232efec7968d1b60375842f954",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T160223Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "eb251c6d9dea0222db252c0d61599c6c50568955",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "eb251c6d9dea0222db252c0d61599c6c50568955",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "eb251c6d9dea0222db252c0d61599c6c50568955",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "eb251c6d9dea0222db252c0d61599c6c50568955",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 128173400,
+      "decision": "delete",
+      "commit": "eb251c6d9dea0222db252c0d61599c6c50568955",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "eb251c6d9dea0222db252c0d61599c6c50568955",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-l4s-classic-0p25-20260823T044451Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/inputs/l4s-0p25/reno.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/inputs/l4s-0p25/prague.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 85103842,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 126193197,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-one-20260821T062649Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 133611113,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 149974513,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-100-20260822-20260822T035037Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 340618875,
+      "decision": "delete",
+      "commit": "5324923b6147548492cfb2f3877974e6e9d2326f",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 340618875,
+      "decision": "delete",
+      "commit": "5324923b6147548492cfb2f3877974e6e9d2326f",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 113652066,
+      "decision": "delete",
+      "commit": "5324923b6147548492cfb2f3877974e6e9d2326f",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 113652066,
+      "decision": "delete",
+      "commit": "5324923b6147548492cfb2f3877974e6e9d2326f",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 204040211,
+      "decision": "delete",
+      "commit": "5324923b6147548492cfb2f3877974e6e9d2326f",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 113652066,
+      "decision": "delete",
+      "commit": "5324923b6147548492cfb2f3877974e6e9d2326f",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-cyclic-fov50-l4s-l4s-0p25-links400-100-20260823T091539Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 348843713,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-server-l4s-20260822-20260822T035736Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 177350564,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 175416716,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-classic-20260822-20260822T040218Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 57119267,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 137076126,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/l4s-0p75-rep-01/high-prague/received.bundle",
+      "bytes": 139735167,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/inputs/l4s-0p75/reno.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/inputs/l4s-0p75/high-prague-ordered.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/inputs/l4s-0p75/prague.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/l4s-1-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 679708740,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 177350564,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 151666630,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-step5-table-20260821T111820Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-b-20260821-20260821T194053Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 144560886,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-b-20260821-20260821T194053Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-b-20260821-20260821T194053Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-b-20260821-20260821T194053Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-b-20260821-20260821T194053Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-b-20260821-20260821T194053Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "a12ab4805c4ec9355fed0dbdc168dff1525a2a28",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "a12ab4805c4ec9355fed0dbdc168dff1525a2a28",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "a12ab4805c4ec9355fed0dbdc168dff1525a2a28",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "a12ab4805c4ec9355fed0dbdc168dff1525a2a28",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 177592295,
+      "decision": "delete",
+      "commit": "a12ab4805c4ec9355fed0dbdc168dff1525a2a28",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T161313Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 161808441,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 163017096,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-target20-update32-20260822-20260822T050311Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 124118221,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "294c044969a4d4836242fe421669451b3c547c3d",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reno-cwnd256804-v2-l4s-classic-0p25-20260823T045014Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/classic/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 204927456,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/classic/inputs/l4s-0/reno.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/classic/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/l4s/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 433985346,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/l4s/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/l4s/inputs/l4s-1/prague.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-02-rerun3-final-20260825T182350Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/classic/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 229410587,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/classic/inputs/l4s-0/reno.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/classic/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/l4s/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 299376900,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/l4s/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/l4s/inputs/l4s-1/prague.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-final-20260825T164914Z/l4s/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 347476009,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 51354866,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 88756152,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 115821489,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 231713409,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 231713409,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 231584089,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 231584089,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 231584089,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/l4s-0p75-rep-01/high-prague/received.bundle",
+      "bytes": 256482507,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/inputs/l4s-0p75/reno.bundle",
+      "bytes": 115720811,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 115720811,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/inputs/l4s-0p75/high-prague-ordered.bundle",
+      "bytes": 347576687,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/inputs/l4s-0p75/prague.bundle",
+      "bytes": 347576687,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/l4s-1-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 51423588,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 266386701,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/inputs/l4s-1/prague.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 215137113,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 463297474,
+      "decision": "delete",
+      "commit": "5b29b6ef8b5a017a23e7dfd48ba25be9b1041d4b",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-object10s-l4s-l4s-20260822T175156Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-20260822-20260822T063151Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 160822334,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-20260822-20260822T063151Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-20260822-20260822T063151Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-20260822-20260822T063151Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-20260822-20260822T063151Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-warm10-20260822-20260822T063151Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/inputs/l4s-0p5/reno.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/inputs/l4s-0p5/prague.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/l4s-0p5-rep-01/low-reno/received.bundle",
+      "bytes": 66610962,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 101378328,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/l4s-0p5-rep-02/low-reno/received.bundle",
+      "bytes": 64940085,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/l4s-0p5-rep-02/high-prague/received.bundle",
+      "bytes": 107582520,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-50-20260822-20260822T033818Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-classic-1rep-a-20260821-20260821T174830Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 173482868,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-classic-1rep-a-20260821-20260821T174830Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-classic-1rep-a-20260821-20260821T174830Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-classic-1rep-a-20260821-20260821T174830Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-classic-1rep-a-20260821-20260821T174830Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-classic-1rep-a-20260821-20260821T174830Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 149974513,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 143593962,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-rtt20-retry-20260822-20260822T054852Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-a-20260821-20260821T193012Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 162533634,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-a-20260821-20260821T193012Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-a-20260821-20260821T193012Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-a-20260821-20260821T193012Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-a-20260821-20260821T193012Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-trials-dualpi2-1rep-a-20260821-20260821T193012Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155837Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 127736377,
+      "decision": "delete",
+      "commit": "00458ae70bf46cdba0b055a8c134b3f24bbfccc4",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155837Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155837Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "00458ae70bf46cdba0b055a8c134b3f24bbfccc4",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155837Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155837Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "00458ae70bf46cdba0b055a8c134b3f24bbfccc4",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155837Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/rep-02/low-reno/received.bundle",
+      "bytes": 316450361,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/rep-02/high-prague/received.bundle",
+      "bytes": 161064065,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/rep-01/low-reno/received.bundle",
+      "bytes": 316450361,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/rep-01/high-prague/received.bundle",
+      "bytes": 161064065,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/inputs/high-priority.bundle",
+      "bytes": 161064065,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/inputs/low-priority.bundle",
+      "bytes": 316450361,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/rep-03/low-reno/received.bundle",
+      "bytes": 316450361,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/rep-03/high-prague/received.bundle",
+      "bytes": 161064065,
+      "decision": "delete",
+      "commit": "e77af7f3b516001eefe907d863f7657c88546ae7",
+      "execution_script": "tools/l4s/run_3dgs_priority_split.py",
+      "metadata_path": "results/l4s/qemu-3dgs-priority-split-20260818T135641Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/l4s-0p25-rep-02/low-reno/received.bundle",
+      "bytes": 62517420,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/l4s-0p25-rep-02/high-prague/received.bundle",
+      "bytes": 109516368,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/inputs/l4s-0p25/reno.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/inputs/l4s-0p25/prague.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 65194295,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 106757196,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-25-20260822-20260822T033432Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/l4s-0p75-rep-01/high-prague/received.bundle",
+      "bytes": 146355561,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/l4s-0p75-rep-02/high-prague/received.bundle",
+      "bytes": 145720284,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/inputs/l4s-0p75/reno.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/inputs/l4s-0p75/high-prague-ordered.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/inputs/l4s-0p75/prague.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-75retry-20260822-20260822T031741Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 177108833,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 176867102,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-50m-zero-rtt-20260822-20260822T054015Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 130615740,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/l4s-0-rep-02/low-reno/received.bundle",
+      "bytes": 131842162,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-l4s-l4s-0-20260822-20260822T033100Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/inputs/l4s-0p25/high-priority.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/inputs/l4s-0p25/low-priority.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/inputs/l4s-0p25/high-priority-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/inputs/l4s-0p25/low-priority-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 667379729,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 58327922,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "0daf13444aa9d715dff51a4a2c8e6e64210cd892",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-reordering-eligible-rank-viewport-l4s025-20260821T034445Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 71015196,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 70773465,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-recorded20-20260822-20260822T052732Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-rerun-20260825T164202Z/classic/inputs/l4s-0/reno.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-rerun-20260825T164202Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-rerun-20260825T164202Z/classic/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "delete",
+      "commit": "080d925f4fad84a2809b200496e36161b98646e1",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-rerun-20260825T164202Z/classic/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/inputs/l4s-0p25/reno.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/inputs/l4s-0p25/prague.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/l4s-0p25-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 96773805,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "77ef06cfd194772c7c5e55e85e74f6ef07af3508",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-classic-one-20260821T062051Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 59536577,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 112981448,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/l4s-0p5-rep-01/low-reno/received.bundle",
+      "bytes": 61019930,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 110771818,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/l4s-0p75-rep-01/low-reno/received.bundle",
+      "bytes": 60556330,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/l4s-0p75-rep-01/high-prague/received.bundle",
+      "bytes": 111255280,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/inputs/l4s-0p75/reno.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/inputs/l4s-0p75/high-prague-ordered.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/inputs/l4s-0p75/prague.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/l4s-1-rep-01/render-lag-0ms/trace.gif",
+      "bytes": 599703980,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 129890547,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 165177335,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "7501d74ffcc1f00bbb845b7c199cc4d091503b85",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-l4s-l4s-step5-table-20260821T112935Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/l4s-0p25-rep-02/high-prague/received.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/inputs/l4s-0p25/reno.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/inputs/l4s-0p25/low-reno-ordered.bundle",
+      "bytes": 358250029,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/inputs/l4s-0p25/high-prague-ordered.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/inputs/l4s-0p25/prague.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/l4s-0p25-rep-01/low-reno/received.bundle",
+      "bytes": 52526378,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/l4s-0p25-rep-01/high-prague/received.bundle",
+      "bytes": 119264397,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p25/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/inputs/l4s-0p5/reno.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/inputs/l4s-0p5/low-reno-ordered.bundle",
+      "bytes": 238873433,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/inputs/l4s-0p5/high-prague-ordered.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/inputs/l4s-0p5/prague.bundle",
+      "bytes": 238640993,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/l4s-0p5-rep-01/high-prague/received.bundle",
+      "bytes": 146203746,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/l4s-0p5-rep-02/high-prague/received.bundle",
+      "bytes": 149249320,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p5/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/l4s-0p75-rep-02/high-prague/received.bundle",
+      "bytes": 152399206,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/inputs/l4s-0p75/reno.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/inputs/l4s-0p75/low-reno-ordered.bundle",
+      "bytes": 119415586,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/inputs/l4s-0p75/prague.bundle",
+      "bytes": 358098840,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0p75/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 175900178,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 175658447,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-1/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/l4s-0-rep-01/low-reno/received.bundle",
+      "bytes": 125319067,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/l4s-0-rep-02/low-reno/received.bundle",
+      "bytes": 125077336,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "/home/p4/imquic-qemu-test/tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-split2-classic-20260822b-20260822T030450Z/fraction-0/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/l4s-1-rep-02/high-prague/received.bundle",
+      "bytes": 151908361,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/l4s-1-rep-01/high-prague/received.bundle",
+      "bytes": 156225366,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/inputs/l4s-1/high-prague-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/inputs/l4s-1/prague.bundle",
+      "bytes": 477514402,
+      "decision": "delete",
+      "commit": "201e45a8c35c8ddb9b8583e11752e6c86e2ca785",
+      "execution_script": "tools/l4s/run_3dgs_reordering.py",
+      "metadata_path": "results/l4s/qemu-3dgs-isolated-client-dualpi2-20260822-20260822T040555Z/provenance.json",
+      "reason": "nearest run provenance contains repository commit and executable script argv"
+    }
+  ],
+  "retained": [
+    {
+      "path": "deps/gaussian-player/Kitty_AndyOne.splat",
+      "bytes": 53282752,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/3dgs/bicycle.splat",
+      "bytes": 115715296,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/3dgs/original-client/point-cloud.cache",
+      "bytes": 1388389121,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/imageio_ffmpeg/binaries/ffmpeg-linux-x86_64-v7.0.2",
+      "bytes": 79826272,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/torch/lib/libtorch_cpu.so",
+      "bytes": 438418417,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/torch/lib/libtorch_cuda.so",
+      "bytes": 469850385,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/triton/_C/libtriton.so",
+      "bytes": 461559216,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/nccl/lib/libnccl.so.2",
+      "bytes": 236524880,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcublas.so.13",
+      "bytes": 54177976,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcusolverMg.so.12",
+      "bytes": 103956840,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcusolver.so.12",
+      "bytes": 141152872,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libnvJitLink.so.13",
+      "bytes": 97839144,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcublasLt.so.13",
+      "bytes": 541607888,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcufft.so.12",
+      "bytes": 286542352,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libnvrtc.alt.so.13",
+      "bytes": 109821488,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcurand.so.10",
+      "bytes": 132698328,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libnvrtc.so.13",
+      "bytes": 109338064,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cu13/lib/libcusparse.so.12",
+      "bytes": 162565256,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cusparselt/lib/libcusparseLt.so.0",
+      "bytes": 233912153,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_engines_precompiled.so.9",
+      "bytes": 245391920,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_heuristic.so.9",
+      "bytes": 60822040,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/venvs/3dgs/lib/python3.12/site-packages/nvidia/cudnn/lib/libcudnn_adv.so.9",
+      "bytes": 109169104,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155551Z/fraction-0/inputs/l4s-0/reno.bundle",
+      "bytes": 477514402,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-3dgs-prague-first-l4s-l4s-20260822T155551Z/fraction-0/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 477514402,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-20260825T163645Z/classic/inputs/l4s-0/reno.bundle",
+      "bytes": 454270917,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/qemu-thesis-3dgs-pair-rep-01-20260825T163645Z/classic/inputs/l4s-0/low-reno-ordered.bundle",
+      "bytes": 454270917,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/3dgs-preparation/point_cloud.cache",
+      "bytes": 1388389121,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/l4s/3dgs-preparation/scene.bundle",
+      "bytes": 477514402,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "results/downloads/torch-2.5.1+cpu-cp312-cp312-linux_x86_64.whl",
+      "bytes": 155451392,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "data/point_cloud.ply",
+      "bytes": 896795076,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "data/redandblack.zip",
+      "bytes": 1241096174,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    },
+    {
+      "path": "data/loot.zip",
+      "bytes": 1201242833,
+      "decision": "retain",
+      "commit": null,
+      "execution_script": null,
+      "metadata_path": null,
+      "reason": "no run provenance with both a repository commit and executable script argv"
+    }
+  ],
+  "post_delete": {
+    "removed_count": 307,
+    "all_absent": true,
+    "still_present": [],
+    "completed": true
+  }
+}

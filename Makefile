@@ -6,7 +6,7 @@ FETCH_CONCURRENCY_FIXTURE := $(IMQUIC_DIR)/src/imquic-fetch-concurrency
 THREEDGS_BACKGROUND_MBPS ?= 150
 DYNAMIC_LAPIS_PYTHON ?= python3
 
-.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-priority-mvp-check priority-audit-loopback-check build-3dgs-priority-mvp build-3dgs-priority-mvp-only 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check l4s-camera-priority-guest-check moq-loopback-check
+.PHONY: init analyzer-check experiment-record-check reno-fairness-check reno-step-join-check fetch-concurrency-check build-fetch-concurrency-fixture build-fetch-concurrency-fixture-only l4s-fetch-concurrency-check l4s-fetch-concurrency-qemu-check 3dgs-deadline-check 3dgs-static-export 3dgs-static-export-check 3dgs-static-verify 3dgs-native-loopback-check 3dgs-priority-mvp-check camera-trace-player-check priority-audit-loopback-check build-3dgs-priority-mvp build-3dgs-priority-mvp-only 3dgs-training-init 3dgs-training-stage 3dgs-training-acceptance 3dgs-training-full build build-3dgs-fixture build-3dgs-fixture-only build-3dgs-native build-3dgs-native-only l4s-timeseries-guest-check l4s-mininet-benchmark-guest-check l4s-dualpi2-reference-guest-check l4s-dualpi2-reference-qemu-check l4s-sustained-moq-check l4s-sustained-single-switch-check l4s-reno-fairness-check l4s-reno-step-join-check l4s-3dgs-deadline-check l4s-3dgs-shared-check l4s-3dgs-priority-split-check l4s-3dgs-reordering-check l4s-3dgs-reordering-matrix-check l4s-3dgs-native-guest-check l4s-3dgs-native-qemu-check l4s-camera-priority-guest-check moq-loopback-check
 
 init:
 	git submodule update --init
@@ -158,6 +158,11 @@ build-3dgs-priority-mvp-only:
 		$$(pkg-config --libs glib-2.0 jansson)
 	/tmp/priority-moq-sidecar-unit
 	node --check tools/l4s/priority_ws_bridge.mjs
+
+camera-trace-player-check: 3dgs-priority-mvp-check
+	python3 -m unittest tests.test_camera_trace_player
+	node --check tools/l4s/camera_trace_browser_runner.mjs
+	python3 -m py_compile tools/l4s/camera_trace_player_server.py tools/l4s/run_camera_trace_player.py
 
 priority-audit-loopback-check: build-3dgs-priority-mvp-only
 	cd $(IMQUIC_DIR)/examples && $(MAKE) imquic-moq-relay
@@ -333,6 +338,22 @@ l4s-camera-priority-guest-check: build-3dgs-priority-mvp-only
 		--manifest $(CURDIR)/results/3dgs/camera-priority-input/manifest-v2.json \
 		--epochs $$(python3 -c 'import json; print(len(json.load(open("$(CAMERA_PRIORITY_TRACE)"))))') \
 		--validate-only $$(test "$(CAMERA_PRIORITY_PREFLIGHT)" = 1 && printf '%s' --preflight)
+
+.PHONY: l4s-camera-player-guest-check
+CAMERA_PLAYER_ADMISSION_DELAY_US ?= 0
+CAMERA_PLAYER_BOTTLENECK ?= 20mbit
+CAMERA_PLAYER_PERSISTENT ?= 0
+l4s-camera-player-guest-check: build-3dgs-priority-mvp-only
+	@test -n "$(L4S_RESULT_DIR)" -a -n "$(CAMERA_PRIORITY_SCENE_ARCHIVE)"
+	@test -x "$(CAMERA_PRIORITY_NODE)"
+	mkdir -p $(CURDIR)/results/3dgs/camera-player-input
+	tar -xf "$(CAMERA_PRIORITY_SCENE_ARCHIVE)" -C $(CURDIR)/results/3dgs/camera-player-input
+	CAMERA_PRIORITY_NODE="$(abspath $(CAMERA_PRIORITY_NODE))" python3 tools/l4s/run_camera_player_guest.py \
+		--manifest $(CURDIR)/results/3dgs/camera-player-input/manifest-v2.json \
+		--output "$(L4S_RESULT_DIR)" --transport-mode "$(CAMERA_PLAYER_MODE)" \
+		--duration "$(CAMERA_PLAYER_DURATION)" --origin "$(CAMERA_PLAYER_ORIGIN)" \
+		--admission-delay-us "$(CAMERA_PLAYER_ADMISSION_DELAY_US)" --bottleneck "$(CAMERA_PLAYER_BOTTLENECK)" \
+		$(if $(filter 1,$(CAMERA_PLAYER_PERSISTENT)),--persistent,)
 
 moq-loopback-check:
 	python3 tools/l4s/run_sustained_moq_loopback.py

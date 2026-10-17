@@ -165,6 +165,143 @@ Generated results remain ignored by Git. Only update the compact tracked
 evidence in `l4s/` from a completed reproducible run, with the environment and
 submodule revisions recorded in [`l4s/validation-report.md`](l4s/validation-report.md).
 
+### View camera-driven 3DGS loading
+
+The browser visualization launcher uses the 10x10x3 spatial grid with four
+disjoint quality refinements. It starts a new relay, publisher, native sidecar,
+no-store HTTP server, and isolated Chromium context for each invocation. The
+trace autoplays with smooth camera interpolation; ABR decisions remain aligned
+to the exact 100 ms samples. Arriving refinements can be quality-tinted for one
+second and the scene/HUD can be recorded to WebM, MP4, or GIF:
+
+```sh
+make build-3dgs-priority-mvp
+python3 tools/l4s/run_camera_trace_player.py \
+  --manifest results/3dgs/camera-priority-bicycle/manifest-v2.json \
+  --trace results/3dgs/camera-priority-bicycle/camera-trace.json \
+  --output results/camera-trace-player/bicycle-visual \
+  --format all
+```
+
+Use `--no-dye --no-record` when their rendering overhead is unwanted. Recorded
+playback is explicitly visualization evidence and must not be treated as a
+network-performance result.
+
+### Full SH3 player validation
+
+Export the original PLY once into the existing spatial grid and disjoint
+refinements. The manifest explicitly selects `payload_encoding: "gsp2"`;
+manifests without that field retain legacy SPLAT decoding. GSP2 objects carry
+all 16 RGB SH bases, original source IDs, log scales, opacity logits, and wxyz
+quaternions. Each object is bounded to 64 KiB and validated by identity, size,
+SHA-256, dimensions, and Gaussian count before application.
+
+```sh
+results/venvs/3dgs/bin/python tools/l4s/prepare_player_sh3.py \
+  --source data/point_cloud.ply --output results/player-sh3-new
+cd deps/gaussian-player
+npm test
+npm run build
+cd ../..
+python3 tools/l4s/run_player_validation.py \
+  --manifest results/player-sh3-new/manifest-v2.json \
+  --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
+  --output results/player-http-new --transport http --fixed-frame --headless
+results/venvs/3dgs/bin/python tools/l4s/compare_player_frame.py \
+  --source data/point_cloud.ply \
+  --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
+  --run results/player-http-new
+```
+
+The fixed capture uses source frame 0, black background, no overlays or dye,
+and waits for complete ingestion and settled sorting. CUDA is required for
+the repository's exact SH3 reference renderer. `comparison.json` records RGB
+SSIM, PSNR, hashes, and the full comparison configuration; the rendering gate
+is SSIM ≥ 0.90. Both images and the absolute RGB difference are retained.
+On small GPUs, reference preparation uses gsplat's identical packed projection
+to discard only zero-contribution Gaussians before one global render. A CUDA
+regression compares this path with an unculled SH3 render byte for byte.
+Add `--camera-check` to a fixed-frame run to capture sampled recorded poses and
+the 0/15/25/50-second yaw knots; the runner checks each effective view matrix
+against the source and saves the images and camera-validation JSON.
+
+Geometry and bounds remain in source coordinates. The browser view transform
+is `diag(-1,-1,1,1) × source_view`, derived from the reference renderer's
+effective transform. Recorded motion uses position interpolation and quaternion
+slerp. Regenerate older synthetic yaw traces with
+`generate_camera_priority_trace.py`; they used a different coordinate rotation.
+The 50-second sequence rotates about the converted source up axis.
+
+For the isolated QEMU path, use the same export and trace with:
+
+```sh
+python3 tools/l4s/run_player_validation.py \
+  --manifest results/player-sh3-new/manifest-v2.json \
+  --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
+  --output results/player-qemu-prague-new --transport moqt --network-path qemu \
+  --transport-mode prague --fixed-frame --headless --bottleneck 100mbit
+```
+
+Repeat with `--transport-mode reno` and a new output directory for the control.
+The default bottleneck is 20 Mbit/s; the explicit 100 Mbit/s setting permits a
+bounded full-scene validation. The host serves UI and metadata only. Gaussian
+bytes travel through the forwarded WebSocket to the guest IMQUIC subscriber,
+across the shaped Mininet/DualPI2 path to the relay and publisher. Every run
+allocates independent ports and records endpoint addresses, controller settings,
+object hashes, transport metrics, and before/after qdisc counters. Delivery
+success and ECT(1)/CE behavior must be assessed separately. Raw-file loading
+supports HTTP; MoQ requires the validated manifest/object path.
+
+The browser runner uses hardware acceleration by default and records the
+graphics renderer in telemetry. Its `--gpu-mode software` option permits an
+explicit SwiftShader capture when hardware WebGL is unavailable.
+
+For gradual loading over a 10 Mbit/s QEMU path, serve an interactive endpoint:
+
+```sh
+results/venvs/3dgs/bin/python tools/l4s/prepare_player_sh3.py \
+  --source data/point_cloud.ply --output results/player-sh3-interactive \
+  --max-tile-gaussians 16384
+
+python3 tools/l4s/run_player_validation.py \
+  --manifest results/player-sh3-interactive/manifest-v2.json \
+  --trace deps/3dgs_over_moq/assets/user102_bicycle_500.json \
+  --output results/player-moq-10mbps-new --transport moqt --network-path qemu \
+  --transport-mode prague --bottleneck 10mbit --interactive --timeout-seconds 43200
+```
+
+The launcher prints the browser URL and writes `endpoint.json` once the guest
+bridge is ready. The page uses `play=1&dye=1`: Play starts loading, and each
+new validated object receives its quality color for one second. Before Play the page
+requests no scene metadata or Gaussian objects and opens no MoQ WebSocket;
+the native subscriber also starts lazily. UI assets still load normally.
+Camera controls remain available during loading. Reloading returns to the
+Play gate and starts a fresh subscriber after the next click. The endpoint is
+bounded by `--timeout-seconds`; stop its launcher to stop its owned services.
+
+Dense cells of the original grid are split spatially into bounded tiles, preserving
+every source Gaussian and all SH3 coefficients. In-view refinements precede
+off-screen base data; interactive camera changes update priorities even when the
+trace supplies only the starting pose. Objects render as they validate, while
+later refinement layers retain their dependencies. The bridge uses a bounded
+16-object delivery window; the HUD reports payload MB and average Mbps. Add
+`tileLabels=1` to display tile names when debugging priorities.
+
+The player path places standalone 40 ms netem delay on host egress and HTB with
+DualPI2 on switch egress, preserving nominal 80 ms RTT. This avoids the guest
+kernel's netem parent accounting underflow on child AQM drops. Player relay
+admission is bounded to 256 KiB plus one object; general relay runs retain the
+64 KiB default. The player opts into Prague `pacing_interval=1/1000`: bursts hold one millisecond
+of paced data, with a one-MTU minimum; small windows are paced too. Its congestion
+response parameters and the general Prague default remain unchanged. This profile
+avoids large packet trains that prematurely trigger the 1 ms L4S step threshold. Record the controller source revision and queue state
+when comparing these runs with historical evidence.
+
+Omit `play` or use `play=0` for automatic startup. Automated validation retains
+its existing default of no Play gate, no overlays, and no dye. The browser
+regression `node --test tests/test_player_playback.mjs` checks both startup
+modes, pre-Play inactivity, dye activation, late objects, and bridge reuse.
+
 ## Sustained MoQ coexistence
 
 The sustained test uses one server-side MoQ namespace/track and an explicit
