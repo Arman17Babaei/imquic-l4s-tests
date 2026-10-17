@@ -88,3 +88,13 @@ fetch-concurrency diagnostics, backlog/bounds analysis, and Persian/English
 figure generators remain available for retained or candidate thesis evidence.
 Older optional native/deadline/training paths have no confirmed replacement and
 are retained rather than inferred obsolete from age or naming.
+
+## Loose diagnostics
+
+Moved 15 inactive root/picoquic qlogs (13,891,781 bytes) into
+`results/branch-cleanup/loose-qlogs/`, preserving per-repository filenames.
+`results/branch-cleanup/qlog-archive.json` records the original paths, sizes,
+and SHA-256 hashes; every archived hash was verified after moving. Open file
+descriptors were checked before moving. The harness and picoquic now ignore
+`*.qlog`, keeping future generated diagnostics out of source status. No retained
+result data was deleted and no existing services were stopped.

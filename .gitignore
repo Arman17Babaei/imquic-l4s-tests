@@ -11,3 +11,6 @@ tmp/
 .worktrees/
 presentation figures/
 /node_modules/
+
+# Generated transport diagnostics belong under results/.
+*.qlog
