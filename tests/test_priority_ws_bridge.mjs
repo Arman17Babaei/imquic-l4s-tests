@@ -100,3 +100,48 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         fs.rmSync(temporary, { recursive: true });
     }
 });
+
+for (const exitCode of [0, 1]) test(`close without native audit is a protocol failure (native exit ${exitCode})`, { timeout: 15000 }, async () => {
+    const temporary = fs.mkdtempSync(path.join(root, 'results/bridge-no-audit-'));
+    const native = path.join(temporary, 'native.mjs');
+    fs.writeFileSync(native, `#!/usr/bin/env node
+import readline from 'node:readline';
+const ready = Buffer.from(JSON.stringify({wire:'control', message:{type:'ready'}}));
+const prefix = Buffer.alloc(4);prefix.writeUInt32BE(ready.length);process.stdout.write(Buffer.concat([prefix,ready]));
+readline.createInterface({input:process.stdin}).on('line', line => {
+    if (JSON.parse(line).type === 'close') process.exit(${exitCode});
+});
+`);
+    fs.chmodSync(native, 0o700);
+    const reservation = net.createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
+    const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
+    const bridge = spawn(process.execPath, [path.join(root, 'tools/l4s/priority_ws_bridge.mjs'),
+        '--native', native, '--listen', String(port), '--origin', 'null'], { stdio: ['ignore','ignore','pipe'] });
+    let log = ''; bridge.stderr.on('data', chunk => { log += chunk; });
+    let browser;
+    try {
+        const deadline = Date.now() + 5000;
+        while (!log.includes('bridge ws://')) {
+            if (bridge.exitCode !== null || Date.now() > deadline) throw new Error(log);
+            await new Promise(resolve => setTimeout(resolve, 10));
+        }
+        browser = await chromium.launch({headless:true});
+        const page = await browser.newPage();
+        const result = await page.evaluate(port => new Promise((resolve,reject) => {
+            const socket = new WebSocket(`ws://127.0.0.1:${port}`, '3dgs-moqt-v1');
+            socket.onopen = () => socket.send(JSON.stringify({type:'close'}));
+            socket.onclose = event => resolve({code:event.code,reason:event.reason});
+            socket.onerror = () => reject(new Error('WebSocket failed'));
+        }), port);
+        assert.equal(result.code, 1011, 'graceful-close request is not evidence of native audit completion');
+        assert.match(result.reason, /native sidecar exited/);
+        assert.doesNotMatch(result.reason, /^audit complete$/);
+        if (bridge.exitCode === null) await once(bridge, 'exit');
+        assert.equal(bridge.exitCode, 1, 'guest process status must also reject a missing audit');
+    } finally {
+        if (browser) await browser.close();
+        bridge.kill('SIGTERM');
+        if (bridge.exitCode === null) await once(bridge, 'exit');
+        fs.rmSync(temporary,{recursive:true});
+    }
+});

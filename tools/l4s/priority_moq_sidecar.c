@@ -7,13 +7,17 @@
  * stdout: [u32be JSON bytes][JSON][optional Object payload]
  */
 #include <arpa/inet.h>
+#include <errno.h>
+#include <fcntl.h>
 #include <inttypes.h>
 #include <jansson.h>
+#include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 #include <glib.h>
 #include <imquic/imquic.h>
@@ -56,6 +60,30 @@ typedef struct output_frame {
 	gsize length;
 } output_frame;
 
+/* Track kernel-accepted bytes directly: stdio can buffer a complete frame before
+ * a later fflush fails, obscuring the safe restart offset. Never duplicate a
+ * frame prefix when a socket write is interrupted or temporarily backpressured. */
+static gboolean output_write_all(int fd, const uint8_t *bytes, gsize length) {
+	gsize offset = 0;
+	while(offset < length) {
+		ssize_t written = write(fd, bytes + offset, length - offset);
+		if(written > 0) { offset += (gsize)written; continue; }
+		int error = written < 0 ? errno : EIO;
+		if(error == EINTR) continue;
+		if(error == EAGAIN || error == EWOULDBLOCK) {
+			struct pollfd ready = { .fd = fd, .events = POLLOUT };
+			int result;
+			do { result = poll(&ready, 1, -1); } while(result < 0 && errno == EINTR);
+			if(result > 0 && !(ready.revents & POLLNVAL)) continue;
+			error = result < 0 ? errno : EBADF;
+		}
+		fprintf(stderr, "native output write failed: errno=%d (%s) written=%zu frame_bytes=%zu fd=%d fd_flags=%d stopping=%d\n",
+			error, strerror(error), (size_t)offset, (size_t)length, fd, fcntl(fd, F_GETFL), (int)stopping);
+		return FALSE;
+	}
+	return TRUE;
+}
+
 static gpointer output_worker(gpointer unused) {
 	(void)unused;
 	for(;;) {
@@ -65,7 +93,7 @@ static gpointer output_worker(gpointer unused) {
 		output_frame *frame = g_queue_pop_head(&output_frames);
 		g_mutex_unlock(&output_mutex);
 		if(frame == NULL) break;
-		gboolean ok = fwrite(frame->data, 1, frame->length, stdout) == frame->length && fflush(stdout) == 0;
+		gboolean ok = output_write_all(fileno(stdout), frame->data, frame->length);
 		g_mutex_lock(&output_mutex);
 		output_bytes -= frame->length;
 		g_free(frame->data); g_free(frame);

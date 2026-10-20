@@ -12,7 +12,7 @@ BOTTLENECK = "20mbit"
 PROPAGATION_DELAY = "40ms"  # Each direction crosses two shaped egresses: nominal RTT 80 ms.
 DUALPI2_TARGET = "15ms"
 DUALPI2_UPDATE = "16ms"
-DUALPI2_STEP = "5ms"
+DUALPI2_STEP = "1ms"
 
 
 def build_topology():

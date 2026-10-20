@@ -5,6 +5,7 @@ import argparse
 import base64
 import json
 import os
+import platform
 import re
 import shlex
 import signal
@@ -17,6 +18,7 @@ import time
 from pathlib import Path
 
 from experiment_metadata import repository_snapshot
+from qemu_setup_cache import SetupCache, archive_digest, base_identity, cache_key
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -181,6 +183,97 @@ def wait_for_authenticated_ssh(port, user, password, process, timeout=60):
     raise RuntimeError("QEMU SSH authentication did not become ready")
 
 
+def setup_script(guest_root, user, password, cpus):
+    """Preparation contains OS/native dependencies only; never experiment inputs."""
+    return f'''set -e
+if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
+  printf '%s\\n' {shlex.quote(password)} | sudo -S apt-get update >/dev/null || true
+  printf '%s\\n' {shlex.quote(password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=300 install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
+fi
+rm -rf {shlex.quote(guest_root)}
+mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic
+tar -xzf /home/{shlex.quote(user)}/imquic-source.tar.gz -C {shlex.quote(guest_root)}/deps/imquic
+tar -xzf /home/{shlex.quote(user)}/picoquic.tar.gz -C {shlex.quote(guest_root)}/deps/picoquic
+mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
+tar -xzf /home/{shlex.quote(user)}/picotls-cache.tar.gz -C {shlex.quote(guest_root)}/deps/picoquic/_deps
+mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
+cmake -S {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src -B {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DWITH_FUSION=OFF >/dev/null
+cmake --build {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -j{cpus} >/dev/null
+cp -a {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src/include {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include
+for library in libpicotls-core.a libpicotls-openssl.a libpicotls-minicrypto.a; do
+  cp {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build/$library {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib/$library
+done
+cd {shlex.quote(guest_root)}/deps/picoquic
+cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix -DPTLS_INCLUDE_DIR={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include . >/dev/null
+cmake --build . --target picoquic-core picoquic-log picohttp-core -j{cpus} >/dev/null
+cd {shlex.quote(guest_root)}/deps/imquic
+autoreconf -fi >/dev/null
+./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic --enable-moq-examples >/dev/null
+make -C src -j{cpus} >/dev/null
+make -C examples imquic-moq-relay -j{cpus} >/dev/null
+make -C src check
+rm -f /home/{shlex.quote(user)}/imquic-source.tar.gz /home/{shlex.quote(user)}/picoquic.tar.gz /home/{shlex.quote(user)}/picotls-cache.tar.gz
+'''
+
+
+def stage_runtime_script(guest_root, user, source_name, player_name, provenance_name, install_guest_files):
+    return f'''set -e
+cd {shlex.quote(guest_root)}
+find . -mindepth 1 -maxdepth 1 ! -name deps -exec rm -rf -- {{}} +
+rm -rf deps/gaussian-player
+mkdir -p deps/gaussian-player
+tar -xzf /home/{shlex.quote(user)}/{source_name} -C {shlex.quote(guest_root)}
+tar -xzf /home/{shlex.quote(user)}/{player_name} -C {shlex.quote(guest_root)}/deps/gaussian-player
+cp /home/{shlex.quote(user)}/{provenance_name} .source-provenance.json
+{install_guest_files}
+'''
+
+
+def boot_qemu(args, overlay, serial_log, port):
+    host_forwards = f"hostfwd=tcp:127.0.0.1:{port}-:22"
+    if args.forward_sidecar_port:
+        host_forwards += f",hostfwd=tcp:127.0.0.1:{args.forward_sidecar_port}-:7790"
+    return subprocess.Popen(
+        [
+            "qemu-system-x86_64", "-enable-kvm", "-cpu", "host",
+            "-m", str(args.memory), "-smp", str(args.cpus),
+            "-drive", f"file={overlay},format=qcow2,if=ide,cache=none,aio=native,discard=unmap",
+            "-netdev", f"user,id=n0,{host_forwards}",
+            "-device", "e1000,netdev=n0", "-boot", "c", "-display", "none",
+            "-serial", f"file:{serial_log}",
+        ]
+    )
+
+
+def stop_qemu(args, port, qemu, *, require_clean=False):
+    """Publishable preparation requires successful SSH poweroff and QEMU exit."""
+    clean = False
+    try:
+        if qemu.poll() is None:
+            shutdown = f"printf '%s\\n' {shlex.quote(args.password)} | sudo -S poweroff"
+            ssh_command(port, args.user, args.password, shutdown, timeout=30, accepted=(0, 255))
+            clean = qemu.wait(timeout=60) == 0
+    except Exception as error:
+        if require_clean:
+            raise
+        print(f'QEMU graceful shutdown failed: {error}', file=sys.stderr)
+    finally:
+        if qemu.poll() is None:
+            qemu.terminate()
+            try:
+                qemu.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                qemu.kill()
+                qemu.wait()
+    if require_clean and not clean:
+        raise RuntimeError('setup cache requires a clean guest poweroff')
+
+
+def create_overlay(base, overlay):
+    run(['qemu-img', 'create', '-f', 'qcow2', '-F', 'qcow2',
+         '-b', str(base.resolve()), str(overlay)])
+
+
 def main():
     def terminate_run(signum, frame):
         raise KeyboardInterrupt
@@ -212,6 +305,9 @@ def main():
     parser.add_argument("--destination-prefix", default="qemu-player")
     parser.add_argument("--make-variable", action="append", default=[])
     parser.add_argument("--allow-dirty", action="store_true")
+    parser.add_argument("--setup-cache-dir", type=Path, default=ROOT / "results/qemu-setup-cache")
+    parser.add_argument("--no-setup-cache", action="store_true",
+                        help="prepare native dependencies anew inside the disposable run overlay")
     parser.add_argument(
         "--forward-sidecar-port", type=int, default=0,
         help="forward this localhost TCP port to guest port 7790 for an interactive 3DGS sidecar",
@@ -266,12 +362,6 @@ def main():
         picotls_archive = temporary / "picotls-cache.tar.gz"
         source_provenance = temporary / "source-provenance.json"
         serial_log = temporary / "serial.log"
-        run(
-            [
-                "qemu-img", "create", "-f", "qcow2", "-F", "qcow2",
-                "-b", str(args.base.resolve()), str(overlay),
-            ]
-        )
         if status:
             archive_worktree(ROOT, source_archive)
         else:
@@ -290,19 +380,45 @@ def main():
         ])
         archive_repository(ROOT / "deps" / "imquic", imquic_archive)
         archive_repository(ROOT / "deps" / "gaussian-player", gaussian_player_archive)
-        host_forwards = f"hostfwd=tcp:127.0.0.1:{port}-:22"
-        if args.forward_sidecar_port:
-            host_forwards += f",hostfwd=tcp:127.0.0.1:{args.forward_sidecar_port}-:7790"
-        qemu = subprocess.Popen(
-            [
-                "qemu-system-x86_64", "-enable-kvm", "-cpu", "host",
-                "-m", str(args.memory), "-smp", str(args.cpus),
-                "-drive", f"file={overlay},format=qcow2,if=ide,cache=none,aio=native,discard=unmap",
-                "-netdev", f"user,id=n0,{host_forwards}",
-                "-device", "e1000,netdev=n0", "-boot", "c", "-display", "none",
-                "-serial", f"file:{serial_log}",
-            ]
-        )
+        setup = setup_script(guest_root, args.user, args.password, args.cpus)
+        cache_evidence = {'enabled': not args.no_setup_cache, 'hit': False, 'key': None}
+        prepared_base = args.base.resolve()
+        if not args.no_setup_cache:
+            configuration = {
+                'schema': 1, 'base_chain': base_identity(args.base),
+                'architecture': platform.machine(), 'guest_user': args.user,
+                'qemu_version': subprocess.check_output(['qemu-system-x86_64', '--version'], text=True).splitlines()[0],
+                'recipe_sha256': cache_key(setup_script(guest_root, args.user, '', args.cpus)),
+                'imquic_sources': archive_digest(imquic_archive),
+                'picoquic_sources': archive_digest(picoquic_archive),
+                'picotls_sources': archive_digest(picotls_archive),
+            }
+            cache = SetupCache(args.setup_cache_dir, configuration)
+            def prepare(image):
+                create_overlay(args.base, image)
+                preparation_port = free_port()
+                preparation_args = argparse.Namespace(**vars(args))
+                preparation_args.forward_sidecar_port = 0
+                preparation = boot_qemu(preparation_args, image, temporary / 'setup-serial.log', preparation_port)
+                succeeded = False
+                try:
+                    wait_for_ssh(preparation_port, preparation)
+                    wait_for_authenticated_ssh(preparation_port, args.user, args.password,
+                                              preparation, timeout=args.boot_timeout)
+                    for archive in (imquic_archive, picoquic_archive, picotls_archive):
+                        copy_to_guest(preparation_port, args.user, args.password, archive)
+                    ssh_command(preparation_port, args.user, args.password, setup, timeout=args.guest_timeout)
+                    succeeded = True
+                finally:
+                    stop_qemu(args, preparation_port, preparation, require_clean=succeeded)
+                run(['qemu-img', 'check', str(image)], capture_output=True)
+            with cache.locked():
+                prepared_base, hit = cache.obtain(prepare)
+            cache_evidence.update({'key': cache.key, 'hit': hit,
+                                   'configuration': configuration, 'image': str(prepared_base)})
+            print(f"QEMU setup cache: {'HIT' if hit else 'MISS'} {cache.key}", flush=True)
+        create_overlay(prepared_base, overlay)
+        qemu = boot_qemu(args, overlay, serial_log, port)
         try:
             wait_for_ssh(port, qemu)
             wait_for_authenticated_ssh(
@@ -310,11 +426,12 @@ def main():
             )
             if args.forward_sidecar_port:
                 print(f"3DGS sidecar forwarding: ws://127.0.0.1:{args.forward_sidecar_port}")
+            if args.no_setup_cache:
+                for archive in (imquic_archive, picoquic_archive, picotls_archive):
+                    copy_to_guest(port, args.user, args.password, archive)
+                ssh_command(port, args.user, args.password, setup, timeout=args.guest_timeout)
             copy_to_guest(port, args.user, args.password, source_archive)
-            copy_to_guest(port, args.user, args.password, imquic_archive)
-            copy_to_guest(port, args.user, args.password, picoquic_archive)
             copy_to_guest(port, args.user, args.password, gaussian_player_archive)
-            copy_to_guest(port, args.user, args.password, picotls_archive)
             copy_to_guest(port, args.user, args.password, source_provenance)
             staged_guest_files = []
             for index, (source, relative) in enumerate(args.guest_file):
@@ -324,45 +441,15 @@ def main():
                 copy_to_guest(port, args.user, args.password, staged)
                 staged_guest_files.append((staged_name, relative))
             make_variables = " ".join(shlex.quote(value) for value in args.make_variable)
-            imquic_build = (f"make -C src -j{args.cpus} >/dev/null\n"
-                            f"make -C examples imquic-moq-relay -j{args.cpus} >/dev/null\n"
-                            "make -C src check")
             install_guest_files = "\n".join(
                 "install -D "
                 f"/home/{shlex.quote(args.user)}/{shlex.quote(staged_name)} "
                 f"{shlex.quote(str(Path(guest_root) / relative))}"
                 for staged_name, relative in staged_guest_files
             )
-            provision = f'''set -e
-if ! pkg-config --exists glib-2.0 openssl jansson libcurl; then
-  printf '%s\\n' {shlex.quote(args.password)} | sudo -S apt-get update >/dev/null || true
-  printf '%s\\n' {shlex.quote(args.password)} | sudo -S DEBIAN_FRONTEND=noninteractive apt-get install -y libglib2.0-dev libssl-dev libjansson-dev libcurl4-openssl-dev automake libtool pkg-config >/dev/null
-fi
-rm -rf {shlex.quote(guest_root)}
-mkdir -p {shlex.quote(guest_root)}/deps/imquic {shlex.quote(guest_root)}/deps/picoquic {shlex.quote(guest_root)}/deps/gaussian-player
-tar -xzf /home/{shlex.quote(args.user)}/{source_archive.name} -C {shlex.quote(guest_root)}
-cp /home/{shlex.quote(args.user)}/{source_provenance.name} {shlex.quote(guest_root)}/.source-provenance.json
-{install_guest_files}
-tar -xzf /home/{shlex.quote(args.user)}/{imquic_archive.name} -C {shlex.quote(guest_root)}/deps/imquic
-tar -xzf /home/{shlex.quote(args.user)}/{picoquic_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic
-tar -xzf /home/{shlex.quote(args.user)}/{gaussian_player_archive.name} -C {shlex.quote(guest_root)}/deps/gaussian-player
-mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps
-tar -xzf /home/{shlex.quote(args.user)}/{picotls_archive.name} -C {shlex.quote(guest_root)}/deps/picoquic/_deps
-mkdir -p {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib
-cmake -S {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src -B {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DWITH_FUSION=OFF >/dev/null
-cmake --build {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build -j{args.cpus} >/dev/null
-cp -a {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-src/include {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include
-for library in libpicotls-core.a libpicotls-openssl.a libpicotls-minicrypto.a; do
-  cp {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-build/$library {shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/lib/$library
-done
-cd {shlex.quote(guest_root)}/deps/picoquic
-cmake -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DPICOQUIC_FETCH_PTLS=N -DPTLS_PREFIX={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix -DPTLS_INCLUDE_DIR={shlex.quote(guest_root)}/deps/picoquic/_deps/picotls-prefix/include . >/dev/null
-cmake --build . --target picoquic-core picoquic-log picohttp-core -j{args.cpus} >/dev/null
-cd {shlex.quote(guest_root)}/deps/imquic
-autoreconf -fi >/dev/null
-./configure --with-picoquic={shlex.quote(guest_root)}/deps/picoquic --enable-moq-examples >/dev/null
-{imquic_build}
-cd {shlex.quote(guest_root)}
+            provision = stage_runtime_script(guest_root, args.user, source_archive.name,
+                gaussian_player_archive.name, source_provenance.name, install_guest_files) + f'''set -e
+make -C deps/imquic/src check
 set +e
 printf '%s\\n' {shlex.quote(args.password)} | sudo -S make {shlex.quote(args.make_target)} L4S_RESULT_DIR={shlex.quote(guest_result)} {make_variables}
 make_status=$?
@@ -375,28 +462,16 @@ exit $make_status
             except Exception:
                 try:
                     copy_results(port, args.user, args.password, guest_result, destination)
+                    (destination / 'setup-cache.json').write_text(json.dumps(cache_evidence, indent=2, sort_keys=True) + '\n')
                     print(f"Retrieved failed guest results: {destination}", file=sys.stderr)
                 except Exception:
                     pass
                 raise
             copy_results(port, args.user, args.password, guest_result, destination)
+            (destination / 'setup-cache.json').write_text(json.dumps(cache_evidence, indent=2, sort_keys=True) + '\n')
             print(f"QEMU {args.make_target}: PASS ({destination})")
         finally:
-            if qemu.poll() is None:
-                try:
-                    shutdown = f"printf '%s\\n' {shlex.quote(args.password)} | sudo -S poweroff"
-                    ssh_command(port, args.user, args.password, shutdown, timeout=30, accepted=(0, 255))
-                except Exception as exc:
-                    print(f"QEMU graceful shutdown failed: {exc}", file=sys.stderr)
-                try:
-                    qemu.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    qemu.terminate()
-                    try:
-                        qemu.wait(timeout=10)
-                    except subprocess.TimeoutExpired:
-                        qemu.kill()
-                        qemu.wait()
+            stop_qemu(args, port, qemu)
 
 
 def shutil_which(command):

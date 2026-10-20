@@ -100,6 +100,7 @@ function queueNativeCommand(command, line) {
 function sendBrowser(opcode, payload) {
     if (!client || client.destroyed || client.writableEnded) return true;
     if (client.writableLength + payload.length > MAX_BROWSER_BUFFER) {
+        console.error(`browser output buffer exceeded: queued=${client.writableLength} payload=${payload.length}`);
         close(client, 1011, "browser output buffer exceeded");
         native.kill("SIGTERM");
         return false;
@@ -112,7 +113,7 @@ function sendBrowser(opcode, payload) {
 function handleNativeFrame(headerBytes, payload) {
     let header;
     try { header = JSON.parse(headerBytes.toString("utf8")); }
-    catch { native.kill("SIGTERM"); return; }
+    catch { console.error("invalid native control JSON"); native.kill("SIGTERM"); return; }
     if (header.wire === "control") {
         if (header.message?.type === "audit-complete") {
             auditComplete = header.message;
@@ -135,11 +136,14 @@ function processNativeBytes() {
         while (nativeBytes.length >= 4) {
             if (!gracefulClosing && outstandingObjects >= options.objectWindow) { native.stdout.pause(); return; }
             const headerLength = nativeBytes.readUInt32BE(0);
-            if (headerLength > 65536) { native.kill("SIGTERM"); return; }
+            if (headerLength > 65536) {
+                console.error(`native frame header exceeds limit: bytes=${headerLength}`);
+                native.kill("SIGTERM"); return;
+            }
             if (nativeBytes.length < 4 + headerLength) return;
             let header;
             try { header = JSON.parse(nativeBytes.subarray(4, 4 + headerLength).toString("utf8")); }
-            catch { native.kill("SIGTERM"); return; }
+            catch { console.error("invalid native frame JSON"); native.kill("SIGTERM"); return; }
             const payloadLength = Number(header.payload_bytes ?? 0);
             if (!Number.isSafeInteger(payloadLength) || payloadLength < 0 || payloadLength > MAX_MESSAGE || nativeBytes.length < 4 + headerLength + payloadLength) return;
             const headerBytes = nativeBytes.subarray(4, 4 + headerLength);
@@ -182,8 +186,9 @@ function startNative() {
         processNativeBytes();
     });
     // 'close' follows stdout draining; 'exit' may precede its final audit frame.
-    child.on("close", code => {
+    child.on("close", (code, signal) => {
         if (native !== child) return;
+        console.error(`native exit: code=${code} signal=${signal ?? "none"} audit_complete=${Boolean(auditComplete)} parser_bytes=${nativeBytes.length}`);
         if (options.persistent) {
             native = null; nativeReady = false;
             if (client && !client.destroyed && !client.writableEnded)
@@ -201,8 +206,8 @@ function startNative() {
             return;
         }
         if (client && !client.destroyed && !client.writableEnded)
-            close(client, gracefulClosing ? 1000 : 1011, gracefulClosing ? "audit complete" : `native sidecar exited (${code})`);
-        server.close(() => process.exit(code ?? 1));
+            close(client, 1011, `native sidecar exited (${code}) before audit completion`);
+        server.close(() => process.exit(code || 1));
     });
 }
 if (!options.lazyNative) startNative();

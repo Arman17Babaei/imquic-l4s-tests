@@ -46,6 +46,27 @@ def write_manifest(root: Path) -> Path:
 
 
 class CameraTracePlayerTest(unittest.TestCase):
+    def test_fixed_horizon_accepts_only_consistent_censored_delivery(self) -> None:
+        partial = {"receivedGaussians": 40, "appliedGaussians": 40}
+        self.assertFalse(RUNNER.delivery_is_valid(partial, 100))
+        self.assertTrue(RUNNER.delivery_is_valid(partial, 100, fixed_horizon=True))
+        self.assertTrue(RUNNER.delivery_is_valid({**partial, "appliedGaussians": 39}, 100, fixed_horizon=True))
+        self.assertFalse(RUNNER.delivery_is_valid({**partial, "appliedGaussians": 41}, 100, fixed_horizon=True))
+        self.assertFalse(RUNNER.delivery_is_valid({"receivedGaussians": 101, "appliedGaussians": 101}, 100, fixed_horizon=True))
+
+    def test_base_layer_buffering_is_an_explicit_recording_option(self) -> None:
+        args = RUNNER.parse_args(["--manifest", "unused", "--trace", "unused",
+            "--output", "results/unused", "--start-after-base"])
+        self.assertTrue(args.start_after_base)
+
+    def test_eventual_delivery_does_not_imply_complete_video(self) -> None:
+        delivery = RUNNER.recording_delivery({"appliedGaussians": 100,
+            "trace": {"gaussiansAtStart": 25, "gaussiansAtVideoEnd": 40}}, 100)
+        self.assertEqual(delivery["gaussians_at_video_end"], 40)
+        self.assertEqual(delivery["scene_fraction_at_video_end"], .4)
+        self.assertFalse(delivery["complete_scene_at_video_end"])
+        self.assertIsNone(RUNNER.recording_delivery({}, 100)["complete_scene_at_video_end"])
+
     def test_qemu_and_http_can_record_and_measure_quality(self) -> None:
         for transport, network in (("moqt", "qemu"), ("http", "loopback")):
             with self.subTest(transport=transport):

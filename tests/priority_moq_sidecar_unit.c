@@ -1,10 +1,22 @@
 #define _GNU_SOURCE
 #include <assert.h>
+#include <errno.h>
+#include <stdio.h>
 #include <string.h>
+#include <unistd.h>
+
+static ssize_t (*writer_hook)(int, const void *, size_t) = NULL;
+static ssize_t sidecar_test_write(int fd, const void *bytes, size_t length);
 
 #define main priority_moq_sidecar_program_main
+#define write sidecar_test_write
 #include "../tools/l4s/priority_moq_sidecar.c"
+#undef write
 #undef main
+
+static ssize_t sidecar_test_write(int fd, const void *bytes, size_t length) {
+	return writer_hook ? writer_hook(fd, bytes, length) : write(fd, bytes, length);
+}
 
 typedef struct blocked_output {
 	GMutex mutex;
@@ -24,6 +36,12 @@ static ssize_t blocked_write(void *data, const char *bytes, size_t length) {
 	return (ssize_t)length;
 }
 
+static blocked_output *blocked_sink;
+static ssize_t blocked_fd_write(int fd, const void *bytes, size_t length) {
+	(void)fd;
+	return blocked_write(blocked_sink, bytes, length);
+}
+
 static volatile gint producer_done = 0;
 static gpointer enqueue_second(gpointer unused) {
 	(void)unused;
@@ -38,10 +56,9 @@ static gpointer enqueue_second(gpointer unused) {
 static void bounded_output_test(void) {
 	blocked_output sink = { .bytes = g_byte_array_new() };
 	FILE *original = stdout;
-	cookie_io_functions_t io = { .write = blocked_write };
-	stdout = fopencookie(&sink, "w", io);
+	stdout = tmpfile();
 	assert(stdout != NULL);
-	setvbuf(stdout, NULL, _IONBF, 0);
+	blocked_sink = &sink; writer_hook = blocked_fd_write;
 	output_limit_bytes = 160;
 	output_start();
 	uint8_t payload[96]; memset(payload, 0x5a, sizeof(payload));
@@ -64,6 +81,7 @@ static void bounded_output_test(void) {
 	g_mutex_unlock(&sink.mutex);
 	g_thread_join(producer);
 	output_stop();
+	writer_hook = NULL; blocked_sink = NULL;
 	fclose(stdout); stdout = original;
 	gsize offset = 0;
 	for(int sequence = 1; sequence <= 2; sequence++) {
@@ -80,8 +98,62 @@ static void bounded_output_test(void) {
 	output_limit_bytes = 4 * 1024 * 1024;
 }
 
+static GByteArray *fault_bytes;
+static int fault_calls, fault_errno;
+static ssize_t fault_write(int fd, const void *bytes, size_t length) {
+	(void)fd;
+	fault_calls++;
+	if(fault_errno) { errno = fault_errno; return -1; }
+	if(fault_calls == 2) { errno = EINTR; return -1; }
+	if(fault_calls == 3) { errno = EAGAIN; return -1; }
+	size_t accepted = MIN(length, 7);
+	g_byte_array_append(fault_bytes, bytes, accepted);
+	return accepted;
+}
+
+static void transient_output_test(void) {
+	FILE *original = stdout;
+	stdout = tmpfile(); assert(stdout);
+	fault_bytes = g_byte_array_new(); fault_calls = fault_errno = 0;
+	writer_hook = fault_write; stopping = 0;
+	output_start();
+	json_t *audit = json_pack("{s:s}", "type", "audit-complete");
+	emit_message(audit);
+	output_stop();
+	assert(!output_failed);
+	uint32_t length; assert(fault_bytes->len >= 4);
+	memcpy(&length, fault_bytes->data, 4); length = ntohl(length);
+	assert(fault_bytes->len == length + 4);
+	json_t *frame = json_loadb((char *)fault_bytes->data + 4, length, 0, NULL);
+	assert(frame && !strcmp(json_string_value(json_object_get(
+		json_object_get(frame, "message"), "type")), "audit-complete"));
+	json_decref(frame);
+	writer_hook = NULL;
+	g_byte_array_unref(fault_bytes);
+	fclose(stdout); stdout = original;
+}
+
+static void fatal_output_test(void) {
+	FILE *original = stdout, *original_error = stderr;
+	stdout = tmpfile(); stderr = tmpfile(); assert(stdout && stderr);
+	fault_calls = 0; fault_errno = EPIPE; writer_hook = fault_write; stopping = 0;
+	output_start();
+	emit_message(json_pack("{s:s}", "type", "audit-complete"));
+	output_stop();
+	assert(output_failed && fault_calls == 1);
+	fflush(stderr); rewind(stderr);
+	char diagnostic[1024] = { 0 };
+	assert(fread(diagnostic, 1, sizeof(diagnostic) - 1, stderr) > 0);
+	assert(strstr(diagnostic, "native output write failed") && strstr(diagnostic, "errno=32"));
+	assert(strstr(diagnostic, "written=0") && strstr(diagnostic, "fd_flags="));
+	writer_hook = NULL; fault_errno = 0; stopping = 0;
+	fclose(stdout); fclose(stderr); stdout = original; stderr = original_error;
+}
+
 int main(void) {
 	bounded_output_test();
+	transient_output_test();
+	fatal_output_test();
 	imquic_congestion_controller cc = IMQUIC_CONGESTION_DEFAULT;
 	imquic_ecn_mode ecn = IMQUIC_ECN_DEFAULT;
 	assert(parse_mode("prague", &cc, &ecn) == 0);

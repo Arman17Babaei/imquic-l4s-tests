@@ -34,7 +34,7 @@ async function settledFrame(page, trace) {
     }
     throw new Error('comparison frame did not settle');
 }
-function object(id) {
+function object(id, layer = 0) {
     const arrays = [new Uint32Array([id]), new Float32Array([id ? .2 : -.2, 0, -3]),
         new Float32Array([0]), new Float32Array(Array.from({ length: 48 }, (_, i) => (id + 1) * .01 * (i % 3 + 1))), new Float32Array([-2, -2, -2]), new Float32Array([1, 0, 0, 0])];
     const sections = arrays.map(array => {
@@ -43,14 +43,15 @@ function object(id) {
     });
     const payload = Buffer.concat([Buffer.from('tile0'), Buffer.from('0'), ...sections]);
     const header = Buffer.alloc(40);
-    [0x47535033, 2, 0, 5, 1, 0, id, 1, 3, payload.length].forEach((value, i) => header.writeUInt32LE(value, i * 4));
+    [0x47535033, 2, layer ? 1 : 0, 5, 1, layer, layer ? 0 : id, 1, 3, payload.length].forEach((value, i) => header.writeUInt32LE(value, i * 4));
     return Buffer.concat([header, payload]);
 }
 
-for (const [playRequired, autoplay, dyeEnabled] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled})`, { timeout: 60000 }, async () => {
+for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateReady = false, fixedHorizon = false] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false], [false, true, true, true], [false, true, true, true, true], [false, true, false, false, false, true]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled}, base buffering: ${startAfterBase}, late ready: ${lateReady}, fixed horizon: ${fixedHorizon})`, { timeout: 60000 }, async () => {
     const resultFile = path.join(artifacts, `play-${playRequired}-auto-${autoplay}-dye-${dyeEnabled}.json`);
     fs.rmSync(resultFile, { force: true });
     const objects = [object(0), object(1)], combined = Buffer.concat(objects);
+    const enhancement = object(2, 1), expectedCount = lateReady ? 3 : 2;
     const manifest = { schema_version: 2, payload_encoding: 'gsp2', coordinate_system: 'source',
         scene: { id: 'late-objects', source_sha256: hash(combined), gaussian_count: 2, splat_size: 0,
             min: [-1, -1, -4], max: [1, 1, -2], center: [0, 0, -3], radius: 2 },
@@ -61,6 +62,14 @@ for (const [playRequired, autoplay, dyeEnabled] of [[false, true, true], [true, 
                 bytes: combined.length, object_count: 2, object_bytes: objects[0].length, fraction: 1, sha256: hash(combined),
                 objects: objects.map((bytes, id) => ({ id, offset: id * bytes.length, bytes: bytes.length,
                     gaussian_count: 1, publisher_priority: 0, sha256: hash(bytes) })) }] }] };
+    if (lateReady) {
+        manifest.scene.gaussian_count = 3; manifest.tiles[0].gaussian_count = 3;
+        manifest.tiles[0].refinements.push({ index: 1, name: 'enhancement', file: 'extra.gsp2',
+            track: 'tile0/layer1', gaussian_count: 1, bytes: enhancement.length, object_count: 1,
+            object_bytes: enhancement.length, fraction: .25, sha256: hash(enhancement),
+            objects: [{ id: 0, offset: 0, bytes: enhancement.length, gaussian_count: 1,
+                publisher_priority: 0, sha256: hash(enhancement) }] });
+    }
     const trace = [0, 100].map(timestamp_ms => ({ timestamp_ms, camera_position: [0, 0, 0],
         camera_forward: [0, 0, -1], camera_up: [0, 1, 0], yaw_degrees: 0, fov: 60, aspect_ratio: 16 / 9 }));
     const server = http.createServer((request, response) => {
@@ -104,7 +113,17 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             if (id === 1) lastObjectAt = Date.now();
             emit({ wire: 'object', tile_id: 'tile0', refinement: 0, object_id: id, request_id: 1, payload_bytes: payload.length }, payload);
         }, id === 0 ? 250 : 2000));
+        if (${lateReady}) {
+            setTimeout(() => emit({ wire: 'control', message: { type: 'fetch-opened', tile_id: 'tile0',
+                refinement: 1, request_id: 3, initial_priority: 255 } }), 2500);
+            setTimeout(() => emit({ wire: 'object', tile_id: 'tile0', refinement: 1, object_id: 0,
+                request_id: 3, payload_bytes: ${enhancement.length} }, Buffer.from('${enhancement.toString('base64')}', 'base64')), 2750);
+        }
     } else if (message.type === 'close') {
+        if (${fixedHorizon}) {
+            emit({ wire: 'object', tile_id: 'tile0', refinement: 0, object_id: 0, request_id: 1, payload_bytes: objects[0].length }, objects[0]);
+            emit({ wire: 'control', message: { type: 'fetch-status', tile_id: 'tile0', refinement: 0, state: 'complete' } });
+        }
         fs.writeFileSync(${JSON.stringify(timingFile)}, JSON.stringify({ openedAt, lastObjectAt, closedAt: Date.now() }));
         emit({ wire: 'control', message: { type: 'audit-complete', unresolved_updates: 0 } });
         process.stdout.end(() => process.exit(0));
@@ -128,10 +147,28 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         browser = await chromium.launch({ headless: true,
             args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
         const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
+        await page.addInitScript(() => {
+            window.__testPeakDyes = 0;
+            const observe = () => {
+                window.__testPeakDyes = Math.max(window.__testPeakDyes, window.__priorityMoqMvp?.trace.activeDyes ?? 0);
+                requestAnimationFrame(observe);
+            };
+            requestAnimationFrame(observe);
+        });
         const requests = [], sockets = [];
         page.on('request', request => requests.push(new URL(request.url()).pathname));
         page.on('websocket', socket => sockets.push(socket.url()));
-        await page.goto(`http://127.0.0.1:${port}/?transport=moqt&sidecar=ws://127.0.0.1:${bridgePort}&trace=/trace.json&autoplay=${Number(autoplay)}&overlays=${autoplay ? 0 : 1}&dye=${Number(dyeEnabled)}&play=${Number(playRequired)}`);
+        await page.goto(`http://127.0.0.1:${port}/?transport=moqt&sidecar=ws://127.0.0.1:${bridgePort}&trace=/trace.json&autoplay=${Number(autoplay)}&overlays=${autoplay ? 0 : 1}&dye=${Number(dyeEnabled)}&play=${Number(playRequired)}&startAfterBase=${Number(startAfterBase)}&fixedHorizon=${Number(fixedHorizon)}`);
+        if (fixedHorizon) {
+            await page.waitForFunction(() => window.__priorityMoqMvp?.trace.state === 'complete');
+            const state = await page.evaluate(() => window.__priorityMoqMvp);
+            assert.equal(state.failure, null);
+            assert.equal(state.appliedGaussians, 0, 'cutoff must not drain later objects into the experiment');
+            assert.equal(state.trace.gaussiansAtHorizon, 0);
+            assert.ok(state.events.find(e => e.type === 'trace-complete').timestampMs -
+                state.events.find(e => e.type === 'trace-started').timestampMs < 1500);
+            return;
+        }
         if (playRequired) {
             await page.getByRole('button', { name: 'Play — start loading' }).waitFor();
             await page.waitForTimeout(350);
@@ -141,14 +178,24 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             assert.equal(fs.existsSync(startedFile), false, 'native client must not start before Play');
             await page.getByRole('button', { name: 'Play — start loading' }).click();
         }
-        await page.waitForFunction(() => window.__priorityMoqMvp.appliedGaussians === 1 &&
-            window.__priorityMoqMvp.rendererState.activeGaussians >= 1);
-        assert.equal(await page.evaluate(() => window.__priorityMoqMvp.renderedMeshes), 0,
-            'first validated object must render before its complete refinement');
+        if (lateReady) {
+            await page.waitForFunction(() => window.__priorityMoqMvp.appliedGaussians >= 2);
+        } else {
+            await page.waitForFunction(() => window.__priorityMoqMvp.appliedGaussians === 1 &&
+                window.__priorityMoqMvp.rendererState.activeGaussians >= 1);
+            assert.equal(await page.evaluate(() => window.__priorityMoqMvp.renderedMeshes), 0,
+                'first validated object must render before its complete refinement');
+        }
         if (autoplay) {
-            await page.waitForFunction(() => window.__priorityMoqMvp?.trace.state === 'draining');
-            assert.equal(fs.existsSync(timingFile), false, 'camera completion must leave the data connection open');
-            await page.waitForFunction(() => ['complete', 'failed'].includes(window.__priorityMoqMvp?.trace.state));
+            if (startAfterBase && !lateReady) {
+                assert.equal(await page.evaluate(() => window.__priorityMoqMvp.trace.state), 'buffering');
+                assert.equal(await page.evaluate(() => window.__priorityMoqMvp.trace.elapsedMs), 0);
+            } else if (!startAfterBase) {
+                await page.waitForFunction(() => window.__priorityMoqMvp?.trace.state === 'draining');
+                assert.equal(fs.existsSync(timingFile), false, 'camera completion must leave the data connection open');
+            }
+            await page.waitForFunction(() => ['complete', 'failed'].includes(window.__priorityMoqMvp?.trace.state), null,
+                { timeout: lateReady ? 8000 : 30000 });
         } else {
             await page.waitForFunction(() => window.__priorityMoqMvp?.transportState === 'ready');
             await page.evaluate(() => window.__priorityMoqTurn());
@@ -165,11 +212,19 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         });
         assert.match(graphics.renderer, /SwiftShader/i, 'CPU smoke must use software rendering');
         assert.equal(state.failure, null);
+        if (startAfterBase) {
+            assert.ok(state.trace.gaussiansAtStart >= 2);
+            assert.ok(state.trace.renderedGaussiansAtStart >= 2,
+                'base geometry must reach the renderer before the camera clock starts');
+            const started = state.events.find(e => e.type === 'trace-started');
+            const lastObject = state.events.filter(e => e.type === 'object' && e.refinement === 0).at(-1);
+            assert.ok(started.timestampMs >= lastObject.timestampMs);
+        }
         if (autoplay) assert.equal(state.trace.state, 'complete');
-        assert.equal(state.receivedGaussians, 2); assert.equal(state.appliedGaussians, 2);
-        assert.equal(state.receivedPayloadBytes, combined.length);
-        assert.equal(state.rejected, 0); assert.equal(state.events.filter(event => event.type === 'object').length, 2);
-        if (dyeEnabled) assert.ok(state.trace.activeDyes > 0, 'new refinement must be dyed');
+        assert.equal(state.receivedGaussians, expectedCount); assert.equal(state.appliedGaussians, expectedCount);
+        assert.equal(state.receivedPayloadBytes, combined.length + (lateReady ? enhancement.length : 0));
+        assert.equal(state.rejected, 0); assert.equal(state.events.filter(event => event.type === 'object').length, expectedCount);
+        if (dyeEnabled) assert.ok(await page.evaluate(() => window.__testPeakDyes) > 0, 'new refinement must be dyed during playback');
         if (!dyeEnabled) {
             const streamed = await settledFrame(page, trace);
             const reference = await browser.newPage({ viewport: { width: 640, height: 360 } });

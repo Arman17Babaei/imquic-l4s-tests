@@ -10,7 +10,7 @@ init:
 cpu-check:
 	node tools/l4s/check_cpu_prerequisites.mjs
 	cd $(CURDIR)/deps/gaussian-player && npm test && npm run build
-	python3 -m unittest tests.test_camera_priority_trace tests.test_camera_trace_player tests.test_experiment_metadata tests.test_player_workflow tests.test_priority_publisher_supervisor tests.test_tcp_forward
+	python3 -m unittest tests.test_camera_priority_trace tests.test_camera_trace_player tests.test_experiment_metadata tests.test_player_workflow tests.test_priority_publisher_supervisor tests.test_tcp_forward tests.test_thesis_player_topology tests.test_historical_shared_topology tests.test_qemu_setup_cache tests.test_scene_experiment_plots tests.test_player_stalls
 	node --test tests/test_priority_ws_bridge.mjs tests/test_player_playback.mjs
 
 experiment-record-check:

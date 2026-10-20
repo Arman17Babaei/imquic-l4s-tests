@@ -12,6 +12,8 @@ import os
 import subprocess
 import sys
 import time
+import re
+import threading
 from pathlib import Path
 
 from experiment_metadata import capture_mininet_state, write_experiment_record
@@ -54,7 +56,84 @@ def wait_path(path, processes, timeout):
 def device_command(node, command):
     if node is None:
         return subprocess.check_output(command, text=True)
-    return node.cmd(shlex.join(command))
+    # Each command owns a process: Mininet's shared cmd shell is unsafe while
+    # the telemetry thread and the main evidence collector run concurrently.
+    process = node.popen(command, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    output, _ = process.communicate(timeout=10)
+    if process.returncode:
+        raise RuntimeError(f'{shlex.join(command)}: {output}')
+    return output
+
+
+def parse_qdisc_stats(text):
+    """Extract compact AQM statistics, preserving raw output separately."""
+    result = {}
+    patterns = {
+        'backlog_bytes': r'backlog (\d+)b',
+        'backlog_packets': r'backlog \d+b (\d+)p',
+        'drops': r'dropped (\d+)',
+        'ecn_mark': r'\becn_mark (\d+)',
+        'step_marks': r'\bstep_marks (\d+)',
+    }
+    for name, pattern in patterns.items():
+        values = re.findall(pattern, text)
+        if values:
+            # HTB and its child both report queue totals; use the leaf value.
+            result[name] = int(values[-1])
+    for name in ('delay_c', 'delay_l'):
+        match = re.search(rf'\b{name} ([\d.]+)(us|ms|s)', text)
+        if match:
+            result[f'{name}_us'] = float(match[1]) * {'us': 1, 'ms': 1000, 's': 1000000}[match[2]]
+    return result
+
+
+class NetworkSampler:
+    """Guest-only 100ms snapshots of two AQMs and media endpoint counters.
+
+    Timestamps bound each snapshot so downstream analysis can measure actual
+    cadence and align guest wall clock with browser audit time.
+    """
+    def __init__(self, output, devices, roles):
+        self.path = output / 'network-samples.jsonl'
+        self.devices = {role: devices[role] for role in roles}
+        self.done = threading.Event()
+        self.error = None
+        self.thread = threading.Thread(target=self.run, name='network-sampler', daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.done.set()
+        self.thread.join(timeout=30)
+        if self.thread.is_alive():
+            raise RuntimeError('network sampler did not stop')
+
+    def check(self):
+        if self.error is not None:
+            raise RuntimeError(f'network sampler failed: {self.error}')
+
+    def run(self):
+        try:
+            with self.path.open('w') as stream:
+                deadline = time.monotonic()
+                while not self.done.is_set():
+                    record = {'unix_ns': time.time_ns(), 'monotonic_ns': time.monotonic_ns(), 'devices': {}}
+                    for role, (node, device) in self.devices.items():
+                        entry = {'device': device, 'link': counters(node, device)}
+                        if role in ('provider_egress', 'downstream_egress'):
+                            raw = device_command(node, ['tc', '-s', '-d', 'qdisc', 'show', 'dev', device])
+                            entry.update({'qdisc': parse_qdisc_stats(raw), 'qdisc_raw': raw})
+                        record['devices'][role] = entry
+                    record['end_monotonic_ns'] = time.monotonic_ns()
+                    stream.write(json.dumps(record, separators=(',', ':')) + '\n')
+                    stream.flush()
+                    deadline += .1
+                    # Skip missed ticks rather than replaying samples in a burst.
+                    deadline = max(deadline, time.monotonic())
+                    self.done.wait(max(0, deadline - time.monotonic()))
+        except BaseException as error:
+            self.error = error
 
 
 def counters(node, device):
@@ -85,9 +164,12 @@ def main():
     if not 65536 <= args.admission_queue_bytes <= 2097152:
         parser.error('--admission-queue-bytes must be in 65536..2097152')
     args.output.mkdir(parents=True, exist_ok=False)
+    os.environ['CAMERA_PLAYER_MODE'] = args.transport_mode
     topology = load_topology(args.topology_script.resolve())
     net, client, server, devices = topology.build_topology()
     processes, handles = [], []
+    background = []
+    sampler = None
     def launch(node, name, command, env=None):
         if node is None:
             handle = (args.output / f'{name}.log').open('wb')
@@ -104,6 +186,13 @@ def main():
     try:
         net.start()
         topology.configure_topology(devices, args.bottleneck or None)
+        if hasattr(topology, 'start_background'):
+            background = topology.start_background(devices, args.output)
+            for process, handle in background:
+                processes.append(process); handles.append(handle)
+        if hasattr(topology, 'METRIC_ROLES'):
+            sampler = NetworkSampler(args.output, devices, topology.METRIC_ROLES)
+            sampler.start()
         evidence('before')
         write_experiment_record(args.output, scenario='camera-player-qemu',
             configuration={'manifest': str(args.manifest), 'controller': args.transport_mode,
@@ -117,6 +206,8 @@ def main():
                 'udp_send_buffer_bytes': 1048576, 'udp_receive_buffer_bytes': 1048576,
                 'stream_receive_window_bytes': 1048576, 'packet_train_mode': 0,
                 'persistent_bridge': args.persistent, 'subscriber_start': 'browser Play' if args.persistent else 'immediate',
+                'background_flows': len(background) // 2,
+                'network_sample_interval_seconds': .1 if sampler else None,
                 'question': 'Does the host browser receive hashed SH3 MoQ objects through guest DualPI2?',
                 'hypothesis': 'Browser-applied objects match the publisher and all data crosses shaped guest interfaces.',
                 'control': 'Reno with the same scene and topology', 'capture_mode': 'transport-metrics'},
@@ -153,21 +244,43 @@ def main():
             '--listen', '0.0.0.0:7790', '--target', '127.0.0.1:8787', '--network-pid', str(client.pid)])
         deadline = time.monotonic() + args.duration
         while time.monotonic() < deadline and bridge.poll() is None:
+            if sampler:
+                sampler.check()
+            if any(process.poll() is not None for process, _ in background):
+                raise RuntimeError('background iperf exited before browser completion')
             if any(process.poll() is not None for process in (relay, publisher, proxy)):
                 raise RuntimeError('MoQ service exited before browser completion')
             time.sleep(.2)
         if bridge.poll() is None: raise TimeoutError('browser did not close its MoQ audit before deadline')
         if bridge.returncode: raise RuntimeError(f'bridge failed: {bridge.returncode}')
+        background_connections = {}
+        if hasattr(topology, 'assert_background'):
+            background_connections = topology.assert_background(devices)
+        if any(process.poll() is not None for process, _ in background):
+            raise RuntimeError('background iperf exited before final evidence')
+        if sampler:
+            sampler.stop()
+            sampler.check()
         (args.output / 'guest-summary.json').write_text(json.dumps({'status': 'PASS',
-            'controller': args.transport_mode, 'audit_closed': True}, indent=2) + '\n')
+            'controller': args.transport_mode, 'audit_closed': True,
+            'background_active_at_completion': bool(background),
+            'background_connections_at_completion': background_connections,
+            'completion_unix_ns': time.time_ns(),
+            'completion_monotonic_ns': time.monotonic_ns()}, indent=2) + '\n')
     except Exception as error:
         (args.output / 'failure.txt').write_text(f'{type(error).__name__}: {error}\n')
         raise
     finally:
-        for process in reversed(processes): stop(process)
-        if processes: evidence('after')
-        for handle in handles: handle.close()
-        net.stop()
+        try:
+            if sampler:
+                sampler.stop()
+            if processes: evidence('after')
+        finally:
+            try:
+                for process in reversed(processes): stop(process)
+            finally:
+                for handle in handles: handle.close()
+                net.stop()
 
 
 if __name__ == '__main__':

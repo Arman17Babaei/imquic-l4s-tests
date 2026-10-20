@@ -193,6 +193,21 @@ def terminate(processes: list[subprocess.Popen[bytes]]) -> dict[str, int | None]
     return {str(process.args): process.returncode for process in processes}
 
 
+def recording_delivery(telemetry: dict[str, Any], source_count: int) -> dict[str, Any]:
+    trace = telemetry.get('trace', {})
+    count = trace.get('gaussiansAtVideoEnd')
+    return {'start_policy': trace.get('startPolicy'), 'buffering_ms': trace.get('bufferingMs'),
+        'gaussians_at_start': trace.get('gaussiansAtStart'), 'gaussians_at_video_end': count,
+        'scene_fraction_at_video_end': count / source_count if count is not None else None,
+        'complete_scene_at_video_end': count == source_count if count is not None else None}
+
+
+def delivery_is_valid(telemetry: dict[str, Any], source_count: int, *, fixed_horizon: bool = False) -> bool:
+    received, applied = telemetry.get('receivedGaussians'), telemetry.get('appliedGaussians')
+    return (isinstance(received, int) and isinstance(applied, int) and
+            (0 <= applied <= received <= source_count if fixed_horizon else applied == received == source_count))
+
+
 def run(args) -> int:
     interactive = args.interactive
     validation = interactive or args.fixed_frame or args.camera_check or args.transport == 'http' or args.network_path == 'qemu'
@@ -307,6 +322,9 @@ def run(args) -> int:
                     time.sleep(.5)
                 else: raise TimeoutError('QEMU bridge did not become ready')
             params = {'transport': args.transport, 'trace': '/camera-trace.json', 'fixedFrame': '1' if args.fixed_frame else '0',
+                'startAfterBase': str(int(args.start_after_base)),
+                'fixedHorizon': str(int(args.fixed_horizon)), 'recordOverlays': str(int(args.video_hud)),
+                'controller': args.transport_mode if args.transport == 'moqt' else 'reference',
                 'autoplay': '0' if args.fixed_frame else '1', 'overlays': str(int(overlays)), 'dye': str(int(dye)), 'record': str(int(record)),
                 'recordWidth': str(args.width), 'recordHeight': str(args.height), 'recordFps': str(args.fps), 'run': output.name,
                 'sidecar': f"ws://127.0.0.1:{ports['bridge']}", 'nonce': str(time.time_ns())}
@@ -323,6 +341,8 @@ def run(args) -> int:
                     'play_required': interactive, 'interactive': interactive, 'threshold_ssim': .90, 'ports': ports,
                     'admission_delay_us': args.admission_delay_us, 'bottleneck_override': args.bottleneck,
                     'quality_requested': args.quality, 'quality_fps': args.quality_fps,
+                    'start_after_base': args.start_after_base,
+                    'fixed_horizon': args.fixed_horizon, 'video_hud': args.video_hud,
                     'topology_script': str(args.topology_script),
                     'topology_sha256': sha256(output / 'player-topology.py') if args.network_path == 'qemu' else None},
                 topology='host browser -> forwarded WebSocket -> guest client IMQUIC -> DualPI2 -> relay/publisher'
@@ -400,13 +420,18 @@ def run(args) -> int:
     telemetry_path = output / 'player-telemetry.json'
     telemetry = json.loads(telemetry_path.read_text()) if telemetry_path.exists() else {}
     complete = telemetry.get('receivedGaussians') == manifest['scene']['gaussian_count'] and telemetry.get('appliedGaussians') == manifest['scene']['gaussian_count']
-    success = (browser_result == 0 and failure is None and complete and telemetry.get('rejected') == 0
+    success = (browser_result == 0 and failure is None and delivery_is_valid(telemetry,
+        manifest['scene']['gaussian_count'], fixed_horizon=args.fixed_horizon) and telemetry.get('rejected') == 0
         and telemetry.get('duplicates') == 0 and not telemetry.get('failure') and not telemetry.get('runnerFailure')
         and (telemetry.get('renderReady') if args.fixed_frame else telemetry.get('trace', {}).get('state') == 'complete'))
     if record:
         success = success and webm.is_file() and webm.stat().st_size > 0
     summary = {'status': 'PASS' if success else 'FAIL', 'failure': failure, 'browser_exit_code': browser_result,
         'complete_scene': complete, 'transport': args.transport, 'network_path': args.network_path,
+        'recording_delivery': recording_delivery(telemetry, manifest['scene']['gaussian_count']) if record else None,
+        'fixed_horizon': args.fixed_horizon,
+        'censored_gaussians': manifest['scene']['gaussian_count'] - (telemetry.get('trace', {}).get('gaussiansAtHorizon', 0) if args.fixed_horizon else telemetry.get('appliedGaussians', 0)),
+        'received_but_unapplied_gaussians': telemetry.get('receivedGaussians', 0) - telemetry.get('appliedGaussians', 0),
         'controller': args.transport_mode, 'process_exit_codes': exits,
         'rendering': comparison if args.quality else 'NOT_EVALUATED'}
     if not validation:
@@ -447,6 +472,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--quality", action="store_true", help="Sample clean frames and compare with a full-scene same-player reference")
     parser.add_argument("--quality-fps", type=float, default=2, help="Similarity capture rate; independent of video FPS")
     parser.add_argument("--no-dye", action="store_true")
+    parser.add_argument("--start-after-base", action="store_true",
+                        help="Buffer every tile's base layer before starting the trace and recording")
+    parser.add_argument("--fixed-horizon", action="store_true",
+                        help="Stop MoQ delivery when the camera trace ends; report missing data as censored")
+    parser.add_argument("--video-hud", action="store_true", help="Include tile spec and 100ms payload goodput in recordings")
     parser.add_argument("--no-record", action="store_true")
     parser.add_argument("--headless", action="store_true", help="CI/testing override; visible Chromium is the default")
     parser.add_argument("--qemu-memory", type=int, default=4096, help="Guest RAM in MiB")
