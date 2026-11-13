@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
+import re
 import os
 import shutil
 import signal
@@ -30,6 +32,17 @@ def sha256(path: Path) -> str:
         for block in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def completed_qemu_result(log: Path) -> Path:
+    """Select this invocation's completed output, never older prefix matches."""
+    matches = re.findall(r"^QEMU .*: PASS \(([^\r\n)]+)\)", log.read_text(), re.MULTILINE)
+    if len(matches) != 1:
+        raise ValueError('expected one completed QEMU result in the invocation log')
+    result = Path(matches[0])
+    if not result.is_dir():
+        raise ValueError(f'completed QEMU result directory missing: {result}')
+    return result
 
 
 def free_port(kind: int) -> int:
@@ -198,6 +211,10 @@ def recording_delivery(telemetry: dict[str, Any], source_count: int) -> dict[str
     count = trace.get('gaussiansAtVideoEnd')
     return {'start_policy': trace.get('startPolicy'), 'buffering_ms': trace.get('bufferingMs'),
         'gaussians_at_start': trace.get('gaussiansAtStart'), 'gaussians_at_video_end': count,
+        'gaussians_added_during_recording': count-trace.get('gaussiansAtStart',0) if count is not None else None,
+        'payload_bytes_during_recording': trace.get('payloadBytesAtHorizon',0)-trace.get('payloadBytesAtStart',0),
+        'started_unix_ms': trace.get('startedUnixMs'),
+        'first_object_received_unix_ms': trace.get('firstObjectReceivedUnixMs'),
         'scene_fraction_at_video_end': count / source_count if count is not None else None,
         'complete_scene_at_video_end': count == source_count if count is not None else None}
 
@@ -208,9 +225,21 @@ def delivery_is_valid(telemetry: dict[str, Any], source_count: int, *, fixed_hor
             (0 <= applied <= received <= source_count if fixed_horizon else applied == received == source_count))
 
 
+def measurement_window(trace: dict[str, Any]):
+    start, duration = trace.get('startedUnixMs'), trace.get('nominalDurationMs')
+    if not all(isinstance(value,(int,float)) and math.isfinite(value) for value in (start,duration)):
+        return None,None
+    return start,start+duration
+
+
+def quality_allows_success(requested: bool, comparison: dict[str, Any] | None):
+    return not requested or bool(comparison and comparison.get('status')=='PASS')
+
+
 def run(args) -> int:
     interactive = args.interactive
-    validation = interactive or args.fixed_frame or args.camera_check or args.transport == 'http' or args.network_path == 'qemu'
+    validation = interactive or args.fixed_frame or args.camera_check or args.transport in ('http', 'ideal') or args.network_path == 'qemu'
+    controller = 'ideal' if args.transport == 'ideal' else args.transport_mode
     record = not args.no_record
     overlays = (interactive or not validation) and not args.quality
     dye = not args.no_dye and (interactive or not validation) and not args.quality
@@ -266,10 +295,22 @@ def run(args) -> int:
             web_command = [sys.executable, str(ROOT / 'tools/l4s/camera_trace_player_server.py'),
                 '--dist', str(output / 'player-ui'), '--manifest', str(manifest_path), '--trace', str(trace_path),
                 '--port', str(ports['web'])]
-            if args.transport == 'moqt': web_command.append('--metadata-only')
+            if args.transport in ('moqt', 'ideal'): web_command.append('--metadata-only')
             web = start('web', web_command)
             wait_port(ports['web'], [web])
-            if args.transport == 'moqt' and args.network_path == 'loopback':
+            if args.transport == 'ideal':
+                ideal_config = output / 'ideal-link.json'
+                ideal_config.write_text(json.dumps({'manifest': str(manifest_path),
+                    'bandwidth_mbps': args.ideal_bandwidth_mbps,
+                    'priority_control_batch_size': 64 if args.quality_camera_timestamps == 'fixed' else 0,
+                    'data_delay_ms': args.ideal_data_delay_ms, 'output': str(output),
+                    'max_queue_bytes': 16 * 1024 * 1024}, indent=2) + '\n')
+                bridge = start('ideal-bridge', ['node', str(ROOT / 'tools/l4s/priority_ws_bridge.mjs'),
+                    '--ideal-config', str(ideal_config), '--listen', str(ports['bridge']),
+                    '--origin', f"http://127.0.0.1:{ports['web']}"],
+                    env={**os.environ, 'IDEAL_LINK_PYTHON': sys.executable})
+                wait_port(ports['bridge'], [web, bridge])
+            elif args.transport == 'moqt' and args.network_path == 'loopback':
                 relay = start('relay', [str(ROOT / 'deps/imquic/examples/imquic-moq-relay'), '-M', '19', '-q',
                     '-b', '127.0.0.1', '-p', str(ports['relay']), '-c', str(ROOT / 'deps/picoquic/certs/cert.pem'),
                     '-k', str(ROOT / 'deps/picoquic/certs/key.pem'), '-Z', '-T', '-d', '4', '--congestion-control',
@@ -292,7 +333,7 @@ def run(args) -> int:
                 prefix = f'camera-player-{output.name}'
                 topology_path = args.topology_script.expanduser().resolve()
                 shutil.copy2(topology_path, output / 'player-topology.py')
-                command = [sys.executable, str(ROOT / 'tools/l4s/run_qemu_player.py'),
+                command = [sys.executable, str(getattr(args, 'qemu_runner', ROOT / 'tools/l4s/run_qemu_player.py')),
                     '--base', str(args.qemu_base.expanduser().resolve()), '--make-target', 'l4s-camera-player-guest-check',
                     '--guest-result-name', 'player', '--guest-result-root', 'results/l4s', '--destination-root', 'results/l4s',
                     '--destination-prefix', prefix, '--allow-dirty', '--memory', str(getattr(args, 'qemu_memory', 4096)),
@@ -308,7 +349,8 @@ def run(args) -> int:
                     f'CAMERA_PLAYER_ADMISSION_DELAY_US={args.admission_delay_us}', '--make-variable',
                     f'CAMERA_PLAYER_BOTTLENECK={args.bottleneck or ""}', '--make-variable',
                     f'CAMERA_PLAYER_PERSISTENT={1 if interactive else 0}']
-                qemu = start('qemu', command)
+                qemu = start('qemu', command, env={**os.environ,
+                    'CAMERA_QEMU_PROFILE_OUTPUT':str(output/'qemu-performance')})
                 # SLIRP opens the host port before provisioning is complete. Require
                 # a successful forwarded HTTP request, not merely an open TCP port.
                 import urllib.request
@@ -323,8 +365,9 @@ def run(args) -> int:
                 else: raise TimeoutError('QEMU bridge did not become ready')
             params = {'transport': args.transport, 'trace': '/camera-trace.json', 'fixedFrame': '1' if args.fixed_frame else '0',
                 'startAfterBase': str(int(args.start_after_base)),
+                'startAfterFirstObject': str(int(args.start_after_first_object)),
                 'fixedHorizon': str(int(args.fixed_horizon)), 'recordOverlays': str(int(args.video_hud)),
-                'controller': args.transport_mode if args.transport == 'moqt' else 'reference',
+                'controller': controller if args.transport != 'http' else 'reference',
                 'autoplay': '0' if args.fixed_frame else '1', 'overlays': str(int(overlays)), 'dye': str(int(dye)), 'record': str(int(record)),
                 'recordWidth': str(args.width), 'recordHeight': str(args.height), 'recordFps': str(args.fps), 'run': output.name,
                 'sidecar': f"ws://127.0.0.1:{ports['bridge']}", 'nonce': str(time.time_ns())}
@@ -335,22 +378,34 @@ def run(args) -> int:
                     'source_sha256': manifest['scene']['source_sha256'], 'gaussian_count': manifest['scene']['gaussian_count'],
                     'trace': str(trace_path), 'trace_sha256': sha256(trace_path), 'fixed_pose': trace[0],
                     'width': args.width, 'height': args.height, 'transport': args.transport, 'network_path': args.network_path,
-                    'controller': args.transport_mode, 'payload_encoding': manifest.get('payload_encoding', 'splat'),
+                    'controller': controller, 'ideal_bandwidth_mbps': args.ideal_bandwidth_mbps,
+                    'ideal_data_delay_ms': args.ideal_data_delay_ms, 'control_delay_ms': 0 if args.transport == 'ideal' else None, 'payload_encoding': manifest.get('payload_encoding', 'splat'),
                     'background': 'black', 'overlays': overlays, 'dye': dye, 'record': record,
+                    'browser_object_validation': 'disabled',
+                    'browser_object_preparation': 'worker-pool' if args.transport in ('moqt', 'ideal') and manifest.get('payload_encoding') == 'gsp2' else 'main-thread',
                     'gpu_mode': args.gpu_mode, 'recording': {'width': args.width, 'height': args.height, 'fps': args.fps, 'format': args.format},
                     'play_required': interactive, 'interactive': interactive, 'threshold_ssim': .90, 'ports': ports,
                     'admission_delay_us': args.admission_delay_us, 'bottleneck_override': args.bottleneck,
-                    'quality_requested': args.quality, 'quality_fps': args.quality_fps,
+                    'quality_backend': args.quality_backend, 'quality_requested': args.quality, 'quality_fps': args.quality_fps,
+                    'quality_camera_timestamps': args.quality_camera_timestamps,
+                    'start_after_first_object': args.start_after_first_object,
+                    'max_missing_snapshot_fraction': args.max_missing_snapshot_fraction,
+                    'priority_policy': {'formula': '40*layer+8*screen_distance+16*normalized_depth',
+                        'screen_distance': 'L-infinity distance to clipped projected tile bounds',
+                        'depth_scale': 'maximum centroid distance across all visible tiles, including completed',
+                        'quantization': 'floor to 8-bit priority', 'fractional_ties': args.transport == 'ideal',
+                        'source_sha256': sha256(PLAYER / 'src/abr.ts')},
                     'start_after_base': args.start_after_base,
                     'fixed_horizon': args.fixed_horizon, 'video_hud': args.video_hud,
                     'topology_script': str(args.topology_script),
                     'topology_sha256': sha256(output / 'player-topology.py') if args.network_path == 'qemu' else None},
                 topology='host browser -> forwarded WebSocket -> guest client IMQUIC -> DualPI2 -> relay/publisher'
-                    if args.network_path == 'qemu' else 'browser -> HTTP or loopback WebSocket/IMQUIC -> relay/publisher',
+                    if args.network_path == 'qemu' else ('browser -> local bridge -> ideal payload serializer + data-only propagation'
+                          if args.transport == 'ideal' else 'browser -> HTTP or loopback WebSocket/IMQUIC -> relay/publisher'),
                 observed_network={'launcher_processes': [process.pid for process in processes]})
             if interactive:
                 (output / 'endpoint.json').write_text(json.dumps({'url': url, 'ports': ports,
-                    'bottleneck': args.bottleneck, 'controller': args.transport_mode,
+                    'bottleneck': args.bottleneck, 'controller': controller,
                     'play_required': True, 'dye': dye, 'pid': os.getpid()}, indent=2) + '\n')
                 print(f'Interactive player ready: {url}', flush=True)
                 while all(process.poll() is None for process in processes): time.sleep(.5)
@@ -359,7 +414,10 @@ def run(args) -> int:
                 timeout_ms=int(args.timeout_seconds * 1000), width=args.width, height=args.height,
                 headless=args.headless, record=record, gpu_mode=args.gpu_mode)
             if args.fixed_frame: command += ['--snapshot', str(output / 'browser.png')]
-            if args.quality: command += ['--capture-frames', str(output / 'candidate-frames'), '--capture-fps', str(args.quality_fps)]
+            if args.quality:
+                command += ['--capture-frames', str(output / 'candidate-frames'), '--capture-fps', str(args.quality_fps)]
+                if args.transport == 'ideal' or args.quality_camera_timestamps == 'fixed': command += ['--capture-mode', 'render-loop',
+                    '--capture-camera-timestamps', args.quality_camera_timestamps]
             if getattr(args, 'camera_check', False):
                 from generate_camera_priority_trace import generate_trace
                 yaw_path = output / 'yaw-trace.json'
@@ -370,10 +428,18 @@ def run(args) -> int:
             browser = start('browser', command)
             browser_result = browser.wait(timeout=args.timeout_seconds + 45)
             if args.network_path == 'qemu':
-                if qemu.wait(timeout=90): raise RuntimeError('QEMU validation failed after browser completion')
-                candidates = list((ROOT / 'results/l4s').glob(f'{prefix}-*'))
-                (output / 'guest-evidence.json').write_text(json.dumps({'directories': [str(path) for path in candidates]}, indent=2) + '\n')
-            if args.quality and browser_result == 0:
+                try:
+                    if qemu.wait(timeout=90):
+                        failure = 'QEMU validation failed after browser completion'
+                    else:
+                        candidates = [completed_qemu_result(output / 'qemu.log')]
+                        (output / 'guest-evidence.json').write_text(json.dumps({'directories': [str(path) for path in candidates]}, indent=2) + '\n')
+                except (RuntimeError,ValueError,subprocess.TimeoutExpired) as error:
+                    failure = f'QEMU completion: {type(error).__name__}: {error}'
+                    if qemu.poll() is None: qemu.terminate()
+            # A failed transport/browser may still leave valid candidate PNGs.
+            # Preserve its failure while deriving references and available metrics.
+            if args.quality and (output / 'candidate-frames/frames.json').is_file():
                 reference_port = free_port(socket.SOCK_STREAM)
                 reference_web = start('reference-web', [sys.executable,
                     str(ROOT / 'tools/l4s/camera_trace_player_server.py'), '--dist', str(output / 'player-ui'),
@@ -387,17 +453,19 @@ def run(args) -> int:
                     width=args.width, height=args.height, headless=args.headless, record=False, gpu_mode=args.gpu_mode)
                 reference_command += ['--capture-frames', str(output / 'reference-frames'),
                     '--reference-frames', str(output / 'candidate-frames/frames.json'), '--motion-trace', str(trace_path)]
+                reference_command += ['--allow-partial-reference']
                 reference_browser = start('reference-browser', reference_command)
                 if reference_browser.wait(timeout=args.timeout_seconds + 45):
                     raise RuntimeError('same-player reference rendering failed; see reference-browser.log')
                 from compare_player_sequence import compare_sequence
                 comparison = compare_sequence(output / 'candidate-frames/frames.json',
-                    output / 'reference-frames/frames.json', output / 'quality')
+                    output / 'reference-frames/frames.json', output / 'quality', backend=args.quality_backend,
+                    allow_incomplete=True, max_missing_fraction=args.max_missing_snapshot_fraction)
 
         except KeyboardInterrupt:
             failure = 'Interactive endpoint stopped'
         except Exception as error:
-            failure = f'{type(error).__name__}: {error}'
+            failure = '; '.join(part for part in (failure,f'{type(error).__name__}: {error}') if part)
             (output / 'failure.txt').write_text(failure + '\n')
         finally:
             if interactive and qemu is not None and qemu.poll() is None:
@@ -406,7 +474,7 @@ def run(args) -> int:
                 except subprocess.TimeoutExpired: pass
             exits = terminate(processes)
             for handle in handles: handle.close()
-    if browser_result == 0 and failure is None and record:
+    if browser_result == 0 and record and raw_webm.is_file():
         try:
             duration_ms = int(trace[-1]['timestamp_ms'])
             subprocess.run(normalize_webm_command(raw_webm, webm, args.fps, duration_ms,
@@ -426,13 +494,28 @@ def run(args) -> int:
         and (telemetry.get('renderReady') if args.fixed_frame else telemetry.get('trace', {}).get('state') == 'complete'))
     if record:
         success = success and webm.is_file() and webm.stat().st_size > 0
-    summary = {'status': 'PASS' if success else 'FAIL', 'failure': failure, 'browser_exit_code': browser_result,
+    video_status = 'PASS' if browser_result == 0 and (not record or (webm.is_file() and webm.stat().st_size > 0)) else 'FAIL'
+    quality_status = ('PASS' if comparison and comparison.get('status') == 'PASS' else 'FAIL') if args.quality else 'NOT_EVALUATED'
+    ideal_summary = json.loads((output / 'ideal-summary.json').read_text()) if (output / 'ideal-summary.json').is_file() else None
+    if args.transport == 'ideal' and ideal_summary:
+        from ideal_link_validation import validate_delivery
+        dispatches = [event for line in (output / 'ideal-events.jsonl').read_text().splitlines() if (event := json.loads(line)).get('event') == 'dispatch']
+        trace_timing = telemetry.get('trace', {})
+        measurement_start,horizon = measurement_window(trace_timing)
+        ideal_summary = validate_delivery(ideal_summary, telemetry.get('events', []), dispatches, horizon or None,
+            start_unix_ms=measurement_start if args.start_after_first_object else None)
+        (output / 'ideal-delivery-validation.json').write_text(json.dumps(ideal_summary, indent=2) + '\n')
+    model_status = ideal_summary.get('status', 'FAIL') if ideal_summary else ('FAIL' if args.transport == 'ideal' else 'NOT_APPLICABLE')
+    success = success and quality_allows_success(args.quality,comparison)
+    if args.transport == 'ideal': success = success and model_status == 'PASS'
+    summary = {'status': 'PASS' if success else 'FAIL', 'video_status': video_status,
+        'quality_status': quality_status, 'model_status': model_status, 'ideal_link': ideal_summary, 'failure': failure, 'browser_exit_code': browser_result,
         'complete_scene': complete, 'transport': args.transport, 'network_path': args.network_path,
         'recording_delivery': recording_delivery(telemetry, manifest['scene']['gaussian_count']) if record else None,
         'fixed_horizon': args.fixed_horizon,
         'censored_gaussians': manifest['scene']['gaussian_count'] - (telemetry.get('trace', {}).get('gaussiansAtHorizon', 0) if args.fixed_horizon else telemetry.get('appliedGaussians', 0)),
         'received_but_unapplied_gaussians': telemetry.get('receivedGaussians', 0) - telemetry.get('appliedGaussians', 0),
-        'controller': args.transport_mode, 'process_exit_codes': exits,
+        'controller': controller, 'process_exit_codes': exits,
         'rendering': comparison if args.quality else 'NOT_EVALUATED'}
     if not validation:
         artifacts = {path.name: {'bytes': path.stat().st_size, 'sha256': sha256(path)}
@@ -459,7 +542,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--fps", type=int, default=30)
     parser.add_argument("--transport-mode", choices=("reno", "prague"), default="reno")
-    parser.add_argument("--transport", choices=("http", "moqt"), default="moqt")
+    parser.add_argument("--transport", choices=("http", "moqt", "ideal"), default="moqt")
+    parser.add_argument("--ideal-bandwidth-mbps", type=float)
+    parser.add_argument("--ideal-data-delay-ms", type=float)
     parser.add_argument("--network-path", choices=("loopback", "qemu"), default="loopback")
     parser.add_argument("--fixed-frame", action="store_true")
     parser.add_argument("--interactive", action="store_true")
@@ -470,19 +555,51 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--bottleneck", help="Optional tc rate override; otherwise use the topology script")
     parser.add_argument("--topology-script", type=Path, default=ROOT / "tools/l4s/player_topology.py")
     parser.add_argument("--quality", action="store_true", help="Sample clean frames and compare with a full-scene same-player reference")
-    parser.add_argument("--quality-fps", type=float, default=2, help="Similarity capture rate; independent of video FPS")
+    parser.add_argument("--quality-backend", choices=("cpu", "cuda"), default=None)
+    parser.add_argument("--quality-camera-timestamps", choices=("actual", "fixed"), default="actual",
+                        help="Fixed mode locks selected ideal/MoQ render frames to nominal trace poses")
+    parser.add_argument("--quality-fps", type=float, default=None, help="Similarity capture rate; independent of video FPS")
     parser.add_argument("--no-dye", action="store_true")
     parser.add_argument("--start-after-base", action="store_true",
-                        help="Buffer every tile's base layer before starting the trace and recording")
+                        help="Opt in to base-layer preloading; default starts empty when requests are sent")
+    parser.add_argument('--start-after-first-object',action='store_true',
+                        help='Start camera/recording at first successfully applied object, excluding connection and initial delivery wait')
+    parser.add_argument('--max-missing-snapshot-fraction',type=float,default=0,
+                        help='Accept this fraction of missing snapshots while retaining raw coverage; failed captures still get metrics')
     parser.add_argument("--fixed-horizon", action="store_true",
                         help="Stop MoQ delivery when the camera trace ends; report missing data as censored")
     parser.add_argument("--video-hud", action="store_true", help="Include tile spec and 100ms payload goodput in recordings")
     parser.add_argument("--no-record", action="store_true")
     parser.add_argument("--headless", action="store_true", help="CI/testing override; visible Chromium is the default")
+    parser.add_argument("--qemu-runner", type=Path, default=ROOT / "tools/l4s/run_qemu_player.py",
+                        help="QEMU wrapper; supports experiment CPU pinning profiles")
     parser.add_argument("--qemu-memory", type=int, default=4096, help="Guest RAM in MiB")
     parser.add_argument("--qemu-cpus", type=int, default=4, help="Guest vCPUs and parallel build jobs")
     parser.add_argument("--gpu-mode", choices=("hardware", "software"), default="hardware")
     args = parser.parse_args(argv)
+    if not math.isfinite(args.max_missing_snapshot_fraction) or not 0<=args.max_missing_snapshot_fraction<1:
+        parser.error('max-missing-snapshot-fraction must be in [0,1)')
+    if args.start_after_first_object and (args.start_after_base or args.transport=='http' or args.fixed_frame or args.interactive):
+        parser.error('first-object start requires automated ideal/MoQ playback and cannot combine with base buffering')
+    if args.quality_camera_timestamps == "fixed" and args.transport not in ("ideal", "moqt"):
+        parser.error("fixed quality camera timestamps require ideal or moqt transport")
+    if args.quality_backend is None: args.quality_backend = 'cuda' if args.transport == 'ideal' else 'cpu'
+    if args.quality_fps is None: args.quality_fps = 30 if args.transport == 'ideal' else 2
+    if args.transport == 'ideal':
+        args.quality = True
+        args.fixed_horizon = True
+        if args.ideal_bandwidth_mbps is None: args.ideal_bandwidth_mbps = 20.0
+        if args.ideal_data_delay_ms is None: args.ideal_data_delay_ms = 40.0
+        if not math.isfinite(args.ideal_bandwidth_mbps) or args.ideal_bandwidth_mbps <= 0:
+            parser.error('ideal bandwidth must be finite and positive')
+        if not math.isfinite(args.ideal_data_delay_ms) or args.ideal_data_delay_ms < 0:
+            parser.error('ideal data delay must be finite and nonnegative')
+        if args.start_after_base or args.video_hud or args.interactive or args.fixed_frame or args.camera_check:
+            parser.error('ideal mode supports clean, automated, empty-start playback only')
+        if args.bottleneck or args.admission_delay_us:
+            parser.error('ideal mode uses its own bandwidth and data delay options')
+    elif args.ideal_bandwidth_mbps is not None or args.ideal_data_delay_ms is not None:
+        parser.error('ideal link options require --transport ideal')
     if min(args.timeout_seconds, args.qemu_memory, args.qemu_cpus, args.width, args.height, args.fps) <= 0:
         parser.error("timeout, QEMU budgets, dimensions, and fps must be positive")
     if args.admission_delay_us < 0: parser.error("admission delay must be nonnegative")

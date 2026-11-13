@@ -47,7 +47,7 @@ function object(id, layer = 0) {
     return Buffer.concat([header, payload]);
 }
 
-for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateReady = false, fixedHorizon = false] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false], [false, true, true, true], [false, true, true, true, true], [false, true, false, false, false, true]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled}, base buffering: ${startAfterBase}, late ready: ${lateReady}, fixed horizon: ${fixedHorizon})`, { timeout: 60000 }, async () => {
+for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateReady = false, fixedHorizon = false, startAfterFirstObject = false] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false], [false, true, true, true], [false, true, true, true, true], [false, true, true, false, true], [false, true, false, false, false, true], [false, true, false, false, true, true], [false, true, false, false, false, false, true], [false, true, false, false, false, true, true]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled}, base buffering: ${startAfterBase}, late ready: ${lateReady}, fixed horizon: ${fixedHorizon}, first object: ${startAfterFirstObject})`, { timeout: 60000 }, async () => {
     const resultFile = path.join(artifacts, `play-${playRequired}-auto-${autoplay}-dye-${dyeEnabled}.json`);
     fs.rmSync(resultFile, { force: true });
     const objects = [object(0), object(1)], combined = Buffer.concat(objects);
@@ -70,7 +70,7 @@ for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateRead
             objects: [{ id: 0, offset: 0, bytes: enhancement.length, gaussian_count: 1,
                 publisher_priority: 0, sha256: hash(enhancement) }] });
     }
-    const trace = [0, 100].map(timestamp_ms => ({ timestamp_ms, camera_position: [0, 0, 0],
+    const trace = [0, startAfterFirstObject ? 600 : 100].map(timestamp_ms => ({ timestamp_ms, camera_position: [0, 0, 0],
         camera_forward: [0, 0, -1], camera_up: [0, 1, 0], yaw_degrees: 0, fov: 60, aspect_ratio: 16 / 9 }));
     const server = http.createServer((request, response) => {
         const pathname = new URL(request.url, 'http://localhost').pathname;
@@ -108,7 +108,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     const message = JSON.parse(line);
     if (message.type === 'open') {
         openedAt = Date.now();
-        emit({ wire: 'control', message: { type: 'fetch-opened', tile_id: 'tile0', refinement: 0, request_id: 1, initial_priority: 0 } });
+        setTimeout(() => emit({ wire: 'control', message: { type: 'fetch-opened', tile_id: 'tile0', refinement: 0, request_id: 1, initial_priority: 0 } }), 200);
         objects.forEach((payload, id) => setTimeout(() => {
             if (id === 1) lastObjectAt = Date.now();
             emit({ wire: 'object', tile_id: 'tile0', refinement: 0, object_id: id, request_id: 1, payload_bytes: payload.length }, payload);
@@ -158,13 +158,23 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         const requests = [], sockets = [];
         page.on('request', request => requests.push(new URL(request.url()).pathname));
         page.on('websocket', socket => sockets.push(socket.url()));
-        await page.goto(`http://127.0.0.1:${port}/?transport=moqt&sidecar=ws://127.0.0.1:${bridgePort}&trace=/trace.json&autoplay=${Number(autoplay)}&overlays=${autoplay ? 0 : 1}&dye=${Number(dyeEnabled)}&play=${Number(playRequired)}&startAfterBase=${Number(startAfterBase)}&fixedHorizon=${Number(fixedHorizon)}`);
+        await page.goto(`http://127.0.0.1:${port}/?transport=moqt&sidecar=ws://127.0.0.1:${bridgePort}&trace=/trace.json&autoplay=${Number(autoplay)}&overlays=${autoplay ? 0 : 1}&dye=${Number(dyeEnabled)}&play=${Number(playRequired)}&startAfterBase=${Number(startAfterBase)}&fixedHorizon=${Number(fixedHorizon)}&startAfterFirstObject=${Number(startAfterFirstObject)}&record=${Number(startAfterFirstObject)}`);
+        if (startAfterFirstObject) {
+            await page.waitForFunction(() => window.__priorityMoqMvp?.trace.requestsStartedAtMs !== null);
+            const waiting = await page.evaluate(() => window.__priorityMoqMvp);
+            assert.equal(waiting.trace.state, 'buffering');
+            assert.equal(waiting.trace.elapsedMs, 0);
+            assert.equal(waiting.recording.state, 'idle');
+        }
         if (fixedHorizon) {
             await page.waitForFunction(() => window.__priorityMoqMvp?.trace.state === 'complete');
             const state = await page.evaluate(() => window.__priorityMoqMvp);
             assert.equal(state.failure, null);
-            assert.equal(state.appliedGaussians, 0, 'cutoff must not drain later objects into the experiment');
-            assert.equal(state.trace.gaussiansAtHorizon, 0);
+            assert.equal(state.trace.startPolicy, startAfterFirstObject ? 'first-object' : 'requests-started');
+            assert.ok(startAfterFirstObject ? state.trace.bufferingMs > 0 : state.trace.bufferingMs === 0);
+            assert.equal(state.trace.gaussiansAtStart, startAfterFirstObject ? 1 : 0);
+            assert.equal(state.appliedGaussians, startAfterFirstObject ? 1 : 0, 'cutoff must not drain later objects into the experiment');
+            assert.equal(state.trace.gaussiansAtHorizon, startAfterFirstObject ? 1 : 0);
             assert.ok(state.events.find(e => e.type === 'trace-complete').timestampMs -
                 state.events.find(e => e.type === 'trace-started').timestampMs < 1500);
             return;
@@ -212,6 +222,25 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         });
         assert.match(graphics.renderer, /SwiftShader/i, 'CPU smoke must use software rendering');
         assert.equal(state.failure, null);
+        if (autoplay && !startAfterBase && !startAfterFirstObject) {
+            assert.equal(state.trace.startPolicy, 'requests-started');
+            assert.equal(state.trace.bufferingMs, 0, 'request-to-render playback has no excluded loading interval');
+            assert.equal(state.trace.startedAtMs, state.events.find(e => e.type === 'requests-started').timestampMs);
+            assert.equal(state.trace.gaussiansAtStart, 0, 'unbuffered trace must start before any object is applied');
+            assert.equal(state.trace.renderedGaussiansAtStart, 0);
+            const started = state.events.find(e => e.type === 'trace-started');
+            assert.ok(state.events.filter(e => e.type === 'object').every(e => e.timestampMs >= started.timestampMs),
+                'objects arriving before the last FETCH opens must still be inside the trace');
+        }
+        if (startAfterFirstObject) {
+            assert.equal(state.trace.startPolicy, 'first-object');
+            assert.equal(state.trace.gaussiansAtStart, 1);
+            assert.equal(state.trace.receivedGaussiansAtStart, 1);
+            assert.ok(state.trace.firstObjectReceivedAtMs <= state.trace.startedAtMs);
+            assert.ok(state.trace.startedAtMs - state.trace.requestsStartedAtMs >= 200);
+            assert.equal(state.recording.state, 'complete');
+            assert.ok(state.recording.bytes > 0);
+        }
         if (startAfterBase) {
             assert.ok(state.trace.gaussiansAtStart >= 2);
             assert.ok(state.trace.renderedGaussiansAtStart >= 2,
@@ -222,6 +251,10 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         }
         if (autoplay) assert.equal(state.trace.state, 'complete');
         assert.equal(state.receivedGaussians, expectedCount); assert.equal(state.appliedGaussians, expectedCount);
+        assert.equal(state.objectProcessing.validation, "disabled");
+        assert.equal(state.objectProcessing.mode, "worker-pool");
+        assert.ok(state.objectProcessing.workerCount >= 1 && state.objectProcessing.workerCount <= 4);
+        assert.ok(state.objectProcessing.preparedObjects >= expectedCount);
         assert.equal(state.receivedPayloadBytes, combined.length + (lateReady ? enhancement.length : 0));
         assert.equal(state.rejected, 0); assert.equal(state.events.filter(event => event.type === 'object').length, expectedCount);
         if (dyeEnabled) assert.ok(await page.evaluate(() => window.__testPeakDyes) > 0, 'new refinement must be dyed during playback');

@@ -166,11 +166,15 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     os.environ['CAMERA_PLAYER_MODE'] = args.transport_mode
     topology = load_topology(args.topology_script.resolve())
+    if hasattr(topology, 'set_output'):
+        topology.set_output(args.output)
     net, client, server, devices = topology.build_topology()
     processes, handles = [], []
     background = []
     sampler = None
     def launch(node, name, command, env=None):
+        if hasattr(topology, 'process_command'):
+            command = topology.process_command(node, name, command)
         if node is None:
             handle = (args.output / f'{name}.log').open('wb')
             process = subprocess.Popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env)
@@ -178,6 +182,8 @@ def main():
             handle = (args.output / f'{name}.log').open('wb')
             process = node.popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env)
         processes.append(process); handles.append(handle)
+        if hasattr(topology, 'process_started'):
+            topology.process_started(name, process)
         return process
     def evidence(phase):
         write_tc(args.output, phase, devices)
@@ -193,6 +199,11 @@ def main():
         if hasattr(topology, 'METRIC_ROLES'):
             sampler = NetworkSampler(args.output, devices, topology.METRIC_ROLES)
             sampler.start()
+        relay_options = os.environ.get('CAMERA_PLAYER_RELAY_CONGESTION_OPTIONS',
+            'pacing_interval=1/1000,sudden_ce_threshold=off' if args.transport_mode == 'prague' else '')
+        subscriber_mode = os.environ.get('CAMERA_PLAYER_SUBSCRIBER_MODE', args.transport_mode)
+        subscriber_options = os.environ.get('CAMERA_PLAYER_SUBSCRIBER_CONGESTION_OPTIONS',
+            'pacing_interval=1/1000,sudden_ce_threshold=1/1' if subscriber_mode == 'prague' else '')
         evidence('before')
         write_experiment_record(args.output, scenario='camera-player-qemu',
             configuration={'manifest': str(args.manifest), 'controller': args.transport_mode,
@@ -201,8 +212,8 @@ def main():
                 'topology_sha256': hashlib.sha256(args.topology_script.read_bytes()).hexdigest(),
                 'admission_delay_us': args.admission_delay_us,
                 'admission_queue_bytes': args.admission_queue_bytes,
-                'relay_congestion_options': 'pacing_interval=1/1000,sudden_ce_threshold=off' if args.transport_mode == 'prague' else '',
-                'subscriber_congestion_options': 'pacing_interval=1/1000,sudden_ce_threshold=1/1' if args.transport_mode == 'prague' else '',
+                'relay_congestion_options': relay_options,
+                'subscriber_mode': subscriber_mode, 'subscriber_congestion_options': subscriber_options,
                 'udp_send_buffer_bytes': 1048576, 'udp_receive_buffer_bytes': 1048576,
                 'stream_receive_window_bytes': 1048576, 'packet_train_mode': 0,
                 'persistent_bridge': args.persistent, 'subscriber_start': 'browser Play' if args.persistent else 'immediate',
@@ -224,7 +235,7 @@ def main():
             args.transport_mode, '--transport-metrics', str(args.output / 'transport-metrics.csv')],
             env={**os.environ, 'IMQUIC_RELAY_ADMISSION_DELAY_US': str(args.admission_delay_us),
                  'IMQUIC_RELAY_ADMISSION_QUEUE_BYTES': str(args.admission_queue_bytes),
-                 'IMQUIC_RELAY_CONGESTION_OPTIONS': 'pacing_interval=1/1000,sudden_ce_threshold=off' if args.transport_mode == 'prague' else '',
+                 'IMQUIC_RELAY_CONGESTION_OPTIONS': relay_options,
                  'IMQUIC_UDP_SEND_BUFFER_BYTES': '1048576', 'IMQUIC_PACKET_TRAIN_MODE': '0'})
         time.sleep(.3)
         publisher_command = [str(PUBLISHER), server.IP(), '4443', str(args.manifest),
@@ -235,15 +246,19 @@ def main():
         publisher = launch(server, 'publisher', publisher_command)
         wait_path(args.output / 'publisher-ready.json', [relay, publisher], 180)
         bridge = launch(client, 'bridge', [NODE, str(BRIDGE), '--native', str(SIDECAR), '--relay-host',
-            server.IP(), '--relay-port', '4443', '--listen', '8787', '--transport-mode', args.transport_mode,
+            server.IP(), '--relay-port', '4443', '--listen', '8787', '--transport-mode', subscriber_mode,
             '--origin', '', '--origin', args.origin] + (['--persistent'] if args.persistent else []) +
-            (['--congestion-options', 'pacing_interval=1/1000,sudden_ce_threshold=1/1'] if args.transport_mode == 'prague' else []),
+            (['--congestion-options', subscriber_options] if subscriber_options else []),
             env={**os.environ, 'IMQUIC_UDP_RECEIVE_BUFFER_BYTES': '1048576',
                  'IMQUIC_STREAM_RECEIVE_WINDOW_BYTES': '1048576'})
         proxy = launch(None, 'proxy', [sys.executable, str(ROOT / 'tools/l4s/tcp_forward.py'),
             '--listen', '0.0.0.0:7790', '--target', '127.0.0.1:8787', '--network-pid', str(client.pid)])
         deadline = time.monotonic() + args.duration
+        next_priority_check = 0
         while time.monotonic() < deadline and bridge.poll() is None:
+            if hasattr(topology, 'validate_processes') and time.monotonic() >= next_priority_check:
+                topology.validate_processes()
+                next_priority_check = time.monotonic() + 1
             if sampler:
                 sampler.check()
             if any(process.poll() is not None for process, _ in background):

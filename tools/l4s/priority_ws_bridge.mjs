@@ -2,6 +2,7 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 const MAX_MESSAGE = 1024 * 1024;
 const MAX_BROWSER_BUFFER = 128 * 1024 * 1024;
@@ -13,6 +14,7 @@ function argsOf(argv) {
         if (argv[i] === "--listen") out.listen = Number(argv[++i]);
         else if (argv[i] === "--relay-host") out.relayHost = argv[++i];
         else if (argv[i] === "--relay-port") out.relayPort = Number(argv[++i]);
+        else if (argv[i] === "--ideal-config") out.idealConfig = argv[++i];
         else if (argv[i] === "--native") out.native = argv[++i];
         else if (argv[i] === "--transport-mode") out.transportMode = argv[++i];
         else if (argv[i] === "--congestion-options") out.congestionOptions = argv[++i];
@@ -57,7 +59,7 @@ let outstandingPayloads = [];
 let peakOutstandingObjects = 0, peakOutstandingBytes = 0, peakBrowserWriteBytes = 0, peakNativeBytes = 0;
 let windowFullSince = null, windowFullMs = 0;
 function bufferMetrics() {
-    return { type: "adapter-buffers", client_started: Boolean(native), object_window: options.objectWindow,
+    return { type: "adapter-buffers", backend: options.idealConfig ? "ideal" : "moqt", client_started: Boolean(native), object_window: options.objectWindow,
         outstanding_objects: outstandingObjects, outstanding_payload_bytes: outstandingPayloads.reduce((a, b) => a + b, 0),
         native_parser_bytes: nativeBytes.length, native_readable_bytes: native?.stdout.readableLength ?? 0,
         native_paused: native?.stdout.isPaused() ?? false, browser_write_bytes: client?.writableLength ?? 0,
@@ -170,11 +172,20 @@ function startNative() {
     nativeCommands = []; outstandingObjects = 0; outstandingPayloads = [];
     peakOutstandingObjects = peakOutstandingBytes = peakBrowserWriteBytes = peakNativeBytes = 0;
     windowFullSince = null; windowFullMs = 0;
-    const child = spawn(options.native, [options.relayHost, String(options.relayPort), options.transportMode,
-        ...(options.congestionOptions ? [options.congestionOptions] : [])],
-        { stdio: ["pipe", "pipe", "inherit"] });
+    const executable = options.idealConfig ? (process.env.IDEAL_LINK_PYTHON ?? 'python3') : options.native;
+    const arguments_ = options.idealConfig
+        ? [fileURLToPath(new URL('./ideal_link.py', import.meta.url)), '--config', options.idealConfig]
+        : [options.relayHost, String(options.relayPort), options.transportMode,
+           ...(options.congestionOptions ? [options.congestionOptions] : [])];
+    const child = spawn(executable, arguments_, { stdio: ["pipe", "pipe", "inherit"] });
     native = child;
     child.stdin.on("drain", () => { nativeInputBlocked = false; pumpNativeCommands(); });
+    child.stdin.on("error", error => {
+        nativeInputBlocked = true;
+        console.error(`native command pipe failed: ${error.message}`);
+        if (client && !client.destroyed && !client.writableEnded)
+            close(client, 1011, "native command pipe failed");
+    });
     child.on("error", error => {
         sendBrowser(1, Buffer.from(JSON.stringify({ type: "error", message: `native client failed: ${error.message}` })));
         native = null; nativeReady = false;

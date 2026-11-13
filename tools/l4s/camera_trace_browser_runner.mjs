@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import { chromium } from "playwright";
-import { capturePlayback, renderReference } from "./player_quality.mjs";
+import { capturePlayback, renderReference, installRenderLoopCapture, captureRenderLoop } from "./player_quality.mjs";
 
 function parseArgs(argv) {
     const options = { headless: false, record: true, width: 960, height: 540, gpu_mode: "hardware" };
@@ -9,7 +9,8 @@ function parseArgs(argv) {
         const arg = argv[index];
         if (arg === "--headless") options.headless = true;
         else if (arg === "--no-record") options.record = false;
-        else if (["--url", "--output", "--telemetry", "--timeout-ms", "--width", "--height", "--snapshot", "--gpu-mode", "--motion-trace", "--yaw-trace", "--capture-frames", "--capture-fps", "--reference-frames"].includes(arg))
+        else if (arg === "--allow-partial-reference") options.allow_partial_reference = true;
+        else if (["--url", "--output", "--telemetry", "--timeout-ms", "--width", "--height", "--snapshot", "--gpu-mode", "--motion-trace", "--yaw-trace", "--capture-frames", "--capture-fps", "--reference-frames", "--capture-mode", "--capture-camera-timestamps", "--allow-partial-reference"].includes(arg))
             options[arg.slice(2).replaceAll("-", "_")] = argv[++index];
         else throw new Error(`unknown argument ${arg}`);
     }
@@ -21,6 +22,8 @@ function parseArgs(argv) {
     options.height = Number(options.height);
     options.capture_fps = Number(options.capture_fps ?? 2);
     if (!(options.capture_fps > 0) || !Number.isFinite(options.capture_fps)) throw new Error("capture FPS must be positive");
+    if (!["polling", "render-loop"].includes(options.capture_mode ?? "polling")) throw new Error("--capture-mode must be polling or render-loop");
+    if (!["actual", "fixed"].includes(options.capture_camera_timestamps ?? "actual")) throw new Error("invalid capture camera timestamps");
     if (options.reference_frames && !options.motion_trace) throw new Error("reference frames require --motion-trace");
     if (!["hardware", "software"].includes(options.gpu_mode)) throw new Error("--gpu-mode must be hardware or software");
     return options;
@@ -34,12 +37,17 @@ const browser = await chromium.launch({ headless: options.headless, args: gpuArg
 const context = await browser.newContext({ viewport: { width: options.width, height: options.height },
     serviceWorkers: "block", acceptDownloads: true });
 const page = await context.newPage();
+const renderLoopCapture = options.capture_frames && !options.reference_frames && options.capture_mode === "render-loop"
+    ? await installRenderLoopCapture(page, options.capture_frames, options.capture_fps, options.capture_camera_timestamps ?? "actual") : null;
+let qualityCapture = null;
 const consoleErrors = [];
 page.on("console", message => { if (message.type() === "error") { consoleErrors.push(message.text()); console.error(message.text()); } });
 page.on("pageerror", error => { consoleErrors.push(String(error)); console.error(String(error)); });
 const downloadPromise = options.record
     ? page.waitForEvent("download", { timeout: options.timeout_ms })
     : Promise.resolve(null);
+// Closing a failed page can reject this event promise before it is awaited.
+void downloadPromise.catch(() => {});
 let failure = null;
 let reporting = false;
 const progressTimer = setInterval(async () => {
@@ -59,7 +67,7 @@ try {
     await page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 30000 });
     if (options.reference_frames) {
         await renderReference(page, options.reference_frames, options.motion_trace,
-            options.capture_frames, options.timeout_ms);
+            options.capture_frames, options.timeout_ms, { allowPartial: options.allow_partial_reference });
     } else if (options.snapshot) {
         await page.waitForFunction(() => window.__priorityMoqMvp?.renderReady || window.__priorityMoqMvp?.failure,
             null, { timeout: options.timeout_ms });
@@ -108,11 +116,15 @@ try {
         }
         await page.evaluate(async () => { if (window.__priorityMoqClose) await window.__priorityMoqClose(); });
     } else if (options.capture_frames) {
-        await capturePlayback(page, options.capture_frames, options.capture_fps, options.timeout_ms);
+        if (renderLoopCapture) qualityCapture = await captureRenderLoop(page, renderLoopCapture, options.timeout_ms);
+        else await capturePlayback(page, options.capture_frames, options.capture_fps, options.timeout_ms);
     } else {
         await page.waitForFunction(() => ["complete", "failed"].includes(window.__priorityMoqMvp?.trace?.state),
             null, { timeout: options.timeout_ms });
     }
+    const runtimeFailure = await page.evaluate(() => window.__priorityMoqMvp?.failure ??
+        (window.__priorityMoqMvp?.trace?.state === "failed" ? "trace failed before recording completed" : null));
+    if (runtimeFailure) throw new Error(runtimeFailure);
     const download = await downloadPromise;
     if (download) await download.saveAs(options.output);
 } catch (error) {
@@ -129,7 +141,9 @@ const graphics = await page.evaluate(() => {
 }).catch(() => null);
 clearInterval(progressTimer);
 const result = { ...telemetry, browserVersion: browser.version(), consoleErrors,
-    failure: telemetry?.failure ?? failure, runnerFailure: failure,
+    failure: telemetry?.failure ?? failure, runnerFailure: failure, qualityCapture: qualityCapture && { complete: qualityCapture.complete,
+        expectedFrames: qualityCapture.expectedFrames, capturedFrames: qualityCapture.frames.length,
+        missingSlots: qualityCapture.missingSlots, errors: qualityCapture.errors },
     browserContext: { fresh: true, serviceWorkers: "block", viewport: [options.width, options.height],
         gpuMode: options.gpu_mode, graphics } };
 fs.writeFileSync(options.telemetry, `${JSON.stringify(result, null, 2)}\n`);

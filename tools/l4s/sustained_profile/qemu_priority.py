@@ -23,9 +23,12 @@ def boot(args,overlay,serial_log,port):
     assert args.cpus==7
     temporary=tempfile.TemporaryDirectory(prefix='prague-qmp-');directories.append(temporary)
     address=Path(temporary.name)/'qmp.sock'
+    forwards=f'user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22'
+    if args.forward_sidecar_port:
+        forwards+=f',hostfwd=tcp:127.0.0.1:{args.forward_sidecar_port}-:7790'
     command=['qemu-system-x86_64','-enable-kvm','-cpu','host','-m',str(args.memory),'-smp',str(args.cpus),
         '-drive',f'file={overlay},format=qcow2,if=ide,cache=none,aio=native,discard=unmap',
-        '-netdev',f'user,id=n0,hostfwd=tcp:127.0.0.1:{port}-:22','-device','e1000,netdev=n0',
+        '-netdev',forwards,'-device','e1000,netdev=n0',
         '-boot','c','-display','none','-serial',f'file:{serial_log}',
         '-qmp',f'unix:{address},server=on,wait=off']
     process=subprocess.Popen(command)

@@ -2,6 +2,8 @@
 
 The maintained workflow is: **PLY → progressive splats → QEMU topology → player → video → SSIM/PSNR**.
 
+For configurable scene, bandwidth, delay, camera-duration, ideal/QEMU and Reno/Prague sweeps with retries and automated VMAF plots, see [player experiment suites](docs/player-experiments.md) and [the example configuration](experiments/player.toml).
+
 ## Prepare and build
 
 ```sh
@@ -45,7 +47,9 @@ coefficients. Inside each spatial tile, descending opacity defines four disjoint
 25% layers: cumulative quality is 25%, 50%, 75%, then 100%. Ties retain source
 order. This follows MoQSplat's opacity ordering while retaining its normally
 pruned final quarter and full SH in the base layer. It does not claim identical
-MoQSplat clustering or wire format. Objects are bounded and SHA-256 validated.
+MoQSplat clustering or wire format. Objects are bounded and carry SHA-256 metadata for offline checks. The browser
+skips payload integrity prechecks and logs actual object-processing failures;
+GSP2 decoding and packing use a bounded Web Worker pool.
 
 For compatibility with tools that require an ordinary `.splat` file:
 
@@ -90,7 +94,8 @@ python3 tools/l4s/run_camera_trace_player.py \
 The trace is a JSON array starting at timestamp zero, using either recorded
 `view_matrix` poses or the camera-position/forward/up format accepted by the
 player. One camera trace drives the entire run. Use `--gpu-mode software` if
-hardware WebGL is unavailable; similarity calculation itself runs on the CPU.
+hardware WebGL is unavailable; similarity calculation defaults to CPU and
+can use CUDA with `--quality-backend cuda`.
 The native subscriber lives in the guest, so Gaussian bytes cross the guest
 network. The host serves UI/metadata and records the player.
 
@@ -99,7 +104,11 @@ loads every spatial tile's base layer, holding the initial camera pose, then
 starts the trace and recording while refinements continue arriving. This changes
 the startup policy: the video excludes buffering time, which is recorded in
 telemetry and `validation-summary.json`. Without this flag, MoQ playback starts
-when requests are open and can show incomplete geometry during startup.
+from an empty scene as soon as the first request batch is sent. The camera
+clock, rendering and recording start together, with zero excluded loading time;
+blank initial frames and request/transport delays count inside the video.
+`connectionSetupMs` records browser-to-sidecar setup separately from the zero
+`bufferingMs` of this default mode.
 Spatial tiles share bounded 32,768-Gaussian render buffers, so small tiles do not
 require a separate set of GPU textures and shaders for every refinement.
 Optional quality dye highlights an updated shared buffer for one second after
@@ -162,6 +171,11 @@ the fully loaded version of the **same** scene export. They measure progressive
 visual completeness, not accuracy against an independent PLY renderer. Successful
 evaluation does not imply a universal SSIM threshold or transport-performance claim.
 Every run uses a new directory; reference renders are not reused by file count.
+Use `--quality-backend cuda` with a CUDA-enabled PyTorch Python environment
+for FFmpeg-compatible RGB SSIM/PSNR after recording. The default remains CPU;
+CUDA requests fail explicitly when unavailable. Quality reports record the device
+and library versions. `render-timing.json` records RAF observations of changed
+player render counters during playback, separately from encoded video FPS.
 
 For the same two-switch topology with a 20 Mbps downstream link, add
 `--bottleneck 20mbit` with the thesis topology script. The provider stays at
@@ -221,3 +235,88 @@ The current 20 Mbps, step 5 ms native Prague/Cubic diagnostic is runnable with
 `python3 tools/l4s/run_sustained_profile.py`. See [the consolidated setup and
 evidence](l4s/current-experiment.md) for CPU assignments, resource guards,
 transport changes and measured effects. This is separate from the scene presets.
+
+
+### Ideal application-level bandwidth and delay
+
+Use the ideal link to isolate payload bandwidth and data propagation from transport
+behavior. It launches no QUIC, QEMU, AQM, or competing traffic. For example:
+
+```sh
+results/venvs/3dgs/bin/python tools/l4s/run_camera_trace_player.py \
+  --manifest results/scene-videos-20261018/train-scene/manifest-v2.json \
+  --trace results/thesis-scenes-19s-20261018/train-trace-19s.json \
+  --output results/my-ideal-train --transport ideal \
+  --ideal-bandwidth-mbps 20 --ideal-data-delay-ms 40 \
+  --format mp4 --headless
+```
+
+The delay is one-way data propagation, not RTT. Requests and priority controls
+are immediate. One shared payload budget serializes an object in
+`8 * payload_bytes / (bandwidth_mbps * 1e6)` seconds; propagation overlaps
+serialization of later objects. Priority updates apply at object boundaries,
+with stable manifest/object ties. Serialized and in-flight objects are not
+preempted. Envelope/control bytes are outside this application payload budget.
+Bounded queue overflow is a method failure, rather than an implicit rate change.
+
+Ideal mode defaults to an empty start, fixed horizon, clean render-loop quality
+capture at 30 fps, and CUDA comparison after recording. At 19 seconds it requires
+570 actual clean PNG samples on `[0, 19 s)`. Missed slots are retained as missing;
+they are never reconstructed. Full-scene references use each captured timestamp
+and pose. Incomplete capture produces quality FAIL even when partial matched
+scores and a valid video are available. CUDA uses one image pair per batch.
+
+`ideal-events.jsonl` records controls, selections, serialization, modeled arrivals,
+dispatches, and cancellations. `ideal-summary.json` audits the publisher;
+`ideal-delivery-validation.json` also reconciles dispatched identities with raw
+browser receipt events before the horizon. Both preserve lateness (p95 <=5 ms,
+maximum <=20 ms required), and `validation-summary.json` separates video, quality,
+and link statuses. Local clock mapping permits 2 ms tolerance only when auditing
+raw browser early receipts; modeled early arrivals are forbidden. Browser event
+processing time remains separate from raw callback receipt time. Cwnd, ECN,
+packet loss and transport RTT are inapplicable to this model.
+
+
+### Continuous camera priorities
+
+Camera ranking predicts 100 ms ahead from the last 100 ms of motion. Visible
+refinements receive the full-precision score
+`40 * layer + 8 * screen_distance + 16 * normalized_depth` (lower first).
+`screen_distance` is the minimum L-infinity distance from screen center to the
+clipped projected tile bounding rectangle: zero when it covers the center, one
+at the viewport boundary. Box faces are clipped against all six camera-frustum
+planes before perspective division, including tiles crossing the near plane.
+This is a bounding-box approximation, not an occlusion test.
+
+`normalized_depth` is camera-to-tile-centroid distance divided by the maximum
+centroid distance among all visible tiles. Completed tiles remain in this scale;
+outside tiles do not contribute. With zero maximum distance the depth term is
+zero. Layer spacing remains 40, so all visible base layers precede visible
+higher layers. Outside priorities remain `240 + layer` for layers 0–3. Explicit
+legacy base buffering still assigns enhancements 255. Old center/periphery and
+near/middle/far labels are retained for diagnostics and do not determine scores.
+
+The wire priority is `floor(score)`. Ideal mode also sends `priority_score` on
+opens/updates, orders integer ties using that score, and records
+`subscriber_score` on object events. Score-only changes within the same integer
+priority are propagated in ideal mode; exact ties retain manifest/object order.
+In-flight or serializing objects are not preempted. Reno/L4S use their existing
+8-bit subscriber-priority field, so fractional tie ordering is not guaranteed
+there. Initial request lists use the full score to resolve integer ties.
+New run provenance includes the policy, precision mode, and ranking-source hash.
+
+For exact cross-run camera alignment, ideal mode supports
+`--quality-fps 5 --quality-camera-timestamps fixed`. It targets 95 original
+render-loop PNGs over 19 seconds, using poses at 0, 0.2, ..., 18.8 seconds.
+Selected video/render frames use the nominal camera pose, then restore the live
+camera. Priorities, delivery and horizon cutoff continue on the actual clock.
+Frame metadata records both the camera `timestampMs` and actual render
+`actualElapsedMs`/`capturedAtMs`; late or missed samples are never backfilled.
+The default `actual` camera timestamp mode is unchanged.
+
+Fixed-camera mode compacts ideal priority acknowledgements into batches of 64
+without changing score precision or update cadence. Every request-level accepted
+update is retained in `ideal-events.jsonl`. Output queues remain bounded; overflow
+is a method failure. A failed transport exits browser recording promptly instead
+of waiting for a download that cannot complete. Exact pose alignment and quality
+capture completeness are validated separately from actual capture/transport timing.

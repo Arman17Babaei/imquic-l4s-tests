@@ -1,0 +1,80 @@
+# Paths resolve relative to the repository root. Python 3.11+.
+version = 1
+output = "results/player-experiments"
+
+[defaults]
+scenes = ["bicycle", "train", "playroom"]
+bandwidth_mbps = 50
+delays_ms = [160, 320] # Total ONE-WAY propagation, not RTT.
+duration_seconds = 19 # 1x camera speed for the three original 19-second traces.
+path = "ideal" # "ideal": no VM; "qemu": full MoQ + Reno/Prague.
+controllers = ["prague", "reno"] # QEMU only; run adjacent at each fixed delay.
+switches = 2 # QEMU only; every non-client-facing link is 300 Mbps.
+reruns = 1 # Total repetitions per scene/delay/controller, including the first.
+on_failure = "continue" # Log failures and continue; exactly one attempt per item.
+max_retries = 0
+retry_exhausted = "continue" # "continue" or "stop".
+failure_criterion = "quality" # "capture", "quality", or "all"; see docs.
+
+[capture]
+width = 960
+height = 540
+fps = 30
+quality_fps = 5
+quality_backend = "cuda"
+gpu_mode = "hardware"
+headless = true
+start_after_first_object = true # Time 0: first successfully applied object; QEMU backgrounds are already warmed up.
+max_missing_snapshot_fraction = 0.05 # Accept up to 5% missing slots; keep their absence recorded.
+
+[runner]
+timeout_seconds = 900
+attempt_timeout_seconds = 3000
+memory_limit_mib = 7168 # systemd user scope; 0 disables this limit.
+min_available_memory_gib = 4
+min_free_disk_gib = 5
+python = "results/venvs/3dgs/bin/python" # Existing CUDA/PyTorch environment.
+
+[qemu]
+base = "~/sandbox/p4/work.qcow2"
+runner = "tools/l4s/run_qemu_player.py"
+cpus = 7
+memory_mib = 2048
+performance_mode = true # Seven pinned vCPUs, host performance power profile, guest priorities/offloads and 250 us Prague pacing.
+
+[analysis]
+enabled = true
+vmaf = true
+vmaf_backend = "cuda"
+plots = true
+vmaf_binary = "results/toolchains/vmaf-cuda-src/libvmaf/build/tools/vmaf"
+vmaf_model = "results/toolchains/vmaf-cuda-src/model/vmaf_v0.6.1.json"
+
+# Existing local scene exports and matching traces. Replace paths as needed.
+[scenes.bicycle]
+manifest = "results/player-sh3-adaptive-16k-20261014/manifest-v2.json"
+trace = "results/thesis-scenes-19s-20261018/bicycle-trace-19s.json"
+[scenes.train]
+manifest = "results/scene-videos-20261018/train-scene/manifest-v2.json"
+trace = "results/thesis-scenes-19s-20261018/train-trace-19s.json"
+[scenes.playroom]
+manifest = "results/scene-videos-20261018/playroom-scene/manifest-v2.json"
+trace = "results/thesis-scenes-19s-20261018/playroom-trace-19s.json"
+
+[[experiments]]
+name = "all-scenes-ideal-50mbps-1x"
+path = "ideal"
+delays_ms = [320, 160] # Ideal runs higher delay first for each scene.
+reruns = 10
+
+[[experiments]]
+name = "all-scenes-qemu-50mbps-1x"
+delays_ms = [10] # Fixed one-way propagation per physical main-path link.
+qemu_delay_mode = "per-link" # Two switches: 3 links, 30 ms one-way / nominal 60 ms RTT.
+background_link_delay_ms = 50 # Each dedicated background access link, each direction; +100 ms one-way per flow.
+path = "qemu"
+controllers = ["prague", "reno"]
+background = true # One independent competing TCP flow per switch.
+background_cc = "cubic" # Linux TCP algorithm in the guest, e.g. cubic, reno, bbr.
+background_warmup_seconds = 4 # Active background data for 4 seconds before scene/client startup.
+reruns = 10

@@ -46,6 +46,47 @@ def write_manifest(root: Path) -> Path:
 
 
 class CameraTracePlayerTest(unittest.TestCase):
+    def test_failure_before_time_zero_has_no_measurement_window(self):
+        self.assertEqual(RUNNER.measurement_window({'startedUnixMs':None,'nominalDurationMs':19000}),(None,None))
+        self.assertEqual(RUNNER.measurement_window({'startedUnixMs':1000,'nominalDurationMs':19000}),(1000,20000))
+
+    def test_requested_quality_failure_blocks_overall_success_for_every_transport(self):
+        self.assertFalse(RUNNER.quality_allows_success(True,{'status':'INCOMPLETE'}))
+        self.assertFalse(RUNNER.quality_allows_success(True,None))
+        self.assertTrue(RUNNER.quality_allows_success(True,{'status':'PASS','snapshot_coverage':{'complete':False,'accepted':True}}))
+        self.assertTrue(RUNNER.quality_allows_success(False,None))
+    def test_first_object_start_and_snapshot_tolerance_options(self):
+        args=RUNNER.parse_args(['--manifest','unused','--trace','unused','--output','results/unused',
+            '--transport','ideal','--start-after-first-object','--max-missing-snapshot-fraction','0.05'])
+        self.assertTrue(args.start_after_first_object)
+        self.assertEqual(args.max_missing_snapshot_fraction,.05)
+        with self.assertRaises(SystemExit):
+            RUNNER.parse_args(['--manifest','unused','--trace','unused','--output','results/unused',
+                '--start-after-first-object','--start-after-base'])
+    def test_qemu_quality_accepts_fixed_camera_grid(self):
+        args = RUNNER.parse_args(['--manifest', 'unused', '--trace', 'unused',
+            '--output', 'results/unused', '--transport', 'moqt', '--network-path', 'qemu',
+            '--quality', '--quality-camera-timestamps', 'fixed'])
+        self.assertEqual(args.quality_camera_timestamps, 'fixed')
+
+    def test_completed_qemu_result_uses_success_log_not_historical_name_matches(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            current = root / 'camera-player-train-reno-current'
+            current.mkdir()
+            (root / 'camera-player-train-reno-old').mkdir()
+            log = root / 'qemu.log'
+            log.write_text(f'QEMU setup cache: HIT example\nQEMU player: PASS ({current})\n')
+            self.assertEqual(RUNNER.completed_qemu_result(log), current)
+
+    def test_completed_qemu_result_rejects_ambiguous_success_logs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            log = root / 'qemu.log'
+            log.write_text(f'QEMU player: PASS ({root})\nQEMU player: PASS ({root})\n')
+            with self.assertRaises(ValueError):
+                RUNNER.completed_qemu_result(log)
+
     def test_fixed_horizon_accepts_only_consistent_censored_delivery(self) -> None:
         partial = {"receivedGaussians": 40, "appliedGaussians": 40}
         self.assertFalse(RUNNER.delivery_is_valid(partial, 100))
@@ -53,6 +94,26 @@ class CameraTracePlayerTest(unittest.TestCase):
         self.assertTrue(RUNNER.delivery_is_valid({**partial, "appliedGaussians": 39}, 100, fixed_horizon=True))
         self.assertFalse(RUNNER.delivery_is_valid({**partial, "appliedGaussians": 41}, 100, fixed_horizon=True))
         self.assertFalse(RUNNER.delivery_is_valid({"receivedGaussians": 101, "appliedGaussians": 101}, 100, fixed_horizon=True))
+
+    def test_ideal_transport_has_explicit_link_settings_and_clean_empty_defaults(self) -> None:
+        args = RUNNER.parse_args(["--manifest", "unused", "--trace", "unused", "--output", "results/unused",
+            "--transport", "ideal", "--ideal-bandwidth-mbps", "20", "--ideal-data-delay-ms", "80", "--quality"])
+        self.assertEqual(args.ideal_bandwidth_mbps, 20)
+        self.assertEqual(args.ideal_data_delay_ms, 80)
+        self.assertEqual(args.quality_fps, 30)
+        self.assertFalse(args.start_after_base)
+
+    def test_ideal_transport_rejects_invalid_or_networked_link_configuration(self) -> None:
+        base = ["--manifest", "unused", "--trace", "unused", "--output", "results/unused", "--transport", "ideal"]
+        for extra in (["--ideal-bandwidth-mbps", "0"], ["--ideal-data-delay-ms", "-1"],
+                      ["--network-path", "qemu"], ["--start-after-base"], ["--video-hud"]):
+            with self.subTest(extra=extra), self.assertRaises(SystemExit):
+                RUNNER.parse_args(base + extra)
+
+    def test_default_playback_starts_without_base_buffering(self) -> None:
+        args = RUNNER.parse_args(["--manifest", "unused", "--trace", "unused",
+            "--output", "results/unused"])
+        self.assertFalse(args.start_after_base)
 
     def test_base_layer_buffering_is_an_explicit_recording_option(self) -> None:
         args = RUNNER.parse_args(["--manifest", "unused", "--trace", "unused",
