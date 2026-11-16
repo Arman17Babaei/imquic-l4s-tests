@@ -172,8 +172,8 @@ name = "example"
 
     def test_retry_preserves_attempts_and_selects_first_criterion_pass(self):
         cfg=self.load();cfg['experiments'][0].update(reruns=1,delays_ms=[160],on_failure='retry',max_retries=2)
-        fail={'status':'FAIL','video_status':'FAIL','quality_status':'FAIL','model_status':'FAIL'}
-        partial={'status':'FAIL','video_status':'PASS','quality_status':'PASS','model_status':'FAIL'}
+        fail={'status':'FAIL','video_status':'FAIL','quality_status':'FAIL','delivery_status':'FAIL'}
+        partial={'status':'FAIL','video_status':'PASS','quality_status':'PASS','delivery_status':'FAIL'}
         ledger,calls=self.execute(cfg,[fail,partial])
         self.assertEqual(len(calls),2)
         item=ledger['items'][0]
@@ -189,12 +189,13 @@ name = "example"
         self.assertEqual(len(calls),1)
         self.assertEqual(ledger['execution_status'],'stopped')
 
-    def test_strict_criterion_retries_timing_failure_without_relabeling_pass(self):
+    def test_strict_criterion_retries_delivery_failure_without_relabeling_pass(self):
         cfg=self.load();cfg['experiments'][0].update(reruns=1,delays_ms=[160],on_failure='retry',max_retries=1,failure_criterion='all')
-        ledger,calls=self.execute(cfg,[{'status':'FAIL','video_status':'PASS','quality_status':'PASS','model_status':'FAIL'}])
+        ledger,calls=self.execute(cfg,[{'status':'FAIL','video_status':'PASS','quality_status':'PASS','delivery_status':'FAIL'}])
         self.assertEqual(len(calls),2)
         self.assertFalse(ledger['items'][0]['attempts'][-1]['criterion_pass'])
         self.assertEqual(ledger['status'],'FAIL')
+        self.assertNotIn('timing_status', ledger['items'][0]['attempts'][-1])
 
     def test_interrupt_is_written_and_not_retried(self):
         cfg=self.load()

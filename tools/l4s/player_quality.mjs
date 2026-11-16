@@ -8,32 +8,9 @@ function writeFrame(directory, frames, sample) {
     frames.push({ index: frames.length, file, ...metadata });
 }
 
-// Browser RAF observations of completed player renders, not GPU presentation times.
-export function observeRenderTiming(getState, schedule) {
-    const result = { complete: false, samples: [] };
-    let lastCounter = -1;
-    const observe = now => {
-        const state = getState();
-        if (state?.trace?.state === 'playing' && state.renderFrames !== lastCounter) {
-            result.samples.push({ observedAtMs: now, timestampMs: state.trace.elapsedMs,
-                renderFrames: state.renderFrames });
-            lastCounter = state.renderFrames;
-        }
-        if (['complete', 'failed'].includes(state?.trace?.state)) result.complete = true;
-        else schedule(observe);
-    };
-    schedule(observe);
-    return result;
-}
-
 export async function capturePlayback(page, directory, fps, timeoutMs) {
     fs.mkdirSync(directory);
     const frames = [];
-    await page.evaluate(source => {
-        const observe = (0, eval)(`(${source})`);
-        window.__renderTiming = observe(() => window.__priorityMoqMvp,
-            callback => requestAnimationFrame(callback));
-    }, observeRenderTiming.toString());
     const deadline = Date.now() + timeoutMs;
     let complete = false, lastTimestamp = -1, nextTimestamp = 0;
     try {
@@ -61,8 +38,6 @@ export async function capturePlayback(page, directory, fps, timeoutMs) {
         }
         if (!complete || !frames.length) throw new Error('playback frame capture did not complete before timeout');
     } finally {
-        const timing = await page.evaluate(() => window.__renderTiming).catch(() => null);
-        fs.writeFileSync(path.join(directory, '..', 'render-timing.json'), JSON.stringify(timing, null, 2) + '\n');
         fs.writeFileSync(path.join(directory, 'frames.json'), JSON.stringify({
             complete, requestedFps: fps, frames,
         }, null, 2) + '\n');
@@ -70,10 +45,31 @@ export async function capturePlayback(page, directory, fps, timeoutMs) {
     return frames;
 }
 
+// The last camera keyframe defines duration; the video grid excludes that endpoint.
+export function createTraceFrameGrid(trace, fps = 10) {
+    if (!Number.isFinite(fps) || fps <= 0) throw new Error('reference FPS must be finite and positive');
+    if (!Array.isArray(trace) || trace.length < 2 || trace[0]?.timestamp_ms !== 0 ||
+        trace.some((frame, index) => !Number.isFinite(frame?.timestamp_ms) ||
+            (index > 0 && frame.timestamp_ms <= trace[index - 1].timestamp_ms)))
+        throw new Error('reference trace requires common zero and strictly increasing finite timestamps');
+    const durationMs = trace.at(-1).timestamp_ms;
+    if (!(durationMs > 0)) throw new Error('reference duration must be positive');
+    const count = Math.ceil(durationMs * fps / 1000);
+    if (!Number.isSafeInteger(count) || count > 10000000) throw new Error('reference grid is too large');
+    return Array.from({ length: count }, (_, index) => ({ index,
+        nominalTimestampMs: index * 1000 / fps, timestampMs: index * 1000 / fps }));
+}
+
 export async function renderReference(page, candidateManifest, tracePath, directory, timeoutMs, options = {}) {
-    const candidate = JSON.parse(fs.readFileSync(candidateManifest, 'utf8'));
-    if ((!candidate.complete && !options.allowPartial) || !candidate.frames.length) throw new Error('candidate frame capture is incomplete');
     const trace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
+    const fps = options.fps ?? 10;
+    const gridMode = options.traceGrid === true;
+    const candidate = gridMode ? { frames: createTraceFrameGrid(trace, fps) }
+        : JSON.parse(fs.readFileSync(candidateManifest, 'utf8'));
+    if (!gridMode && ((!candidate.complete && !options.allowPartial) || !candidate.frames?.length))
+        throw new Error('candidate frame capture is incomplete');
+    if (!gridMode && candidate.frames.some(frame => !Number.isFinite(frame.timestampMs) || !frame.cameraPose))
+        throw new Error('candidate frames require finite timestamps and camera poses');
     fs.mkdirSync(directory);
     await page.waitForFunction(() => window.__priorityMoqMvp?.renderReady || window.__priorityMoqMvp?.failure,
         null, { timeout: timeoutMs });
@@ -97,22 +93,32 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                 await page.waitForTimeout(50);
             }
             if (!settled) throw new Error(`reference frame ${candidateFrame.index} did not settle`);
-            const actual = settled.cameraPose, expected = candidateFrame.cameraPose;
-            for (const field of ['viewMatrix', 'position', 'up']) {
-                if (!actual[field] || !expected[field] || actual[field].length !== expected[field].length ||
-                    actual[field].some((value, i) => Math.abs(value - expected[field][i]) > 1e-4))
-                    throw new Error(`reference camera ${field} mismatch at frame ${candidateFrame.index}`);
+            if (!gridMode) {
+                const actual = settled.cameraPose, expected = candidateFrame.cameraPose;
+                for (const field of ['viewMatrix', 'position', 'up']) {
+                    if (!actual[field] || !expected[field] || actual[field].length !== expected[field].length ||
+                        actual[field].some((value, i) => !Number.isFinite(value) || !Number.isFinite(expected[field][i]) ||
+                            Math.abs(value - expected[field][i]) > 1e-4))
+                        throw new Error(`reference camera ${field} mismatch at frame ${candidateFrame.index}`);
+                }
+                for (const field of ['fov', 'aspect'])
+                    if (!Number.isFinite(actual[field]) || !Number.isFinite(expected[field]) ||
+                        Math.abs(actual[field] - expected[field]) > 1e-6)
+                        throw new Error(`reference camera ${field} mismatch at frame ${candidateFrame.index}`);
             }
-            for (const field of ['fov', 'aspect'])
-                if (Math.abs(actual[field] - expected[field]) > 1e-6)
-                    throw new Error(`reference camera ${field} mismatch at frame ${candidateFrame.index}`);
+            if (gridMode) settled.nominalTimestampMs = candidateFrame.nominalTimestampMs;
             delete settled.ready;
             writeFrame(directory, frames, settled);
         }
         complete = true;
     } finally {
         fs.writeFileSync(path.join(directory, 'frames.json'), JSON.stringify({
-            complete, candidateManifest: path.resolve(candidateManifest), frames,
+            complete, ...(gridMode ? {
+                captureMode: 'trace-grid-reference', requestedFps: fps, expectedFrames: candidate.frames.length,
+                tracePath: path.resolve(tracePath), traceOriginMs: 0,
+                durationMs: trace.at(-1).timestamp_ms, gridInterval: '[0,durationMs)',
+                timestampSource: 'camera-trace-common-zero',
+            } : { candidateManifest: path.resolve(candidateManifest) }), frames,
         }, null, 2) + '\n');
     }
 }
@@ -166,11 +172,6 @@ export async function captureRenderLoop(page, capture, timeoutMs) {
         const manifest = { ...summary, complete: playbackComplete && !!summary?.complete && !errors.length,
             playbackComplete, requestedFps: fps, captureMode: 'render-loop', cameraTimestamps: capture.cameraTimestamps, errors, frames };
         fs.writeFileSync(path.join(directory, 'frames.json'), JSON.stringify(manifest, null, 2) + '\n');
-        fs.writeFileSync(path.join(directory, '..', 'render-timing.json'), JSON.stringify({
-            complete: playbackComplete, source: 'render-loop',
-            samples: (summary?.observations ?? []).map((sample, index) => ({ ...sample,
-                observedAtMs: sample.capturedAtMs, renderFrames: index + 1 })),
-        }, null, 2) + '\n');
         return manifest;
     }
 }

@@ -8,6 +8,7 @@ function parseArgs(argv) {
     for (let index = 0; index < argv.length; index++) {
         const arg = argv[index];
         if (arg === "--headless") options.headless = true;
+        else if (arg === "--reference-trace-grid") options.reference_trace_grid = true;
         else if (arg === "--no-record") options.record = false;
         else if (arg === "--allow-partial-reference") options.allow_partial_reference = true;
         else if (["--url", "--output", "--telemetry", "--timeout-ms", "--width", "--height", "--snapshot", "--gpu-mode", "--motion-trace", "--yaw-trace", "--capture-frames", "--capture-fps", "--reference-frames", "--capture-mode", "--capture-camera-timestamps", "--allow-partial-reference"].includes(arg))
@@ -24,7 +25,8 @@ function parseArgs(argv) {
     if (!(options.capture_fps > 0) || !Number.isFinite(options.capture_fps)) throw new Error("capture FPS must be positive");
     if (!["polling", "render-loop"].includes(options.capture_mode ?? "polling")) throw new Error("--capture-mode must be polling or render-loop");
     if (!["actual", "fixed"].includes(options.capture_camera_timestamps ?? "actual")) throw new Error("invalid capture camera timestamps");
-    if (options.reference_frames && !options.motion_trace) throw new Error("reference frames require --motion-trace");
+    if (options.reference_trace_grid && (options.reference_frames || !options.capture_frames)) throw new Error("trace-grid reference requires capture directory and excludes candidate reference");
+    if ((options.reference_frames || options.reference_trace_grid) && !options.motion_trace) throw new Error("reference frames require --motion-trace");
     if (!["hardware", "software"].includes(options.gpu_mode)) throw new Error("--gpu-mode must be hardware or software");
     return options;
 }
@@ -37,7 +39,7 @@ const browser = await chromium.launch({ headless: options.headless, args: gpuArg
 const context = await browser.newContext({ viewport: { width: options.width, height: options.height },
     serviceWorkers: "block", acceptDownloads: true });
 const page = await context.newPage();
-const renderLoopCapture = options.capture_frames && !options.reference_frames && options.capture_mode === "render-loop"
+const renderLoopCapture = options.capture_frames && !options.reference_frames && !options.reference_trace_grid && options.capture_mode === "render-loop"
     ? await installRenderLoopCapture(page, options.capture_frames, options.capture_fps, options.capture_camera_timestamps ?? "actual") : null;
 let qualityCapture = null;
 const consoleErrors = [];
@@ -65,9 +67,9 @@ const progressTimer = setInterval(async () => {
 }, 10000);
 try {
     await page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 30000 });
-    if (options.reference_frames) {
+    if (options.reference_frames || options.reference_trace_grid) {
         await renderReference(page, options.reference_frames, options.motion_trace,
-            options.capture_frames, options.timeout_ms, { allowPartial: options.allow_partial_reference });
+            options.capture_frames, options.timeout_ms, { allowPartial: options.allow_partial_reference, traceGrid: options.reference_trace_grid, fps: options.capture_fps });
     } else if (options.snapshot) {
         await page.waitForFunction(() => window.__priorityMoqMvp?.renderReady || window.__priorityMoqMvp?.failure,
             null, { timeout: options.timeout_ms });
@@ -149,5 +151,5 @@ const result = { ...telemetry, browserVersion: browser.version(), consoleErrors,
 fs.writeFileSync(options.telemetry, `${JSON.stringify(result, null, 2)}\n`);
 await context.close();
 await browser.close();
-if (failure || result.failure || ((options.snapshot || options.reference_frames) ? !result.renderReady : result.trace?.state !== "complete") ||
+if (failure || result.failure || ((options.snapshot || options.reference_frames || options.reference_trace_grid) ? !result.renderReady : result.trace?.state !== "complete") ||
     (options.record && !fs.existsSync(options.output))) process.exitCode = 1;

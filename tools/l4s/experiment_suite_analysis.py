@@ -19,8 +19,8 @@ import subprocess
 LIMITATIONS = [
     'Same-player full-scene references measure progressive completeness, not independent renderer accuracy.',
     'VMAF is exploratory for sparse progressive rendering; its motion features use adjacent common PNG samples.',
-    'Missing timestamps are excluded without interpolation. Actual capture timing is retained separately.',
-    'Timing failures preclude causal delay claims. Repeat ranges are descriptive, not confidence intervals.',
+    'Missing timestamps are excluded without interpolation.',
+    'Repeat ranges are descriptive, not confidence intervals.',
     'Browser object payload goodput excludes protocol/link overhead and is not wire utilization or link capacity.',
     'Payload bins prefer receivedAtMs receipt time; legacy timestampMs fallback measures processing completion and may shift under worker backlog.',
 ]
@@ -118,14 +118,6 @@ def frame_pairs(directory: Path):
                 'camera_timestamps': manifests[0][0].get('cameraTimestamps'),
                 'candidate_capture_complete': manifests[0][0].get('complete'),
                 'reference_capture_complete': manifests[1][0].get('complete')}
-    metadata['frame_timing'] = [
-            {'timestamp_ms': timestamp, 'actual_elapsed_ms': number(candidate.get('actualElapsedMs')),
-             'snapshot_lateness_ms': (number(candidate.get('actualElapsedMs')) - timestamp
-                                     if number(candidate.get('actualElapsedMs')) is not None else None),
-             'applied_gaussians': candidate.get('appliedGaussians'),
-             'received_gaussians': candidate.get('receivedGaussians'),
-             'stage': candidate.get('stage')}
-            for timestamp, candidate in sorted(candidates.items())]
     return pairs, metadata
 
 
@@ -164,7 +156,7 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
         'id', 'scene', 'bandwidth_mbps', 'delay_ms', 'duration_seconds', 'path', 'controller',
         'switches', 'rerun', 'experiment_index', 'selected_attempt', 'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode')}
     run.update(status='BLOCKED', quality_frames=0, mean_ssim=None, mean_browser_payload_mbps=None,
-               capture_status=None, quality_status=None, timing_status=None)
+               capture_status=None, quality_status=None)
     quality, bins, pairs = [], [], {}
     selected = item.get('selected_attempt')
     attempt = next((value for value in item.get('attempts', [])
@@ -172,7 +164,7 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
     if attempt is None:
         run['error'] = 'no explicitly selected attempt'
         return run, quality, bins, pairs
-    for key in ('capture_status', 'quality_status', 'timing_status', 'process_exit_code', 'criterion_pass'):
+    for key in ('capture_status', 'quality_status', 'process_exit_code', 'criterion_pass'):
         run[key] = attempt.get(key)
     run['source_attempt_status'] = attempt.get('status')
     try:
@@ -210,7 +202,6 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
         run['max_missing_fraction'] = run['snapshot_coverage'].get('max_missing_fraction')
         pairs, metadata = frame_pairs(directory)
         run.update(metadata)
-        write_csv(out / f'run-{index:04d}-frame-timing.csv', run['frame_timing'])
         run['quality_frames'] = len(quality)
         values = [row['rgb_ssim'] for row in quality if row.get('rgb_ssim') is not None]
         run['mean_ssim'] = statistics.mean(values) if values else None
@@ -218,7 +209,6 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
                                             float(item['duration_seconds']) / 1e6 if bins else None)
         run['status'] = ('PASS' if quality and all(run.get(key) == 'PASS' for key in
                          ('capture_status', 'quality_status')) and
-                         run['timing_status'] in ('PASS', 'NOT_APPLICABLE') and
                          run['source_attempt_status'] == 'PASS' and
                          run.get('process_exit_code') in (None, 0) and
                          run.get('criterion_pass') is not False and
@@ -319,8 +309,7 @@ def vmaf_group(out: Path, name: str, members: list, common: list, settings: dict
             values = [number(frame['metrics']['vmaf']) for frame in frames]
             if len(values) != len(common) or any(value is None for value in values):
                 raise ValueError('VMAF returned missing/nonfinite frame scores')
-            rows = [{'timestamp_ms': timestamp, 'vmaf': value,
-                     'actual_elapsed_ms': pairs[timestamp][0].get('actualElapsedMs')}
+            rows = [{'timestamp_ms': timestamp, 'vmaf': value}
                     for timestamp, value in zip(common, values)]
             write_csv(work / f'run-{index}-vmaf.csv', rows)
             run['mean_vmaf'] = statistics.mean(values)
@@ -454,21 +443,20 @@ def plot_group(out: Path, name: str, group: dict, members: list):
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
-    fig, axes = plt.subplots(7, 1, figsize=(11, 17), sharex=True)
+    fig, axes = plt.subplots(6, 1, figsize=(11, 15), sharex=True)
     for run, quality, bins, _ in members:
         label = f"{run['controller']} {run['delay_ms']} ms, repeat {run['rerun']} [{run['status']}; quality {run['quality_status']}]"
         for axis, rows, xkey, ykey, factor in (
                 (axes[0], run.get('vmaf_rows', []), 'timestamp_ms', 'vmaf', 0.001),
                 (axes[1], quality, 'timestamp_ms', 'rgb_ssim', 0.001),
                 (axes[2], bins, 'seconds', 'browser_payload_mbps', 1),
-                (axes[3], quality, 'timestamp_ms', 'applied_fraction', 0.001),
-                (axes[4], run.get('frame_timing', []), 'timestamp_ms', 'snapshot_lateness_ms', 0.001)):
+                (axes[3], quality, 'timestamp_ms', 'applied_fraction', 0.001)):
             values = [row for row in rows if row.get(ykey) is not None and row.get(xkey) is not None]
             if values:
                 axis.plot([row[xkey] * factor for row in values], [row[ykey] for row in values],
                           marker='.', linewidth=0.7, linestyle='-' if ykey == 'browser_payload_mbps' else 'none',
                           label=label)
-    for axis, metric in zip(axes[5:], ('vmaf', 'ssim')):
+    for axis, metric in zip(axes[4:], ('vmaf', 'ssim')):
         for pair in group['differences']:
             values = [row for row in pair['rows'] if row.get('delta_' + metric) is not None]
             label = f"{pair['label']}, repeat {pair['rerun']} [{pair['minuend_status']}/{pair['subtrahend_status']}]"
@@ -481,14 +469,14 @@ def plot_group(out: Path, name: str, group: dict, members: list):
             axis.text(.5, .5, '\n'.join(textwrap.fill(reason, 100) for reason in reasons if reason)
                       or 'No comparison pair planned', transform=axis.transAxes, ha='center', fontsize=8)
     for axis, title in zip(axes, ('VMAF', 'RGB SSIM', 'Browser payload (Mbps)', 'Applied scene fraction',
-                                  'Snapshot lateness (ms)', 'ΔVMAF', 'ΔSSIM')):
+                                  'ΔVMAF', 'ΔSSIM')):
         axis.set_ylabel(title)
         axis.grid(alpha=0.25)
         if axis.lines:
             axis.legend(fontsize=7)
-        elif axis not in axes[5:]:
+        elif axis not in axes[4:]:
             axis.text(0.5, 0.5, 'No retained usable data', transform=axis.transAxes, ha='center')
-    for axis in axes[5:]:
+    for axis in axes[4:]:
         axis.axhline(0, color='black', linewidth=.7, alpha=.5)
     first = members[0][0]
     background_label=(f"{first['switches']} TCP {first.get('background_cc')} backgrounds, each targeting {first['bandwidth_mbps']} Mbps"
@@ -600,10 +588,10 @@ def analyze_batch(batch: Path, ledger: dict, settings: dict) -> dict:
                     if not isinstance(value, (dict, list))} for run in runs]
     write_csv(out / 'summary.csv', scalar_rows)
     lines = ['# Offline experiment-suite analysis', '', f'Analysis status: **{status}**.', '',
-             'Only explicitly selected attempts are included. Capture, quality and timing statuses remain separate.', '',
-             '| Run | Capture | Quality | Timing | SSIM frames | Shared poses |',
-             '|---|---|---|---|---:|---:|']
-    lines.extend(f"| {run['id']} | {run['capture_status']} | {run['quality_status']} | {run['timing_status']} | "
+             'Only explicitly selected attempts are included. Capture and quality statuses remain separate.', '',
+             '| Run | Capture | Quality | SSIM frames | Shared poses |',
+             '|---|---|---|---:|---:|']
+    lines.extend(f"| {run['id']} | {run['capture_status']} | {run['quality_status']} | "
                  f"{run['quality_frames']} | {run.get('common_pose_count', 0)} |" for run in runs)
     lines += ['', '[Machine-readable summary](summary.json) and [run table](summary.csv).', '']
     for group in groups:

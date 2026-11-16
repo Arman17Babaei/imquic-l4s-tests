@@ -33,7 +33,7 @@ class SuiteAnalysisTests(unittest.TestCase):
                 'duration_seconds': 2, 'path': 'ideal', 'controller': 'ideal',
                 'switches': 1, 'rerun': 0, 'experiment_index': 0,
                 'attempts': [{'index': 0, 'directory': name, 'capture_status': 'PASS',
-                              'quality_status': 'PASS', 'timing_status': 'FAIL', 'status': 'FAIL'}],
+                              'quality_status': 'PASS', 'status': 'FAIL'}],
                 'selected_attempt': selected}
 
     def test_receipt_clock_precedes_worker_completion_with_explicit_legacy_fallback(self):
@@ -133,14 +133,14 @@ class SuiteAnalysisTests(unittest.TestCase):
         for field, value in [('status', 'PARTIAL'), ('process_exit_code', 7), ('criterion_pass', False)]:
             with self.subTest(field=field):
                 item = self.item(name=field)
-                item['attempts'][0].update(status='PASS', timing_status='PASS',
+                item['attempts'][0].update(status='PASS',
                                            process_exit_code=0, criterion_pass=True)
                 item['attempts'][0][field] = value
                 result = analysis.analyze_batch(self.batch, {'items': [item]}, self.settings)
                 self.assertNotEqual(result['status'], 'PASS')
                 self.assertEqual(result['runs'][0]['source_attempt_status'], item['attempts'][0]['status'])
         item = self.item(name='validation')
-        item['attempts'][0].update(status='PASS', timing_status='PASS', process_exit_code=0, criterion_pass=True)
+        item['attempts'][0].update(status='PASS', process_exit_code=0, criterion_pass=True)
         (self.batch / 'validation/validation-summary.json').write_text(json.dumps({'status': 'PARTIAL'}))
         result = analysis.analyze_batch(self.batch, {'items': [item]}, self.settings)
         self.assertEqual(result['runs'][0]['source_validation_status'], 'PARTIAL')
@@ -150,27 +150,18 @@ class SuiteAnalysisTests(unittest.TestCase):
         self.assertEqual(analysis.missing_requested_timestamps([0, 1000 / 3 + 1e-10, 2000 / 3], 3, 3), [])
         self.assertEqual(analysis.missing_requested_timestamps([0, 334, 2000 / 3], 3, 3), [1000 / 3])
 
-    def test_selection_is_explicit_and_timing_failure_is_preserved(self):
+    def test_selection_is_explicit_and_source_failure_is_preserved(self):
         item = self.item()
         item['attempts'].append({'index': 1, 'directory': 'nonexistent', 'status': 'PASS'})
         result = analysis.analyze_batch(self.batch, {'items': [item]}, self.settings)
         run = result['runs'][0]
         self.assertEqual(run['selected_attempt'], 0)
-        self.assertEqual(run['timing_status'], 'FAIL')
+        self.assertNotIn('timing_status', run)
+        self.assertEqual(run['source_attempt_status'], 'FAIL')
         self.assertEqual(run['quality_frames'], 2)
         self.assertAlmostEqual(run['mean_browser_payload_mbps'], 1.2)
         self.assertNotEqual(result['status'], 'PASS')
         self.assertTrue((self.batch / 'analysis/summary.csv').is_file())
-
-    def test_qemu_not_applicable_timing_is_preserved_without_failing_analysis(self):
-        item = self.item()
-        item['path'] = 'qemu'
-        item['controller'] = 'reno'
-        item['attempts'][0]['timing_status'] = 'NOT_APPLICABLE'
-        item['attempts'][0]['status'] = 'PASS'
-        result = analysis.analyze_batch(self.batch, {'items': [item]}, self.settings)
-        self.assertEqual(result['runs'][0]['timing_status'], 'NOT_APPLICABLE')
-        self.assertEqual(result['status'], 'PASS')
 
     def test_background_conditions_are_preserved_and_never_grouped_together(self):
         a=self.item('a');b=self.item('b')
@@ -226,7 +217,7 @@ class SuiteAnalysisTests(unittest.TestCase):
         self.assertEqual(commands[0]['argv'], ['vmaf'])
         self.assertTrue((out / 'run.log').is_file())
 
-    def test_actual_frame_timing_is_retained_without_vmaf(self):
+    def test_exact_frame_pairing_preserves_snapshot_completeness(self):
         item = self.item()
         for kind in ('candidate', 'reference'):
             folder = self.batch / 'one' / f'{kind}-frames'
@@ -235,22 +226,23 @@ class SuiteAnalysisTests(unittest.TestCase):
             (folder / 'frames.json').write_text(json.dumps({
                 'complete': True, 'requestedFps': 1, 'cameraTimestamps': 'fixed', 'frames': [{
                     'file': 'frame.png', 'timestampMs': 0, 'cameraPose': {'x': 1},
-                    'actualElapsedMs': 52, 'appliedGaussians': 5}]}))
+                    'appliedGaussians': 5}]}))
         result = analysis.analyze_batch(self.batch, {'items': [item]}, self.settings)
-        rows = result['runs'][0]['frame_timing']
-        self.assertEqual(rows[0]['actual_elapsed_ms'], 52)
-        self.assertEqual(rows[0]['snapshot_lateness_ms'], 52)
+        self.assertEqual(result['runs'][0]['exact_reference_pairs'], 1)
+        self.assertNotIn('frame_timing', result['runs'][0])
+        self.assertFalse(list((self.batch / 'analysis').glob('*frame-timing*')))
         self.assertEqual(result['runs'][0]['missing_requested_timestamps_ms'], [1000])
 
-    def test_missing_references_keep_candidate_actual_timings(self):
+    def test_missing_references_preserve_candidate_completeness(self):
         item = self.item()
         folder = self.batch / 'one/candidate-frames'
         folder.mkdir()
         (folder / 'frame.png').write_bytes(b'fixture')
         (folder / 'frames.json').write_text(json.dumps({'frames': [{
-            'file': 'frame.png', 'timestampMs': 0, 'cameraPose': {'x': 1}, 'actualElapsedMs': 90}]}))
+            'file': 'frame.png', 'timestampMs': 0, 'cameraPose': {'x': 1}}]}))
         result = analysis.analyze_batch(self.batch, {'items': [item]}, self.settings)
-        self.assertEqual(result['runs'][0]['frame_timing'][0]['actual_elapsed_ms'], 90)
+        self.assertEqual(result['runs'][0]['candidate_frames'], 1)
+        self.assertEqual(result['runs'][0]['exact_reference_pairs'], 0)
         self.assertEqual(result['groups'][0]['common_pose_count'], 0)
 
     def test_no_selected_run_is_excluded_from_common_intersection(self):
@@ -276,7 +268,7 @@ class SuiteAnalysisTests(unittest.TestCase):
             for index in range(2):
                 Image.new('RGB', (8, 8), (index * 10, 0, 0)).save(folder / f'{index}.png')
                 frames.append({'file': f'{index}.png', 'timestampMs': index * 1000,
-                               'cameraPose': {'x': index}, 'actualElapsedMs': index * 1000 + 40})
+                               'cameraPose': {'x': index}})
             (folder / 'frames.json').write_text(json.dumps({'complete': True, 'requestedFps': 1, 'frames': frames}))
         binary, model = self.batch / 'vmaf', self.batch / 'model.json'
         binary.write_bytes(b'fixture binary')
@@ -298,7 +290,7 @@ class SuiteAnalysisTests(unittest.TestCase):
         self.assertTrue(group['rgb_references_equal'])
         self.assertEqual(group['native_dimensions'], [8, 8])
         self.assertEqual(result['runs'][0]['mean_vmaf'], 70)
-        self.assertEqual(result['status'], 'PARTIAL')  # source timing still FAIL
+        self.assertEqual(result['status'], 'PARTIAL')  # selected source attempt still FAIL
         commands = json.loads((self.batch / 'analysis/group-0000/commands.json').read_text())
         self.assertEqual(commands[-1]['argv'][commands[-1]['argv'].index('--gpumask') + 1], '-1')
         self.assertEqual(commands[-1]['argv'][commands[-1]['argv'].index('--threads') + 1], '0')
@@ -338,7 +330,7 @@ class SuiteAnalysisTests(unittest.TestCase):
 
     def test_accepted_snapshot_loss_preserves_source_acceptance(self):
         item = self.item()
-        item['attempts'][0].update(status='PASS', timing_status='PASS')
+        item['attempts'][0].update(status='PASS')
         (self.batch / 'one/quality/comparison.json').write_text(json.dumps({
             'snapshot_coverage': {'accepted': True, 'max_missing_fraction': .05,
                                   'coverage': 94 / 95, 'complete': False}}))

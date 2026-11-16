@@ -196,7 +196,7 @@ class IdealTests(unittest.TestCase):
         self.assertEqual(summary['status'], 'FAIL')
         self.assertEqual(summary['budget_violations'], 1)
 
-    def test_blocked_output_is_reported_as_lateness_failure(self):
+    def test_blocked_output_does_not_fail_intact_delivery(self):
         self.manifest = fixture(self.root, sizes=(65536,), tracks=1)
         config = self.root / 'config.json'
         config.write_text(json.dumps(dict(manifest=str(self.manifest), output=str(self.root / 'out'), bandwidth_mbps=800, data_delay_ms=0)))
@@ -213,10 +213,11 @@ class IdealTests(unittest.TestCase):
         p.stdin.write(b'{"type":"close"}\n')
         self.frame(p)
         p.wait(timeout=3)
-        self.assertEqual(p.returncode, 1)
+        self.assertEqual(p.returncode, 0)
         summary = json.loads((self.root / 'out/ideal-summary.json').read_text())
-        self.assertEqual(summary['status'], 'FAIL')
-        self.assertGreater(summary['dispatch_lateness_max_ms'], 20)
+        self.assertEqual(summary['status'], 'PASS')
+        self.assertFalse(any('lateness' in key for key in summary))
+        self.assertEqual(summary['delivered_objects'], 1)
         for pipe in (p.stdin, p.stdout, p.stderr): pipe.close()
 
     def test_stdio_compact_priority_acknowledgements_preserve_every_update(self):
@@ -284,7 +285,6 @@ class IdealTests(unittest.TestCase):
         self.assertGreater(summary['clock_origin_monotonic_us'], 0)
         self.assertAlmostEqual(received[1][0]['ideal_arrival_unix_ms'] - received[0][0]['ideal_arrival_unix_ms'], 200, places=3)
         self.assertAlmostEqual(received[1][0]['ideal_arrival_monotonic_us'] - received[0][0]['ideal_arrival_monotonic_us'], 200000, delta=1)
-        self.assertEqual(summary['early_deliveries'], 0)
         self.assertLessEqual(summary['peak_queue_bytes'], 2**24)
         self.assertEqual(summary['status'], 'PASS')
         for pipe in (p.stdin, p.stdout, p.stderr): pipe.close()

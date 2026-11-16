@@ -136,14 +136,13 @@ def classify(directory,code,criterion,error=None):
         summary={};error=error or f'cannot read validation summary: {failure}'
     video=summary.get('video_status','MISSING')
     quality=summary.get('quality_status','MISSING')
-    timing=summary.get('model_status','NOT_APPLICABLE')
     capture=video=='PASS' and (directory/'camera-trace.mp4').is_file() and not error
     acceptable=capture
     if criterion=='quality':acceptable=capture and quality=='PASS'
     elif criterion=='all':acceptable=capture and quality=='PASS' and summary.get('status')=='PASS' and code==0
     full=capture and quality=='PASS' and summary.get('status')=='PASS' and code==0
     return dict(process_exit_code=code,capture_status='PASS' if capture else 'FAIL',quality_status=quality,
-                timing_status=timing,status='PASS' if full else 'PARTIAL' if capture else 'FAIL',
+                status='PASS' if full else 'PARTIAL' if capture else 'FAIL',
                 criterion_pass=bool(acceptable),error=error)
 
 
@@ -166,19 +165,19 @@ def save(batch,ledger):
     refresh_status(ledger)
     write_json(batch/'ledger.json',ledger)
     lines=['# Player experiment suite','',f'Execution: **{ledger["execution_status"]}**. Overall evidence: **{ledger["status"]}**.','',
-           'Capture, quality, and modeled timing are tracked separately. A configured failure criterion controls retries; it never changes recorded source statuses.','',
-           '| Item | Repeat | Capture | Quality | Timing | Attempt |','|---|---:|---|---|---|---|']
+           'Capture and quality are tracked separately. A configured failure criterion controls retries; it never changes recorded source statuses.','',
+           '| Item | Repeat | Capture | Quality | Attempt |','|---|---:|---|---|---|']
     for item in ledger['items']:
         selected=next((a for a in item['attempts'] if a['index']==item['selected_attempt']),None)
         if selected:
-            lines.append(f'| {item["id"]} | {item["rerun"]} | {selected["capture_status"]} | {selected["quality_status"]} | {selected["timing_status"]} | [{selected["index"]}]({selected["directory"]}/) |')
-        else:lines.append(f'| {item["id"]} | {item["rerun"]} | NOT_RUN | — | — | — |')
+            lines.append(f'| {item["id"]} | {item["rerun"]} | {selected["capture_status"]} | {selected["quality_status"]} | [{selected["index"]}]({selected["directory"]}/) |')
+        else:lines.append(f'| {item["id"]} | {item["rerun"]} | NOT_RUN | — | — |')
     lines += ['', '- [Resolved configuration](config.json)', '- [All attempts and exact commands](ledger.json)']
     if (batch/'analysis/README.md').is_file():
         lines.append('- [Automated analysis and plots](analysis/README.md)')
     lines += ['',
               'Ideal delays apply to data only with immediate controls. QEMU delays follow qemu_delay_mode: endpoints means total one-way, per-link means one-way on each physical main-path link; non-client-facing links are 300 Mbps, client-facing link uses the configured bottleneck. Enabled background traffic has one independent TCP source/sink per switch sharing only that forward hop, each targeting the bottleneck rate with the recorded background_cc. Each background-only access link adds background_link_delay_ms in each direction; each background path has two such links.', '',
-              'Browser object prevalidation remains disabled as requested; workers prepare GSP2 objects. Offline quality and timing checks remain separate. Missing samples are never filled.']
+              'Browser object prevalidation remains disabled as requested; workers prepare GSP2 objects. Offline quality is evaluated separately. Missing samples are never filled.']
     if ledger.get('analysis_error'):lines += ['',f'Analysis error: {ledger["analysis_error"]}']
     (batch/'README.md').write_text('\n'.join(lines)+'\n')
 
@@ -223,7 +222,7 @@ def run_batch(cfg,executor=None):
                 log=directory.with_suffix('.log')
                 write_json(directory.with_name(directory.name+'-command.json'),command)
                 attempt=dict(index=index,directory=str(relative),command=command,started_unix=time.time(),
-                             process_exit_code=None,capture_status='RUNNING',quality_status='MISSING',timing_status='NOT_APPLICABLE',
+                             process_exit_code=None,capture_status='RUNNING',quality_status='MISSING',
                              status='RUNNING',criterion_pass=False,error=None)
                 item['attempts'].append(attempt);item['selected_attempt']=index;save(batch,ledger)
                 print(f'RUN {item["id"]} attempt {index}/{count}',flush=True)

@@ -174,8 +174,7 @@ Every run uses a new directory; reference renders are not reused by file count.
 Use `--quality-backend cuda` with a CUDA-enabled PyTorch Python environment
 for FFmpeg-compatible RGB SSIM/PSNR after recording. The default remains CPU;
 CUDA requests fail explicitly when unavailable. Quality reports record the device
-and library versions. `render-timing.json` records RAF observations of changed
-player render counters during playback, separately from encoded video FPS.
+and library versions.
 
 For the same two-switch topology with a 20 Mbps downstream link, add
 `--bottleneck 20mbit` with the thesis topology script. The provider stays at
@@ -267,14 +266,12 @@ and pose. Incomplete capture produces quality FAIL even when partial matched
 scores and a valid video are available. CUDA uses one image pair per batch.
 
 `ideal-events.jsonl` records controls, selections, serialization, modeled arrivals,
-dispatches, and cancellations. `ideal-summary.json` audits the publisher;
-`ideal-delivery-validation.json` also reconciles dispatched identities with raw
-browser receipt events before the horizon. Both preserve lateness (p95 <=5 ms,
-maximum <=20 ms required), and `validation-summary.json` separates video, quality,
-and link statuses. Local clock mapping permits 2 ms tolerance only when auditing
-raw browser early receipts; modeled early arrivals are forbidden. Browser event
-processing time remains separate from raw callback receipt time. Cwnd, ECN,
-packet loss and transport RTT are inapplicable to this model.
+dispatches, and cancellations. `ideal-summary.json` checks publisher execution and
+queue budgets; `ideal-delivery.json` reconciles dispatched object identities with
+browser receipts. Missing, unexpected or duplicate objects and invalid modeled
+metadata fail delivery. Wall-clock speed is not graded. `validation-summary.json`
+separates video, quality, and delivery status. Cwnd, ECN, packet loss and transport
+RTT are inapplicable to this model.
 
 
 ### Continuous camera priorities
@@ -310,8 +307,7 @@ For exact cross-run camera alignment, ideal mode supports
 render-loop PNGs over 19 seconds, using poses at 0, 0.2, ..., 18.8 seconds.
 Selected video/render frames use the nominal camera pose, then restore the live
 camera. Priorities, delivery and horizon cutoff continue on the actual clock.
-Frame metadata records both the camera `timestampMs` and actual render
-`actualElapsedMs`/`capturedAtMs`; late or missed samples are never backfilled.
+Frame metadata records the camera `timestampMs`; missed samples remain missing.
 The default `actual` camera timestamp mode is unchanged.
 
 Fixed-camera mode compacts ideal priority acknowledgements into batches of 64
@@ -319,4 +315,4 @@ without changing score precision or update cadence. Every request-level accepted
 update is retained in `ideal-events.jsonl`. Output queues remain bounded; overflow
 is a method failure. A failed transport exits browser recording promptly instead
 of waiting for a download that cannot complete. Exact pose alignment and quality
-capture completeness are validated separately from actual capture/transport timing.
+capture completeness and object delivery are validated independently.

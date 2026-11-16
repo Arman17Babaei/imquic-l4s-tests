@@ -55,6 +55,30 @@ class CameraTracePlayerTest(unittest.TestCase):
         self.assertFalse(RUNNER.quality_allows_success(True,None))
         self.assertTrue(RUNNER.quality_allows_success(True,{'status':'PASS','snapshot_coverage':{'complete':False,'accepted':True}}))
         self.assertTrue(RUNNER.quality_allows_success(False,None))
+    def test_worker_buffer_options_and_control_measurement_window(self):
+        base = ['--manifest', 'unused', '--trace', 'unused', '--output', 'results/unused', '--transport', 'ideal']
+        args = RUNNER.parse_args(base + ['--receipt-thread', 'worker', '--playback-delay-ms', '4000'])
+        self.assertEqual(args.receipt_thread, 'worker')
+        self.assertEqual(args.playback_delay_ms, 4000)
+        self.assertEqual(RUNNER.measurement_window({'startedUnixMs': 5000, 'controlStartedUnixMs': 1000,
+            'nominalDurationMs': 6000, 'playbackDelayMs': 4000}), (1000, 7000))
+        for extra in (['--playback-delay-ms', '4000'],
+                      ['--receipt-thread', 'worker', '--playback-delay-ms', '4000', '--start-after-first-object'],
+                      ['--receipt-thread', 'worker', '--playback-delay-ms', '-1']):
+            with self.assertRaises(SystemExit):
+                RUNNER.parse_args(base + extra)
+
+    def test_buffered_capture_uses_one_png_per_trace_grid_frame(self):
+        base = ['--manifest', 'unused', '--trace', 'unused', '--output', 'results/unused',
+                '--transport', 'ideal', '--receipt-thread', 'worker', '--playback-delay-ms', '4000']
+        args = RUNNER.parse_args(base)
+        self.assertEqual(args.quality_fps, 10)
+        self.assertEqual(args.quality_camera_timestamps, 'fixed')
+        self.assertEqual(args.fps, 10)
+        for extra in (['--quality-fps', '5'], ['--fps', '30']):
+            with self.assertRaises(SystemExit):
+                RUNNER.parse_args(base + extra)
+
     def test_first_object_start_and_snapshot_tolerance_options(self):
         args=RUNNER.parse_args(['--manifest','unused','--trace','unused','--output','results/unused',
             '--transport','ideal','--start-after-first-object','--max-missing-snapshot-fraction','0.05'])

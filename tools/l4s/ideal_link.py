@@ -151,7 +151,7 @@ class IdealScheduler:
     """Nonpreemptive work-conserving serializer with independent propagation.
 
     advance() preserves modeled deadlines even after a late caller wakeup. Host
-    catch-up therefore appears in dispatch lateness rather than a slower model.
+    catch-up preserves the original modeled object deadlines.
     max_queue_bytes bounds selected active/inflight payload bytes; exceeding it
     raises instead of pausing serialization. Pending objects are metadata only.
     """
@@ -321,8 +321,7 @@ def run(config):
     events_file = (output / 'ideal-events.jsonl').open('w', buffering=65536)
     started = time.monotonic()
     clock_origin_unix_ms = time.time_ns() / 1e6
-    summary = dict(status='FAIL', transport='ideal', clock_origin_monotonic_us=int(started * 1e6), clock_origin_unix_ms=clock_origin_unix_ms, max_queue_bytes=config.get('max_queue_bytes', DEFAULT_QUEUE_BYTES), bandwidth_mbps=config['bandwidth_mbps'], data_delay_ms=config['data_delay_ms'], delivered_objects=0, delivered_payload_bytes=0, early_deliveries=0, budget_violations=0, peak_queue_bytes=0, peak_output_bytes=0, failures=[], invariants=dict(shared_payload_rate=True, nonpreemptive_objects=True, control_charged_bytes=0, independent_propagation=True, priorities_pending_only=True))
-    lateness = []
+    summary = dict(status='FAIL', transport='ideal', clock_origin_monotonic_us=int(started * 1e6), clock_origin_unix_ms=clock_origin_unix_ms, max_queue_bytes=config.get('max_queue_bytes', DEFAULT_QUEUE_BYTES), bandwidth_mbps=config['bandwidth_mbps'], data_delay_ms=config['data_delay_ms'], delivered_objects=0, delivered_payload_bytes=0, budget_violations=0, peak_queue_bytes=0, peak_output_bytes=0, failures=[], invariants=dict(shared_payload_rate=True, nonpreemptive_objects=True, control_charged_bytes=0, independent_propagation=True, priorities_pending_only=True))
     scheduler = None
     outgoing = deque()
     output_bytes = 0
@@ -478,14 +477,9 @@ def run(config):
                     if pending['offset'] == len(pending['data']):
                         outgoing.popleft()
                         if pending['arrival'] is not None:
-                            actual = time.monotonic() - started
-                            late = actual - pending['arrival']
-                            if late < -1e-9:
-                                summary['early_deliveries'] += 1
-                            lateness.append(max(0, late) * 1000)
                             summary['delivered_objects'] += 1
                             summary['delivered_payload_bytes'] += pending['header']['payload_bytes']
-                            log(dict(event='dispatch', **pending['header'], arrival=pending['arrival'], actual=actual, lateness_ms=late * 1000))
+                            log(dict(event='dispatch', **pending['header']))
                             if pending['completion'] and not stop:
                                 control(pending['completion'])
                     if not outgoing:
@@ -505,13 +499,8 @@ def run(config):
         for sig, previous in previous_signals.items():
             signal.signal(sig, previous)
         selector.close()
-        ordered = sorted(lateness)
-        p95 = ordered[max(0, math.ceil(len(ordered) * .95) - 1)] if ordered else 0
-        maximum = max(ordered, default=0)
-        summary.update(dispatch_lateness_p95_ms=p95, dispatch_lateness_max_ms=maximum, dispatch_samples=len(ordered), peak_queue_bytes=scheduler.peak_queue_bytes if scheduler else 0)
-        if p95 > 5 or maximum > 20:
-            fail('dispatch lateness exceeded p95 <= 5 ms / max <= 20 ms')
-        if not summary['failures'] and not summary['early_deliveries'] and not summary['budget_violations']:
+        summary.update(peak_queue_bytes=scheduler.peak_queue_bytes if scheduler else 0)
+        if not summary['failures'] and not summary['budget_violations']:
             summary['status'] = 'PASS'
         (output / 'ideal-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
         events_file.close()

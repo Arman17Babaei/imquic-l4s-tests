@@ -38,7 +38,7 @@ switches = 3
 duration_seconds = 5
 ```
 
-`duration_seconds` scales timestamps so the last original camera pose occurs at exactly that duration; spatial poses stay unchanged. A 19-second source retimed to 5 seconds runs at 3.8× speed. Recordings use the requested FPS; sparse quality frames use `quality_fps` and a fixed camera-time grid. Rendering can still miss deadlines; retained actual timing and missing-frame coverage expose that limitation.
+`duration_seconds` scales timestamps so the last original camera pose occurs at exactly that duration; spatial poses stay unchanged. A 19-second source retimed to 5 seconds runs at 3.8× speed. Recordings use the requested FPS; sparse quality frames use `quality_fps` and a fixed camera-time grid. Missing-frame coverage is recorded explicitly.
 
 The suite defaults to the following capture policy:
 
@@ -48,7 +48,7 @@ start_after_first_object = true
 max_missing_snapshot_fraction = 0.05
 ```
 
-With background traffic enabled, every sink must receive payload and the background flows must then run for four seconds before the guest starts scene services. The camera remains at its initial pose and recording stays idle until the first usable scene object is successfully applied. That moment is **time zero** for camera movement, recording, snapshots, the fixed delivery horizon and browser payload-rate bins. Ideal runs use the same first-object gate without a background requirement. This excludes startup loading from the measured video; it does not mean starting with a complete scene. Raw first-receipt/application/start timestamps and initial Gaussian/payload counts remain in telemetry. Delivery summaries subtract the initial counts for newly added data; ideal timing reports have a measurement window while retaining full-run structural audits. Background logs retain their original clocks and warmup evidence.
+With background traffic enabled, every sink must receive payload and the background flows must then run for four seconds before the guest starts scene services. The camera remains at its initial pose and recording stays idle until the first usable scene object is successfully applied. That moment is **time zero** for camera movement, recording, snapshots, the fixed delivery horizon and browser payload-rate bins. Ideal runs use the same first-object gate without a background requirement. This excludes startup loading from the measured video; it does not mean starting with a complete scene. Raw first-receipt/application/start timestamps and initial Gaussian/payload counts remain in telemetry. Delivery summaries subtract the initial counts for newly added data; object delivery is audited independently of snapshot capture. Background logs retain their original clocks and warmup evidence.
 
 Set `start_after_first_object = false` to restore request-start playback. The direct launcher exposes `--start-after-first-object`; standalone defaults remain request-start. First-object mode and base-layer buffering are mutually exclusive.
 
@@ -82,14 +82,68 @@ The failure criteria are:
 - `quality`: capture plus the launcher's retained quality status must be PASS.
 - `all`: capture and quality plus the launcher's overall PASS and zero process exit status.
 
-Timing failures remain visible as PARTIAL even when the chosen criterion permits continuing. Offline VMAF/plotting failures are reported separately after captures and do not rerun captures. CLI exit 0 means the configured capture criterion was met for every item and requested analysis did not block; it does not imply timing-valid evidence. Exit 1 reports execution/analysis failure, 2 a configuration/input error, and 130 an interruption. Interruptions preserve the ledger and partial artifacts; replot them later with `--plot-only`. There is no automatic resume of incomplete batches.
+Capture and quality failures remain visible as PARTIAL even when the chosen criterion permits continuing. Offline VMAF/plotting failures are reported separately after captures and do not rerun captures. CLI exit 0 means the configured capture criterion was met for every item and requested analysis did not block; it does not establish a transport-performance claim. Exit 1 reports execution/analysis failure, 2 a configuration/input error, and 130 an interruption. Interruptions preserve the ledger and partial artifacts; replot them later with `--plot-only`. There is no automatic resume of incomplete batches.
 
 The default resource guard requires 4 GiB available RAM and 5 GiB free disk per attempt, with a 7168 MiB systemd user scope memory limit. Configure these in `[runner]`; set `memory_limit_mib = 0` to disable the scope. `timeout_seconds` is the inner browser/launcher deadline; `attempt_timeout_seconds` limits the whole capture and reference-render process. Per-attempt logs retain failures rather than prevalidating browser object payloads.
 
-Each batch contains `config.json`, `ledger.json`, a README, scaled traces and their hashes under `inputs/`, and original evidence under `runs/<case>/attempt-NNN/`. Generated QEMU topology source is retained with each case. Automated `analysis/` output includes JSON/CSV summaries, PNG/PDF figures, per-run time series, and VMAF commands/provenance. Plots show sparse quality, browser object payload goodput, actual capture timing and applied scene fraction where available. Payload goodput excludes network overhead.
+Each batch contains `config.json`, `ledger.json`, a README, scaled traces and their hashes under `inputs/`, and original evidence under `runs/<case>/attempt-NNN/`. Generated QEMU topology source is retained with each case. Automated `analysis/` output includes JSON/CSV summaries, PNG/PDF figures, per-run time series, and VMAF commands/provenance. Plots show sparse quality, browser object payload goodput, applied scene fraction where available. Payload goodput excludes network overhead.
 
-VMAF uses exact timestamp/pose intersections within each scene/bandwidth/duration/path/switch/table group when available. If a failed member prevents a common grid, usable per-run exact pairs are plotted separately and cross-grid mean comparisons are suppressed. Missing samples are excluded without interpolation. Same-player full-scene references assess progressive completeness; sparse-frame VMAF is exploratory and its motion features depend on the retained sample grid. Repeat ranges are descriptive, not confidence intervals. Source capture, quality and timing statuses remain separate from analysis status; timing-invalid captures do not support causal delay claims.
+VMAF uses exact timestamp/pose intersections within each scene/bandwidth/duration/path/switch/table group when available. If a failed member prevents a common grid, usable per-run exact pairs are plotted separately and cross-grid mean comparisons are suppressed. Missing samples are excluded without interpolation. Same-player full-scene references assess progressive completeness; sparse-frame VMAF is exploratory and its motion features depend on the retained sample grid. Repeat ranges are descriptive, not confidence intervals. Source capture and quality statuses remain separate from analysis status.
 
 Plots compare Prague and Reno at one fixed QEMU delay per figure. Ideal figures compare the configured delays, ordered highest first. Both include signed ΔVMAF and ΔSSIM panels: Prague minus Reno for QEMU, and higher delay minus lower delay for ideal (320 minus160 for the example). Positive values favor the first named condition. With more than two ideal delays, every higher/lower pair is shown. Differences pair the same repeat, timestamp and camera pose with equal decoded RGB references; VMAF also requires the identical full temporal score grid. Missing members or incompatible grids are explicitly unavailable, without interpolation or substitution. The CSV next to each figure retains pair IDs, source statuses, exact differences and their means.
 
 `[qemu].performance_mode = true` selects `tools/l4s/qemu_player_performance.py` in place of the ordinary QEMU runner. It applies the host `powerprofilesctl` performance profile during the run and restores the previous profile on exit. It uses the established seven-vCPU mapping onto host CPUs 4–10, with QEMU I/O on CPU11, and two native build jobs. These CPUs must be available to the process. The guest disables GRO/GSO/TSO on physical and IFB interfaces, pins OVS to guest CPU2, assigns transport and background processes to the recorded guest CPUs with nice -10, and raises network softirq worker priority. Prague relay and subscriber use `pacing_interval=1/4000` (250µs), unless explicitly overridden by their congestion-option environment variables. Both controllers use the same performance profile and DualPI2 target 15ms/update 16ms/step 5ms/coupling factor 1. Host affinity and power-profile evidence is saved under each attempt's `qemu-performance/`; guest profile, exact congestion options, qdisc states and background link delays are retained with guest results. Failures applying these settings surface in the normal run logs. Setting `performance_mode = false` uses `[qemu].runner` and omits guest CPU/priority/offload tuning. This configuration does not establish a throughput improvement without a new run.
+
+### Buffered ideal-link playback
+
+Use `--transport ideal --receipt-thread worker --playback-delay-ms 4000` for
+buffered trace playback. Main-thread, unbuffered receipt remains the default.
+Buffered mode requires GSP2, first-request start (omit `--start-after-first-object`),
+and a fixed horizon (enabled by ideal mode).
+
+The receipt worker timestamps raw data and acknowledges bounded ownership.
+Decoding starts immediately. The original trace clock drives priorities; the
+four-second buffer affects wall-clock playback only. Both candidate and complete
+reference sequences start at **camera trace time zero** and use the exact grid
+`0, 100, 200, ... < trace_duration_ms`. The candidate renders a new frame for each
+slot, with the camera interpolated at that exact trace time. Only objects whose
+modeled arrival is at or before that slot enter its scene, even when a browser
+callback executes late. Future buffered objects cannot leak into an earlier image.
+
+Buffered capture and encoded video use **10 FPS**; omit `--fps` and `--quality-fps`
+or specify 10 for both. Each frame waits for due received objects' preparation,
+Spark upload/sort work, and rendering completion, then exports a PNG. Snapshot
+export completes before the next logical frame advances, so slow encoding does
+not silently drop slots. Slow wall-clock execution can postpone frames; every
+logical slot is still rendered, rather than duplicated or relabeled. Missing or
+failed exports fail capture instead of being filled.
+
+Video is assembled from the complete PNG sequence at 10 FPS with time zero at
+the first trace frame. This path uses no MediaRecorder wall-clock timestamps or
+WebM time stretching. Candidate and reference comparisons use the PNGs and
+strict matching timestamps/camera poses, independently of video encoding. The
+unbuffered path continues using MediaRecorder on a manually requested canvas
+stream. A 256 MiB conservative receipt reservation covers payload and prepared
+arrays, including dependency-held layers; overflow/worker failure stops playback
+and releases pending buffers and workers.
+
+To regenerate an independent complete-scene reference directly from a trace:
+
+```sh
+results/venvs/3dgs/bin/python tools/l4s/render_trace_reference.py \
+  --manifest results/scene-videos-20261018/train-scene/manifest-v2.json \
+  --trace results/buffered-timing-pair-20261115/trace-6s.json \
+  --output results/new-trace-reference --fps 10 --headless
+```
+
+The output contains `reference-frames/frames.json`, exact-pose PNGs,
+`reference.mp4`, and hashes of the trace, source scene and player assets. Output
+must be a new directory under `results/`. The reference has the complete scene at
+every timestamp; the progressive candidate's time-zero scene can be empty.
+
+Delivery validation checks publisher execution, modeled object metadata and
+receipt identities/counts. Snapshot checks retain complete grids and exact
+candidate/reference timestamps and camera poses. `object-applied` events identify
+which objects enter each logical frame; `render-frame` events record its trace
+timestamp and Gaussian count. There are no wall-clock timing grades, lateness
+statistics or inferred first-visible-frame measurements.
