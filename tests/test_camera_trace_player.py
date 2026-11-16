@@ -87,6 +87,13 @@ class CameraTracePlayerTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             RUNNER.parse_args(['--manifest','unused','--trace','unused','--output','results/unused',
                 '--start-after-first-object','--start-after-base'])
+    def test_default_scene_path_is_qemu_prague_and_ideal_stays_local(self):
+        base=['--manifest','unused','--trace','unused','--output','results/unused']
+        args=RUNNER.parse_args(base)
+        self.assertEqual((args.transport,args.network_path,args.transport_mode),('moqt','qemu','prague'))
+        self.assertEqual(RUNNER.parse_args(base+['--transport','ideal']).network_path,'loopback')
+        self.assertEqual(RUNNER.parse_args(base+['--transport','http']).network_path,'loopback')
+
     def test_qemu_quality_accepts_fixed_camera_grid(self):
         args = RUNNER.parse_args(['--manifest', 'unused', '--trace', 'unused',
             '--output', 'results/unused', '--transport', 'moqt', '--network-path', 'qemu',

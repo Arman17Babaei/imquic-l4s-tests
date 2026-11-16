@@ -171,6 +171,20 @@ class SuiteAnalysisTests(unittest.TestCase):
         self.assertEqual(len(result['groups']),2)
         self.assertEqual({r['background_cc'] for r in result['runs']},{'cubic','reno'})
 
+    def test_mixed_background_profile_and_aqm_parameters_remain_distinct(self):
+        items=[self.item(name) for name in ('legacy','mixed','different-aqm')]
+        for item in items:item.update(path='qemu',controller='prague',background=True,switches=2)
+        items[0].update(background_cc='cubic')
+        for item in items[1:]:
+            item.update(background_profile='cubic-prague-unlimited',dualpi2_target_ms=15,
+                        dualpi2_update_ms=16,dualpi2_step_ms=1,dualpi2_coupling_factor=1)
+        items[2]['dualpi2_step_ms']=2
+        result=analysis.analyze_batch(self.batch,{'items':items},self.settings)
+        self.assertEqual(len(result['groups']),3)
+        self.assertEqual(result['runs'][1]['background_profile'],'cubic-prague-unlimited')
+        self.assertEqual(result['runs'][2]['dualpi2_step_ms'],2)
+        self.assertEqual(result['runs'][0]['background_cc'],'cubic')
+
     def test_no_selected_attempt_does_not_pick_success(self):
         result = analysis.analyze_batch(self.batch, {'items': [self.item(selected=None)]}, self.settings)
         self.assertEqual(result['runs'][0]['quality_frames'], 0)

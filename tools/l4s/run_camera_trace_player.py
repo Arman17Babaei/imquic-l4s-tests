@@ -404,7 +404,7 @@ def run(args) -> int:
                     'fixed_horizon': args.fixed_horizon, 'video_hud': args.video_hud,
                     'topology_script': str(args.topology_script),
                     'topology_sha256': sha256(output / 'player-topology.py') if args.network_path == 'qemu' else None},
-                topology='host browser -> forwarded WebSocket -> guest client IMQUIC -> DualPI2 -> relay/publisher'
+                topology='host browser -> forwarded WebSocket -> guest client IMQUIC -> s2 -> shared DualPI2 -> s1 -> relay/publisher; unlimited Cubic + Prague TCP competition'
                     if args.network_path == 'qemu' else ('browser -> local bridge -> ideal payload serializer + data-only propagation'
                           if args.transport == 'ideal' else 'browser -> HTTP or loopback WebSocket/IMQUIC -> relay/publisher'),
                 observed_network={'launcher_processes': [process.pid for process in processes]})
@@ -562,14 +562,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--width", type=int, default=960)
     parser.add_argument("--height", type=int, default=540)
     parser.add_argument("--fps", type=int, default=None)
-    parser.add_argument("--transport-mode", choices=("reno", "prague"), default="reno")
+    parser.add_argument("--transport-mode", choices=("reno", "prague"), default="prague")
     parser.add_argument("--transport", choices=("http", "moqt", "ideal"), default="moqt")
     parser.add_argument('--receipt-thread', choices=('main', 'worker'), default='main')
     parser.add_argument('--playback-delay-ms', type=int, default=0,
                         help='Ideal worker playback delay beyond modeled arrival; requires first-request start')
     parser.add_argument("--ideal-bandwidth-mbps", type=float)
     parser.add_argument("--ideal-data-delay-ms", type=float)
-    parser.add_argument("--network-path", choices=("loopback", "qemu"), default="loopback")
+    parser.add_argument("--network-path", choices=("loopback", "qemu"), default=None,
+                        help="MoQ defaults to QEMU; loopback is for local validation")
     parser.add_argument("--fixed-frame", action="store_true")
     parser.add_argument("--interactive", action="store_true")
     parser.add_argument("--camera-check", action="store_true", help="validate rendered recorded/yaw poses after full loading")
@@ -601,6 +602,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--qemu-cpus", type=int, default=4, help="Guest vCPUs and parallel build jobs")
     parser.add_argument("--gpu-mode", choices=("hardware", "software"), default="hardware")
     args = parser.parse_args(argv)
+    if args.network_path is None: args.network_path = "qemu" if args.transport == "moqt" else "loopback"
     if not math.isfinite(args.max_missing_snapshot_fraction) or not 0<=args.max_missing_snapshot_fraction<1:
         parser.error('max-missing-snapshot-fraction must be in [0,1)')
     if args.start_after_first_object and (args.start_after_base or args.transport=='http' or args.fixed_frame or args.interactive):

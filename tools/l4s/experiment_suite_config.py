@@ -19,9 +19,8 @@ SCENES = {
                  'trace': 'results/thesis-scenes-19s-20261018/playroom-trace-19s.json'},
 }
 DEFAULTS = dict(scenes=['playroom'], bandwidth_mbps=50, delays_ms=[160,320], duration_seconds=19,
-                path='ideal', controllers=['prague','reno'], switches=2, reruns=1,
-                background=False, background_cc='cubic', background_warmup_seconds=4,
-                background_link_delay_ms=0, qemu_delay_mode='endpoints',
+                path='ideal', controllers=['prague'], reruns=1, background_warmup_seconds=4,
+                dualpi2_target_ms=15, dualpi2_update_ms=16, dualpi2_step_ms=1, dualpi2_coupling_factor=1,
                 on_failure='continue', max_retries=0, retry_exhausted='continue', failure_criterion='capture')
 RUNNER = dict(python=sys.executable, timeout_seconds=900, attempt_timeout_seconds=3000,
               memory_limit_mib=7168, min_available_memory_gib=4, min_free_disk_gib=5)
@@ -86,20 +85,19 @@ def experiment(values, context):
     for delay in delays: number(delay,'delay_ms')
     if len(set(delays))!=len(delays): raise ValueError('duplicate delay in experiment')
     choice(merged['path'],('ideal','qemu'),'path')
-    if not isinstance(merged['background'],bool):raise ValueError('background must be boolean')
     number(merged['background_warmup_seconds'],'background_warmup_seconds')
-    number(merged['background_link_delay_ms'],'background_link_delay_ms')
-    choice(merged['qemu_delay_mode'],('endpoints','per-link'),'qemu_delay_mode')
-    if not isinstance(merged['background_cc'],str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,31}',merged['background_cc']):
-        raise ValueError('background_cc must be a Linux TCP congestion-control name')
-    if merged['background'] and merged['path']!='qemu':raise ValueError('background traffic requires the QEMU path')
+    for field in ('dualpi2_target_ms','dualpi2_update_ms'):
+        number(merged[field],field,strictly=True)
+    number(merged['dualpi2_step_ms'],'dualpi2_step_ms')
+    number(merged['dualpi2_coupling_factor'],'dualpi2_coupling_factor',1,integer=True)
+    if merged['dualpi2_coupling_factor']>255:
+        raise ValueError('dualpi2_coupling_factor must be <=255')
     controllers=merged['controllers']
     if not isinstance(controllers,list) or not controllers or len(set(controllers))!=len(controllers):
         raise ValueError('controllers must be a nonempty distinct list')
     for controller in controllers: choice(controller,('reno','prague'),'controller')
-    for field,minimum in (('switches',1),('reruns',1),('max_retries',0)):
+    for field,minimum in (('reruns',1),('max_retries',0)):
         number(merged[field],field,minimum,integer=True)
-    if merged['background'] and merged['switches']>254:raise ValueError('background supports at most 254 switches')
     choice(merged['on_failure'],('continue','stop','retry'),'on_failure')
     choice(merged['retry_exhausted'],('continue','stop'),'retry_exhausted')
     choice(merged['failure_criterion'],('capture','quality','all'),'failure_criterion')
@@ -180,11 +178,13 @@ def expand_cases(cfg):
         for repeat in range(entry['reruns']):
             # Keep each requested comparison adjacent, including across reruns.
             for scene,delay,controller in variants:
-                switches=entry['switches'] if entry['path']=='qemu' else 0
+                switches=2 if entry['path']=='qemu' else 0
                 identifier=(f'e{index+1:02d}-{scene}-{entry["path"]}-{controller}-'
                             f'{entry["bandwidth_mbps"]:g}m-{delay:g}ms-{entry["duration_seconds"]:g}s-s{switches}-r{repeat+1:02d}')
-                if entry['background']:identifier+=f'-bg-{entry["background_cc"]}'
+                if entry['path']=='qemu':identifier+='-bg-cubic-prague'
                 cases.append({**entry,'id':identifier,'scene':scene,'delay_ms':delay,'controller':controller,
-                              'switches':switches,'rerun':repeat+1,'experiment_index':index,
+                              'switches':switches,'background':entry['path']=='qemu',
+                              'background_profile':'cubic-prague-unlimited' if entry['path']=='qemu' else None,
+                              'rerun':repeat+1,'experiment_index':index,
                               **cfg['scenes'][scene]})
     return cases

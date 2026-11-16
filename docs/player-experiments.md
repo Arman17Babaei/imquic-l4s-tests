@@ -16,7 +16,7 @@ python3 tools/l4s/run_experiments.py --plot-only results/my-player-suite
 
 An output directory must be new and below `results/`. Existing batches are never overwritten by capture runs. Replotting replaces derived files under `analysis/`; it preserves original captures. Dependencies for capture/build are described in the main README. Offline plots require NumPy, Pillow and Matplotlib; CUDA SSIM/PSNR requires PyTorch with CUDA, and CUDA VMAF requires a CUDA-enabled libvmaf executable. Select explicit CPU backends to use CPU quality computation; there is no silent CUDA fallback. Scene exports, their referenced objects, traces, and the QEMU image must already exist. The example uses this workspace's existing scene paths; override them when moving the configuration.
 
-`[defaults]` applies to every `[[experiments]]` table. Each table expands `scenes × delays_ms × controllers × reruns`; controllers apply only to QEMU. Use `scene = "playroom"` for one scene, or `scenes = ["bicycle", "train", "playroom"]`. Set a scalar bandwidth, duration and switch count per table; add tables to sweep those values. Runs are sequential. For each scene and repeat, ideal delays run from highest to lowest; QEMU runs Prague then Reno adjacently at each fixed delay (using the configured subset). Each repeat preserves these pairs; there is no global order rotation.
+`[defaults]` applies to every `[[experiments]]` table. Each table expands `scenes × delays_ms × controllers × reruns`; controllers apply only to QEMU. Use `scene = "playroom"` for one scene, or `scenes = ["bicycle", "train", "playroom"]`. Set a scalar bandwidth and duration per table; add tables to sweep those values. Runs are sequential. For each scene and repeat, ideal delays run from highest to lowest; QEMU runs Prague then Reno adjacently at each fixed delay (using the configured subset). Each repeat preserves these pairs; there is no global order rotation.
 
 `runner.python` selects the capture and reference-render interpreter. The example points to this workspace's `results/venvs/3dgs/bin/python` CUDA/PyTorch environment; change it for another environment. The suite CLI's interpreter needs the plotting dependencies for analysis.
 
@@ -33,8 +33,7 @@ duration_seconds = 5
 name = "playroom-network"
 scene = "playroom"
 path = "qemu"
-controllers = ["reno", "prague"]
-switches = 3
+controllers = ["prague"]
 duration_seconds = 5
 ```
 
@@ -56,23 +55,54 @@ Up to 5% missing snapshots are accepted without filling gaps: a 95-slot capture 
 
 `path = "ideal"` runs the existing no-QEMU bandwidth-limited delivery path. `delays_ms` delays data delivery in one direction while priority controls remain immediate. It simulates a delivery schedule, not a congestion controller or packet network.
 
-`path = "qemu"` runs full MoQ through a guest Mininet chain `server → s1 → … → sN → client`, once per requested Reno/Prague controller. Both directions of the client-facing link use `bandwidth_mbps`; every other physical link uses 300 Mbps. Every physical egress uses HTB/DualPI2 with target 15ms, update 16ms and step threshold 5ms. `qemu_delay_mode = "endpoints"` (the compatibility default) adds `delay_ms` once per direction using endpoint ingress IFBs. `qemu_delay_mode = "per-link"` adds it at the receiving interface of every physical main-path link in both directions, using separate ingress IFBs. The example QEMU experiment fixes `delays_ms = [10]` with `per-link`: two switches means three links, 30ms one-way and nominal propagation RTT 60ms, before queues and processing. Ideal experiments retain their 320/160ms data-delay comparison. Background traffic is optional and enabled in the example QEMU table. The guest needs IFB/mirred, HTB, netem and DualPI2 support, plus `iperf3` and `ss` for background traffic. Generated source and CPU tests establish the configuration contract; acceptance of guest kernel behavior and measured delay requires an actual QEMU run. Ideal and QEMU delays have different control-path semantics and should not be treated as identical experiments.
+`path = "qemu"` runs one traced IMQUIC scene stream alongside one unlimited
+Cubic TCP stream and one unlimited Prague TCP stream. Exactly two switches,
+`s1 → s2`, carry all three sender/receiver pairs. Each background has dedicated
+endpoint namespaces. The inter-switch link is the shared `bandwidth_mbps`
+HTB/DualPI2 bottleneck in both directions; all access links are 300 Mbps.
+`delays_ms` is total one-way propagation for each pair, divided equally between
+its two access egresses. Propagation and the dropping AQM use different devices.
+There are no switch-count, optional-background, per-hop-background or alternative
+delay-mode settings.
 
-Enable background traffic per QEMU experiment:
+The QEMU table exposes the queue settings directly:
 
 ```toml
-background = true
-background_cc = "cubic" # Linux TCP algorithm available in the guest: e.g. cubic, reno, bbr.
-background_warmup_seconds = 4 # Active payload before scene/client startup.
+[[experiments]]
+name = "scene-with-tcp-competition"
+path = "qemu"
+controllers = ["prague"] # Scene QUIC controller; Reno is also available.
+bandwidth_mbps = 50
+scenes = ["playroom"]
+delays_ms = [10] # Total one-way for scene, Cubic TCP and Prague TCP.
+dualpi2_target_ms = 15
+dualpi2_update_ms = 16
+dualpi2_step_ms = 1
+dualpi2_coupling_factor = 1
+background_warmup_seconds = 4
 ```
 
-Set `background = false` to disable it (the default). Ideal experiments require it disabled. Background congestion control is independent of the scene's `controllers = ["prague", "reno"]`; these select QUIC controllers, whereas `background_cc` selects the TCP sender algorithm. The guest must support the requested TCP algorithm; iperf failures are logged and fail the guest run, without silently substituting another algorithm. Background source/sink namespaces set `net.ipv4.tcp_ecn=0`.
+Both backgrounds use one TCP data connection with no iperf `-b` or `-P` limit.
+Cubic disables ECN at both endpoints. Prague sets TCP Prague explicitly and
+requests Accurate ECN with `net.ipv4.tcp_ecn=3`, as supported by the existing
+5.15 Prague guest kernel. Startup checks actual algorithm and negotiated ECN in
+`ss -tin` and payload in both receiver logs. Older iproute2 can omit the ECN
+option: nonzero `delivered_ce` on the Prague data socket then provides direct
+evidence of ECN feedback. Without either observation, startup fails. There is no algorithm fallback.
+The guest needs TCP Prague, HTB, netem, DualPI2, Mininet/OVS, ethtool, iperf3 and ss.
+The [L4S kernel project](https://github.com/L4STeam/linux) documents Prague/ECN
+support; support in an arbitrary distribution kernel must be checked separately.
 
-With N switches, the generator adds N dedicated source/sink pairs. Source i attaches to switch i and its sink attaches to the next switch, so its data shares exactly the scene's forward egress queue at switch i, then leaves the main path. The final sink connects behind the client through a routed 300 Mbps link; no extra switch is added. The client namespace forwards that final background flow. All other added links use 300 Mbps. Each pair has separate processes and sockets; backgrounds do not form a single end-to-end flow sharing all queues.
+Both receivers start before either sender. Once both receive data, warmup runs
+for `background_warmup_seconds` before scene services start. Both flows stay
+active until guest cleanup. Process exit or lost data connection fails the run;
+startup failures stop existing processes and preserve logs. `background-config.json`,
+`background-processes.json`, interval logs, socket snapshots and qdisc evidence
+record what was requested and observed. CPU checks establish the configuration
+contract; live guest evidence establishes kernel and runtime behavior.
 
-Each TCP sender targets the experiment's `bandwidth_mbps` using iperf3's `-b`, with one data stream. This is offered target rate, not guaranteed throughput: TCP congestion control and competing traffic determine achieved rate. With the example's 50 Mbps bottleneck, each background aims for 50 Mbps. A 50 Mbps background plus the scene can contend at the client-facing 50 Mbps queue; it need not saturate an upstream 300 Mbps link. [iperf3 bitrate option](https://software.es.net/iperf/invoking.html).
-
-`background_link_delay_ms` adds propagation in each direction on each of the two dedicated access links of every background pair. The example uses 50ms per link: 100ms extra one-way. In `per-link` mode the pair also crosses one shared 10ms main-path hop, so its propagation RTT is nominally 220ms. The final pair crosses the existing client ingress IFB, without duplicating that shared-hop delay at its sink. In `endpoints` mode the old baseline total one-way delay is retained, plus the two extra access-link delays. Access rates remain 300Mbps and each pair still shares exactly one forward scene queue. Backgrounds start before scene services. Startup waits for each flow's control and data sockets plus nonzero payload in every sink's interval log, then warms up for `background_warmup_seconds` (default four seconds); flows stay active until guest cleanup. Startup failures stop already-started background processes and retain logs. `background-config.json`, `background-processes.json`, client/server interval logs and socket snapshots record the requested rate, CC, shared queue, readiness and connections. The guest's existing monitoring catches process exits during the run. Original before/after qdisc snapshots and interface samples retain network evidence. These paths are covered by CPU topology contracts; actual throughput, kernel support and queue independence still require a live QEMU run.
+Ideal data-delay and QEMU packet-delay semantics differ because ideal controls
+are immediate. Do not treat them as identical transport experiments.
 
 `reruns` is the total number of repetitions, including the first. `on_failure` supports `continue`, `stop` and `retry`; `max_retries` counts additional attempts, and `retry_exhausted` controls what happens after retries. Every attempt, command, exit code, error and log is retained. The first attempt satisfying the configured criterion is selected; if all fail, the last is retained for diagnosis. Selection never uses quality scores.
 
@@ -92,7 +122,21 @@ VMAF uses exact timestamp/pose intersections within each scene/bandwidth/duratio
 
 Plots compare Prague and Reno at one fixed QEMU delay per figure. Ideal figures compare the configured delays, ordered highest first. Both include signed ΔVMAF and ΔSSIM panels: Prague minus Reno for QEMU, and higher delay minus lower delay for ideal (320 minus160 for the example). Positive values favor the first named condition. With more than two ideal delays, every higher/lower pair is shown. Differences pair the same repeat, timestamp and camera pose with equal decoded RGB references; VMAF also requires the identical full temporal score grid. Missing members or incompatible grids are explicitly unavailable, without interpolation or substitution. The CSV next to each figure retains pair IDs, source statuses, exact differences and their means.
 
-`[qemu].performance_mode = true` selects `tools/l4s/qemu_player_performance.py` in place of the ordinary QEMU runner. It applies the host `powerprofilesctl` performance profile during the run and restores the previous profile on exit. It uses the established seven-vCPU mapping onto host CPUs 4–10, with QEMU I/O on CPU11, and two native build jobs. These CPUs must be available to the process. The guest disables GRO/GSO/TSO on physical and IFB interfaces, pins OVS to guest CPU2, assigns transport and background processes to the recorded guest CPUs with nice -10, and raises network softirq worker priority. Prague relay and subscriber use `pacing_interval=1/4000` (250µs), unless explicitly overridden by their congestion-option environment variables. Both controllers use the same performance profile and DualPI2 target 15ms/update 16ms/step 5ms/coupling factor 1. Host affinity and power-profile evidence is saved under each attempt's `qemu-performance/`; guest profile, exact congestion options, qdisc states and background link delays are retained with guest results. Failures applying these settings surface in the normal run logs. Setting `performance_mode = false` uses `[qemu].runner` and omits guest CPU/priority/offload tuning. This configuration does not establish a throughput improvement without a new run.
+`[qemu].performance_mode = true` selects `tools/l4s/qemu_player_performance.py`
+in place of the ordinary QEMU runner. It applies the host performance power
+profile and restores the previous profile on exit. Seven guest vCPUs map onto
+host CPUs 4–10, with QEMU I/O on CPU11 and two native build jobs. These CPUs must
+be available. In the guest, OVS uses CPU2, the publisher/relay use CPUs0/1, the
+bridge/proxy use CPU3, Cubic/Prague senders use CPUs4/5, and both receivers use
+CPU6, with nice -10. Network softirq priority is raised. Prague relay/subscriber
+use 250µs pacing unless explicitly overridden. Host affinity/power-profile and
+guest CPU/AQM/congestion settings are retained with each attempt.
+
+Physical interfaces disable GRO/GSO/TSO in **both** performance modes so batching
+cannot bypass queue accounting. There are no IFBs in this topology. Setting
+`performance_mode = false` uses `[qemu].runner` and omits host power/affinity and
+guest CPU/priority/pacing tuning. A requested performance setting that cannot
+be applied fails explicitly. These settings alone establish no throughput claim.
 
 ### Buffered ideal-link playback
 

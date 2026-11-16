@@ -7,8 +7,8 @@ from unittest.mock import patch
 from tools.l4s.experiment_suite_topology import topology_source
 
 
-def generated(switches=2, bandwidth=20.0, delay=40.0, **options):
-    source = topology_source(switches, bandwidth, delay, **options)
+def generated(bandwidth=20.0, delay=40.0, **options):
+    source = topology_source(bandwidth, delay, **options)
     module = types.ModuleType("generated_suite_topology")
     exec(compile(source, "<suite-topology>", "exec"), module.__dict__)
     return module
@@ -21,7 +21,7 @@ class FakeNode:
 
     def popen(self, command, **kwargs):
         self.commands.append(command)
-        return types.SimpleNamespace(returncode=0, communicate=lambda: ("", None))
+        return types.SimpleNamespace(returncode=0, communicate=lambda **kw: ("", None))
 
 
 class FakeNet:
@@ -48,8 +48,8 @@ class FakeNet:
 
 
 class SuiteTopologyTests(unittest.TestCase):
-    def build(self, switches=2, bandwidth=20, delay=40, **options):
-        module = generated(switches, bandwidth, delay, **options)
+    def build(self, **options):
+        module = generated(**options)
         modules = {
             "mininet": types.ModuleType("mininet"),
             "mininet.link": types.SimpleNamespace(TCLink=object),
@@ -60,221 +60,191 @@ class SuiteTopologyTests(unittest.TestCase):
             topology = module.build_topology()
         return module, topology
 
-    def test_background_access_delays_are_bidirectional_and_separate_from_scene(self):
-        module,(net,client,server,devices)=self.build(2,50,10,background=True,
-            background_link_delay_ms=50,performance_mode=True,propagation_mode='per-link')
-        with patch.object(module.subprocess,'run'), patch.object(module,'configure_performance'):
-            module.configure_topology(devices)
-        for p in module.background_pairs():
-            roles=(p['source_role'],f"s{p['index']}_to_bgsrc",
-                   p['sink_role'],f"downstream_to_bgsink{p['index']}")
-            for role in roles:
-                node,dev=devices[role]
-                redirect=next(c for c in node.commands if 'mirred' in c and dev in c)
-                ifb=redirect[-1]
-                delay=next(c for c in node.commands if 'netem' in c and ifb in c)
-                expected='50ms'
-                self.assertEqual(delay[delay.index('delay')+1],expected)
-        for node in (client,server):
-            delay=next(c for c in node.commands if 'netem' in c and 'ifb-delay' in c)
-            self.assertEqual(delay[delay.index('delay')+1],'10ms')
+    def test_exactly_two_switches_and_three_pairs_share_the_inter_switch_link(self):
+        module, (net, client, server, devices) = self.build()
+        self.assertEqual(set(net.nodes), {'s1','s2','server','client',
+                                         'cubicsrc','cubicsink','praguesrc','praguesink'})
+        self.assertEqual(len(net.links), 7)
+        self.assertIn(('s1','s2'), net.links)
+        self.assertIn(('server','s1'), net.links)
+        self.assertIn(('s2','client'), net.links)
+        for pair in module.background_pairs():
+            self.assertIn((pair['source'],'s1'), net.links)
+            self.assertIn(('s2',pair['sink']), net.links)
+            self.assertEqual(pair['shared_role'],'s1_to_s2')
+        self.assertEqual(len(devices), 14)
         self.assertTrue(set(module.METRIC_ROLES).issubset(devices))
-        for role,metric in module.main_delay_roles():
-            node,dev=devices[metric]
-            delay=next(c for c in node.commands if 'netem' in c and dev in c)
-            self.assertEqual(delay[delay.index('delay')+1],'10ms')
-        self.assertEqual(len(list(module.main_delay_roles())),6)
-        self.assertEqual(module.DUALPI2_STEP,'5ms')
-        cmd=module.process_command(server,'relay',['relay'])
-        self.assertEqual(cmd[:6],['nice','-n','-10','taskset','-c','1'])
 
-    def test_guest_profile_sets_prague_pacing_and_writes_parseable_evidence(self):
+    def test_host_names_fit_linux_interface_name_limit(self):
+        _,(net,_,_,_)=self.build()
+        for name in net.nodes:
+            self.assertLessEqual(len(name+'-eth0'),15,name)
+
+    def test_shared_bottleneck_has_configurable_aqm_and_separate_propagation(self):
+        module, (_, _, _, devices) = self.build(bandwidth=25, delay=12,
+            dualpi2_target_ms=10, dualpi2_update_ms=20, dualpi2_step_ms=2,
+            dualpi2_coupling_factor=2)
+        with patch.object(module.subprocess,'run'):
+            module.configure_topology(devices, '55mbit')
+        for role, (node, dev) in devices.items():
+            commands=[c for c in node.commands if dev in c]
+            rate=next(c for c in commands if c[:3]==['tc','class','replace'])
+            shared=role in ('s1_to_s2','s2_to_s1')
+            self.assertEqual(rate[rate.index('rate')+1], '55mbit' if shared else '300mbit')
+            aqm=[c for c in commands if 'dualpi2' in c]
+            delays=[c for c in commands if 'netem' in c]
+            if shared:
+                self.assertEqual(len(aqm),1)
+                self.assertEqual(aqm[0][-8:], ['coupling_factor','2','target','10ms','tupdate','20ms','step_thresh','2ms'])
+                self.assertEqual(delays,[])
+            else:
+                self.assertEqual(aqm,[])
+                self.assertEqual(len(delays),1)
+                self.assertEqual(delays[0][delays[0].index('delay')+1],'6ms')
+
+    def test_backgrounds_are_one_unlimited_cubic_and_one_unlimited_prague(self):
+        module=generated()
+        self.assertEqual([p['cc'] for p in module.background_pairs()], ['cubic','prague'])
+        for pair in module.background_pairs():
+            command=module.background_command(pair)
+            self.assertEqual(command[command.index('-C')+1],pair['cc'])
+            for forbidden in ('-b','--bitrate','-P','--parallel','-u'):
+                self.assertNotIn(forbidden,command)
+        self.assertEqual(module.DUALPI2_STEP_MS,1)
+
+    def test_ecn_is_enabled_only_for_prague_endpoints_and_algorithms_are_explicit(self):
+        module,(_,_,_,devices)=self.build()
+        with patch.object(module.subprocess,'run') as run:
+            module.configure_topology(devices)
+        self.assertIn(unittest.mock.call(['modprobe','tcp_prague'],check=True),run.call_args_list)
+        for pair in module.background_pairs():
+            for role in (pair['source_role'],pair['sink_role']):
+                node,_=devices[role]
+                self.assertIn(['sysctl','-w',f"net.ipv4.tcp_congestion_control={pair['cc']}"],node.commands)
+                self.assertIn(['sysctl','-w',f"net.ipv4.tcp_ecn={3 if pair['cc']=='prague' else 0}"],node.commands)
+
+    def test_invalid_parameters_fail_before_source_is_generated(self):
+        for name in ('bandwidth','delay','dualpi2_target_ms','dualpi2_update_ms',
+                     'dualpi2_step_ms','dualpi2_coupling_factor','background_warmup_seconds'):
+            for value in (True, -1, float('nan'), float('inf')):
+                with self.subTest(name=name,value=value), self.assertRaises(ValueError):
+                    generated(**{name:value})
+        for name in ('bandwidth','dualpi2_target_ms','dualpi2_update_ms','dualpi2_coupling_factor'):
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                generated(**{name:0})
+        generated(delay=0,dualpi2_step_ms=0,background_warmup_seconds=0)
+
+    def test_control_socket_and_prague_without_ecn_are_rejected(self):
+        module,(_,_,_,devices)=self.build()
+        def state(pair, ecn=True):
+            return ''.join(f"0 0 10.0.0.3:{port} {pair['destination']}:{pair['port']}\n "
+                           f"{pair['cc']} {'ecn' if ecn and pair['cc']=='prague' else ''} bytes_sent:20000\n"
+                           for port in (30000,30001))
+        def command(node, cmd):
+            pair=next(p for p in module.background_pairs() if str(p['port'])==cmd[-1])
+            return state(pair)
+        with patch.object(module,'run_command',side_effect=command):
+            self.assertEqual(len(module.assert_background(devices)),2)
+        with patch.object(module,'run_command',return_value='0 0 10.0.0.3:30000 10.0.0.4:5201\n cubic\n'):
+            with self.assertRaisesRegex(RuntimeError,'data connection'):
+                module.assert_background(devices)
+        def no_ecn(node,cmd):
+            pair=next(p for p in module.background_pairs() if str(p['port'])==cmd[-1])
+            return state(pair,ecn=False)
+        with patch.object(module,'run_command',side_effect=no_ecn):
+            with self.assertRaisesRegex(RuntimeError,'ECN'):
+                module.assert_background(devices)
+        def fallback(node,cmd):
+            return command(node,cmd).replace('prague','cubic')
+        with patch.object(module,'run_command',side_effect=fallback):
+            with self.assertRaisesRegex(RuntimeError,'prague'):
+                module.assert_background(devices)
+
+    def test_older_ss_uses_actual_ce_feedback_as_ecn_evidence(self):
+        module,(_,_,_,devices)=self.build()
+        def state(node,cmd):
+            pair=next(p for p in module.background_pairs() if str(p['port'])==cmd[-1])
+            return ''.join(f"0 0 10.0.0.3:{port} {pair['destination']}:{pair['port']}\n "
+                           f"{pair['cc']} bytes_sent:{sent} delivered_ce:{ce}\n"
+                           for port,sent,ce in ((30000,166,0),(30001,200000,123)))
+        with patch.object(module,'run_command',side_effect=state):
+            self.assertEqual(len(module.assert_background(devices)),2)
+        def no_ce(node,cmd):return state(node,cmd).replace('delivered_ce:123','delivered_ce:0')
+        with patch.object(module,'run_command',side_effect=no_ce):
+            with self.assertRaisesRegex(RuntimeError,'ECN'):module.assert_background(devices)
+
+    def test_background_readiness_requires_receiver_payload(self):
+        import tempfile
+        from pathlib import Path
+        module=generated()
+        with tempfile.TemporaryDirectory() as tmp:
+            log=Path(tmp)/'sink.log'
+            for text in ('Accepted connection', '[ 5] 0.00-0.10 sec 0.00 Bytes 0.00 bits/sec'):
+                log.write_text(text)
+                self.assertFalse(module.received_background_data(log))
+            log.write_text('[ 5] 0.00-0.10 sec 128 KBytes 10.5 Mbits/sec')
+            self.assertTrue(module.received_background_data(log))
+
+    def test_startup_orders_receivers_then_senders_and_cleans_up_on_failure(self):
         import json,tempfile
         from pathlib import Path
-        module=generated(performance_mode=True)
-        with tempfile.TemporaryDirectory() as directory, \
-             patch.object(module,'physical_roles',return_value=()), \
-             patch.object(module.subprocess,'check_output',return_value=''), \
-             patch.object(module,'Path') as paths, \
-             patch.dict(module.os.environ,{'CAMERA_PLAYER_MODE':'prague'},clear=True):
-            paths.return_value.iterdir.return_value=()
-            module.set_output(Path(directory))
-            module.configure_performance({})
-            self.assertIn('pacing_interval=1/4000',module.os.environ['CAMERA_PLAYER_RELAY_CONGESTION_OPTIONS'])
-            self.assertIn('pacing_interval=1/4000',module.os.environ['CAMERA_PLAYER_SUBSCRIBER_CONGESTION_OPTIONS'])
-            evidence=json.loads((Path(directory)/'performance-profile.json').read_text())
-            self.assertEqual(evidence['dualpi2_step'],'5ms')
-            self.assertEqual(evidence['dualpi2_coupling_factor'],1)
-
-    def test_source_import_does_not_require_mininet(self):
-        with patch.dict(sys.modules, {"mininet": None}):
-            self.assertTrue(callable(generated().build_topology))
-
-    def test_exact_switch_chain_and_bidirectional_physical_devices(self):
-        for count in (1, 2, 5):
-            with self.subTest(switches=count):
-                module, (net, client, server, devices) = self.build(count)
-                names = ["server", *[f"s{i}" for i in range(1, count + 1)], "client"]
-                self.assertEqual(net.links, list(zip(names, names[1:])))
-                self.assertEqual(len(devices), 2 * (count + 1))
-                self.assertEqual(set(net.nodes), set(names))
-                self.assertFalse(hasattr(module, "start_background"))
-                for first, second in net.links:
-                    self.assertIn(f"{first}_to_{second}", devices)
-                    self.assertIn(f"{second}_to_{first}", devices)
-
-    def test_every_link_uses_aqm_and_only_client_link_is_bottleneck(self):
-        module, (net, _, _, devices) = self.build(3, 25, 7.5)
-        physical = dict(devices)
-        with patch.object(module.subprocess, "run") as run:
-            module.configure_topology(devices)
-        self.assertEqual(run.call_count, 2)
-        for role, (node, device) in physical.items():
-            with self.subTest(role=role):
-                commands = [cmd for cmd in node.commands if device in cmd]
-                classes = [cmd for cmd in commands if cmd[:3] == ["tc", "class", "replace"]]
-                expected = "25mbit" if "client" in role else "300mbit"
-                self.assertEqual(classes[0][classes[0].index("rate") + 1], expected)
-                expected_burst = "32k" if "client" in role else "512k"
-                self.assertEqual(classes[0][classes[0].index("burst") + 1], expected_burst)
-                self.assertEqual(classes[0][classes[0].index("cburst") + 1], expected_burst)
-                aqm = [cmd for cmd in commands if "dualpi2" in cmd]
-                self.assertEqual(len(aqm), 1)
-                self.assertEqual(aqm[0][aqm[0].index('coupling_factor')+1],'1')
-                self.assertEqual(aqm[0][-6:], ["target", "15ms", "tupdate", "16ms", "step_thresh", "5ms"])
-                self.assertFalse(any("netem" in cmd for cmd in commands))
-
-    def test_total_one_way_delay_applies_once_at_each_receiving_endpoint(self):
-        module, (_, client, server, devices) = self.build(4, 20, 12.5)
-        with patch.object(module.subprocess, "run"):
-            module.configure_topology(devices)
-        for node in (client, server):
-            delays = [cmd for cmd in node.commands if "netem" in cmd]
-            self.assertEqual(len(delays), 1)
-            self.assertEqual(delays[0][delays[0].index("delay") + 1], "12.5ms")
-            ifb = delays[0][delays[0].index("dev") + 1]
-            self.assertTrue(ifb.startswith("ifb"))
-            self.assertIn((node, ifb), devices.values())
-            redirects = [cmd for cmd in node.commands if "mirred" in cmd]
-            self.assertEqual(len(redirects), 1)
-            self.assertEqual(redirects[0][-4:], ["egress", "redirect", "dev", ifb])
-            self.assertFalse(any("dualpi2" in cmd and ifb in cmd for cmd in node.commands))
-        self.assertTrue(set(module.METRIC_ROLES).issubset(devices))
-
-    def test_optional_rate_override_affects_only_client_link(self):
-        module, (_, _, _, devices) = self.build()
-        physical = dict(devices)
-        with patch.object(module.subprocess, "run"):
-            module.configure_topology(devices, "55mbit")
-        for role, (node, device) in physical.items():
-            command = next(cmd for cmd in node.commands if device in cmd and "rate" in cmd)
-            self.assertEqual(command[command.index("rate") + 1], "55mbit" if "client" in role else "300mbit")
-
-    def test_invalid_parameters_are_rejected(self):
-        for switches in (0, -1, 1.5, True, float("inf")):
-            with self.subTest(switches=switches), self.assertRaises(ValueError):
-                topology_source(switches, 20, 40)
-        for bandwidth in (0, -1, float("inf"), float("nan"), True):
-            with self.subTest(bandwidth=bandwidth), self.assertRaises(ValueError):
-                topology_source(1, bandwidth, 40)
-        for delay in (-1, float("inf"), float("nan"), True):
-            with self.subTest(delay=delay), self.assertRaises(ValueError):
-                topology_source(1, 20, delay)
-        self.assertTrue(generated(delay=0))
-
-    def test_failed_guest_command_is_not_silently_accepted(self):
-        module = generated()
-        node = FakeNode("client")
-        node.popen = lambda *args, **kwargs: types.SimpleNamespace(
-            returncode=2, communicate=lambda: ("kernel rejected qdisc", None))
-        with self.assertRaisesRegex(RuntimeError, "tc qdisc: kernel rejected qdisc"):
-            module.run_command(node, ["tc", "qdisc"])
-
-    def test_background_pairs_share_exactly_one_forward_hop(self):
-        for count in (1,2,4):
-            module,(net,client,server,devices)=self.build(count,50,160,background=True,background_cc='reno')
-            self.assertEqual(sum(name.startswith('s') and name[1:].isdigit() for name in net.nodes),count)
-            self.assertEqual(len(net.nodes),2+3*count)
-            for i in range(1,count+1):
-                downstream=f's{i+1}' if i<count else 'client'
-                self.assertIn((f'bgsrc{i}',f's{i}'),net.links)
-                self.assertIn((downstream,f'bgsink{i}'),net.links)
-            self.assertEqual([p['shared_role'] for p in module.background_pairs()],
-                             [f's{i}_to_s{i+1}' if i<count else f's{i}_to_client' for i in range(1,count+1)])
-
-    def test_background_rate_cc_routing_and_single_propagation_per_direction(self):
-        module,(net,client,_,devices)=self.build(2,50,160,background=True,background_cc='reno')
-        with patch.object(module.subprocess,'run'):
-            module.configure_topology(devices)
-        cmd=module.background_command(module.background_pairs()[0])
-        self.assertEqual(cmd[cmd.index('-C')+1],'reno')
-        self.assertEqual(cmd[cmd.index('-b')+1],'50M')
-        self.assertNotIn('-u',cmd)
-        for i in (1,2):
-            self.assertEqual(sum('netem' in c for c in net.nodes[f'bgsrc{i}'].commands),1)
-        self.assertEqual(sum('netem' in c for c in net.nodes['bgsink1'].commands),1)
-        self.assertFalse(any('netem' in c for c in net.nodes['bgsink2'].commands))
-        self.assertTrue(any('net.ipv4.ip_forward=1' in c for c in client.commands))
-        self.assertTrue(any('10.65.2.0/24' in c for c in net.nodes['bgsrc2'].commands))
-        for node in net.nodes.values():
-            for c in node.commands:
-                if 'rate' in c and '300mbit' not in c:
-                    self.assertIn(c[c.index('dev')+1], [devices['s2_to_client'][1],devices['client_to_s2'][1]])
-        self.assertTrue(set(module.METRIC_ROLES).issubset(devices))
-
-    def test_background_processes_are_managed_and_failure_is_logged(self):
-        import tempfile,json
-        from pathlib import Path
-        module,(_,_,_,devices)=self.build(background=True)
+        module,(_,_,_,devices)=self.build(background_warmup_seconds=6)
+        spawned=[]
         class Process:
-            def __init__(self):self.pid=123;self.dead=False
+            pid=123
+            dead=False
             def poll(self):return 1 if self.dead else None
             def terminate(self):self.dead=True
             def wait(self,timeout=None):return 0
-        spawned=[]
-        def popen(command,**kwargs):
-            p=Process();spawned.append(p);return p
+        def popen(command,**kw):
+            process=Process();spawned.append((process,command));return process
         for node,_ in devices.values():node.popen=popen
         with tempfile.TemporaryDirectory() as tmp, patch.object(module.time,'sleep') as sleep, \
              patch.object(module,'received_background_data',return_value=True), \
-             patch.object(module,'assert_background',return_value={'5201':'established','5202':'established'}):
+             patch.object(module,'assert_background',return_value={'5201':'ok','5202':'ok'}):
             result=module.start_background(devices,Path(tmp))
             self.assertEqual(len(result),4)
-            self.assertEqual(json.loads((Path(tmp)/'background-config.json').read_text())['flow_count'],2)
-            self.assertEqual(json.loads((Path(tmp)/'background-config.json').read_text())['warmup_seconds'],4)
-            self.assertEqual(sleep.call_args.args,(4,))
+            self.assertTrue(all('-s' in c for p,c in spawned[:2]))
+            self.assertTrue(all('-c' in c for p,c in spawned[2:]))
+            self.assertEqual(sleep.call_args.args,(6,))
+            config=json.loads((Path(tmp)/'background-config.json').read_text())
+            self.assertEqual(config['status'],'PASS')
+            self.assertEqual(config['rate'],'unlimited')
+            self.assertEqual([p['cc'] for p in config['pairs']],['cubic','prague'])
+            self.assertEqual([p['tcp_ecn'] for p in config['pairs']],[0,3])
             for p,h in result:p.terminate();h.close()
         spawned.clear()
         with tempfile.TemporaryDirectory() as tmp, patch.object(module.time,'sleep'), \
              patch.object(module.time,'monotonic',side_effect=[0,100]), \
-             patch.object(module,'assert_background',side_effect=RuntimeError('no TCP connection')):
-            with self.assertRaisesRegex(RuntimeError,'no TCP connection'):
-                module.start_background(devices,Path(tmp))
-            self.assertTrue(all(p.dead for p in spawned))
-            self.assertIn('no TCP connection',(Path(tmp)/'background-failure.txt').read_text())
-
-    def test_control_connection_without_data_is_not_background_readiness(self):
-        module,(_,_,_,devices)=self.build(1,background=True)
-        state='0 0 10.64.1.1:30000 10.65.1.2:5201\n cubic bytes_sent:200\n'
-        with patch.object(module,'run_command',return_value=state):
+             patch.object(module,'assert_background',side_effect=RuntimeError('no TCP data connection')):
             with self.assertRaisesRegex(RuntimeError,'data connection'):
-                module.assert_background(devices)
-        with patch.object(module,'run_command',return_value=state+state.replace('30000','30001')):
-            self.assertTrue(module.assert_background(devices))
+                module.start_background(devices,Path(tmp))
+            self.assertTrue(all(p.dead for p,c in spawned))
+            self.assertEqual(json.loads((Path(tmp)/'background-config.json').read_text())['status'],'FAIL')
 
-    def test_background_readiness_requires_nonzero_receiver_payload(self):
-        import tempfile
+    def test_performance_profile_records_aqm_and_preserves_explicit_pacing(self):
+        import json,tempfile
         from pathlib import Path
-        module=generated(background=True)
-        with tempfile.TemporaryDirectory() as tmp:
-            log=Path(tmp)/'sink.log'
-            log.write_text('Accepted connection from 10.64.1.1, port 30000\n')
-            self.assertFalse(module.received_background_data(log))
-            log.write_text('[  5]   0.00-0.10 sec  0.00 Bytes  0.00 bits/sec\n')
-            self.assertFalse(module.received_background_data(log))
-            log.write_text('[  5]   0.00-0.10 sec  128 KBytes  10.5 Mbits/sec\n')
-            self.assertTrue(module.received_background_data(log))
+        module=generated(performance_mode=True,dualpi2_step_ms=2)
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(module.subprocess,'check_output',return_value=''), \
+             patch.object(module,'Path') as paths, \
+             patch.dict(module.os.environ,{'CAMERA_PLAYER_MODE':'prague',
+                 'CAMERA_PLAYER_RELAY_CONGESTION_OPTIONS':'explicit-pacing'},clear=True):
+            paths.return_value.iterdir.return_value=()
+            module.set_output(Path(tmp))
+            module.configure_performance()
+            self.assertEqual(module.os.environ['CAMERA_PLAYER_RELAY_CONGESTION_OPTIONS'],'explicit-pacing')
+            self.assertIn('pacing_interval=1/4000',module.os.environ['CAMERA_PLAYER_SUBSCRIBER_CONGESTION_OPTIONS'])
+            profile=json.loads((Path(tmp)/'performance-profile.json').read_text())
+            self.assertEqual(profile['dualpi2_step_ms'],2)
+            self.assertEqual(profile['dualpi2_coupling_factor'],1)
 
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_source_is_standalone_and_guest_command_failure_surfaces(self):
+        module=generated(performance_mode=True)
+        self.assertTrue(callable(module.build_topology))
+        node=FakeNode('client')
+        node.popen=lambda *a,**kw: types.SimpleNamespace(returncode=2,communicate=lambda **kw: ('kernel rejected qdisc',None))
+        with self.assertRaisesRegex(RuntimeError,'kernel rejected qdisc'):
+            module.run_command(node,['tc','qdisc'])
+        self.assertIn('taskset',module.process_command(node,'relay',['relay']))

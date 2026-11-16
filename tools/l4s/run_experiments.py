@@ -84,7 +84,7 @@ def make_plan(cfg):
                       'command':build_command(case,cfg,attempt,inputs/'trace.json',topology)})
     return dict(schema_version=1,config=cfg,items=items,execution_status='planned',status='NOT_RUN',
                 delay_semantics={'ideal':'data-only one-way propagation; controls immediate',
-                                 'qemu':'qemu_delay_mode selects endpoint total or per-physical-main-link one-way delay; background access links add background_link_delay_ms each direction'},
+                                 'qemu':'total one-way propagation for every pair; two access egresses each add half the delay'},
                 topology_runtime_status='UNVERIFIED' if any(c['path']=='qemu' for c in items) else 'NOT_APPLICABLE')
 
 
@@ -176,7 +176,7 @@ def save(batch,ledger):
     if (batch/'analysis/README.md').is_file():
         lines.append('- [Automated analysis and plots](analysis/README.md)')
     lines += ['',
-              'Ideal delays apply to data only with immediate controls. QEMU delays follow qemu_delay_mode: endpoints means total one-way, per-link means one-way on each physical main-path link; non-client-facing links are 300 Mbps, client-facing link uses the configured bottleneck. Enabled background traffic has one independent TCP source/sink per switch sharing only that forward hop, each targeting the bottleneck rate with the recorded background_cc. Each background-only access link adds background_link_delay_ms in each direction; each background path has two such links.', '',
+              'Ideal delays apply to data only with immediate controls. QEMU uses two switches, a shared inter-switch HTB/DualPI2 bottleneck and 300 Mbps access links. Two unlimited TCP data streams (Cubic without ECN and Prague with ECN) share the scene path. All three pairs have the same configured total one-way propagation.', '',
               'Browser object prevalidation remains disabled as requested; workers prepare GSP2 objects. Offline quality is evaluated separately. Missing samples are never filled.']
     if ledger.get('analysis_error'):lines += ['',f'Analysis error: {ledger["analysis_error"]}']
     (batch/'README.md').write_text('\n'.join(lines)+'\n')
@@ -195,7 +195,8 @@ def run_batch(cfg,executor=None):
     write_json(batch/'suite-source-provenance.json', {
         str(path.relative_to(REPO)): sha(path)
         for path in (Path(__file__), REPO/'tools/l4s/experiment_suite_config.py',
-                     REPO/'tools/l4s/experiment_suite_topology.py', REPO/'tools/l4s/experiment_suite_analysis.py')})
+                     REPO/'tools/l4s/experiment_suite_topology.py', REPO/'tools/l4s/player_topology.py',
+                     REPO/'tools/l4s/experiment_suite_analysis.py')})
     ledger['execution_status']='running';ledger['started_unix']=time.time();save(batch,ledger)
     execute=executor or process_executor(cfg)
     stop=False
@@ -208,12 +209,11 @@ def run_batch(cfg,executor=None):
             topology=None
             if item['path']=='qemu':
                 topology=inputs/'topology.py'
-                topology.write_text(topology_source(item['switches'],item['bandwidth_mbps'],item['delay_ms'],
-                    background=item['background'],background_cc=item['background_cc'],
+                topology.write_text(topology_source(item['bandwidth_mbps'],item['delay_ms'],
                     background_warmup_seconds=item['background_warmup_seconds'],
-                    background_link_delay_ms=item['background_link_delay_ms'],
-                    performance_mode=cfg['qemu']['performance_mode'],
-                    propagation_mode=item['qemu_delay_mode']))
+                    dualpi2_target_ms=item['dualpi2_target_ms'],dualpi2_update_ms=item['dualpi2_update_ms'],
+                    dualpi2_step_ms=item['dualpi2_step_ms'],dualpi2_coupling_factor=item['dualpi2_coupling_factor'],
+                    performance_mode=cfg['qemu']['performance_mode']))
             count=1+item['max_retries'] if item['on_failure']=='retry' else 1
             for index in range(1,count+1):
                 relative=Path('runs')/item['id']/f'attempt-{index:03d}'

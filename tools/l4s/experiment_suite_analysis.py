@@ -154,7 +154,8 @@ def browser_bins(telemetry: dict, duration: float):
 def load_run(batch: Path, item: dict, index: int, out: Path):
     run = {key: item.get(key) for key in (
         'id', 'scene', 'bandwidth_mbps', 'delay_ms', 'duration_seconds', 'path', 'controller',
-        'switches', 'rerun', 'experiment_index', 'selected_attempt', 'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode')}
+        'switches', 'rerun', 'experiment_index', 'selected_attempt', 'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode',
+        'background_profile','dualpi2_target_ms','dualpi2_update_ms','dualpi2_step_ms','dualpi2_coupling_factor')}
     run.update(status='BLOCKED', quality_frames=0, mean_ssim=None, mean_browser_payload_mbps=None,
                capture_status=None, quality_status=None)
     quality, bins, pairs = [], [], {}
@@ -481,6 +482,10 @@ def plot_group(out: Path, name: str, group: dict, members: list):
     first = members[0][0]
     background_label=(f"{first['switches']} TCP {first.get('background_cc')} backgrounds, each targeting {first['bandwidth_mbps']} Mbps"
                       if first.get('background') else 'no background traffic')
+    if first.get('background_profile')=='cubic-prague-unlimited':
+        background_label='Unlimited TCP Cubic + Prague, shared inter-switch DualPI2'
+        background_label += (f"; target {first.get('dualpi2_target_ms')} ms, update {first.get('dualpi2_update_ms')} ms, "
+                             f"step {first.get('dualpi2_step_ms')} ms, coupling {first.get('dualpi2_coupling_factor')}")
     if first.get('background') and first.get('background_link_delay_ms'):
         background_label += f", +{first['background_link_delay_ms']:g} ms per dedicated link each direction"
     delay_unit = 'ms/link' if first.get('qemu_delay_mode')=='per-link' and first['path']=='qemu' else 'ms'
@@ -517,7 +522,8 @@ def analyze_batch(batch: Path, ledger: dict, settings: dict) -> dict:
             'scene', 'bandwidth_mbps', 'duration_seconds', 'path', 'switches', 'experiment_index',
             'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode')]
         if run['path'] == 'qemu':
-            key_values.append(run['delay_ms'])
+            key_values.extend(run.get(field) for field in ('delay_ms','background_profile',
+                'dualpi2_target_ms','dualpi2_update_ms','dualpi2_step_ms','dualpi2_coupling_factor'))
         key = json.dumps(key_values, sort_keys=True)
         grouped.setdefault(key, []).append(record)
     groups = []

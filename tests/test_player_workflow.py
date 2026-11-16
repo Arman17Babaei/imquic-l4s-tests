@@ -43,14 +43,14 @@ def frames(root: Path, color=0, timestamp=100):
 
 class TopologyTests(unittest.TestCase):
     def test_editable_delay_and_rate_reach_separate_qdiscs(self):
-        with patch.object(player_topology, 'PROPAGATION_DELAY', '7ms'), patch.object(player_topology, 'BOTTLENECK', '37mbit'):
-            delay = player_topology.shaping_commands('s2-eth1', propagation=True)
-            aqm = player_topology.shaping_commands('server-eth0', propagation=False)
-            self.assertIn('7ms', delay[0])
+        with patch.object(player_topology, 'PROPAGATION_DELAY_MS', 14), patch.object(player_topology, 'BOTTLENECK', '37mbit'):
+            delay = player_topology.shaping_commands('client-eth0', shared=False)
+            aqm = player_topology.shaping_commands('s1-eth2', shared=True)
+            self.assertIn('7ms', delay[-1])
             self.assertFalse(any('dualpi2' in row for row in delay))
             self.assertFalse(any('netem' in row for row in aqm))
             self.assertIn('37mbit', aqm[1])
-            self.assertIn('123mbit', player_topology.shaping_commands('dev', propagation=False, rate='123mbit')[1])
+            self.assertIn('123mbit', player_topology.shaping_commands('dev', shared=True, rate='123mbit')[1])
 
     def test_custom_topology_is_loaded_without_importing_mininet(self):
         with tempfile.TemporaryDirectory() as directory:

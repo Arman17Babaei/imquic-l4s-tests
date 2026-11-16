@@ -1,5 +1,8 @@
 # Gaussian streaming through QEMU
 
+There are two experiment scenarios: ideal payload delivery at a specified bandwidth,
+and QEMU scene streaming alongside unlimited Cubic and Prague TCP traffic.
+
 The maintained workflow is: **PLY → progressive splats → QEMU topology → player → video → SSIM/PSNR**.
 
 For configurable scene, bandwidth, delay, camera-duration, ideal/QEMU and Reno/Prague sweeps with retries and automated VMAF plots, see [player experiment suites](docs/player-experiments.md) and [the example configuration](experiments/player.toml).
@@ -72,11 +75,22 @@ The player only needs the designated client/server nodes. There is no topology
 configuration framework. For a different graph, edit both functions, including
 interface roles and shaping placement.
 
-The example is `client — s1 — server`, with a 20 Mbit/s HTB/DualPI2 bottleneck
-and nominal 80 ms RTT. Rate, propagation and AQM constants are editable in that
-script. Keep propagation and dropping AQM on separate egresses on the experiment
-kernel. `--bottleneck` optionally overrides the script's rate. You can pass a
-separate self-contained Python file with `--topology-script`.
+The graph has exactly two switches. Three sender/receiver pairs attach on either
+side: the scene server/player client, Cubic TCP, and Prague TCP. All forward data
+shares the `s1 → s2` HTB/DualPI2 bottleneck (default 50 Mbps); reverse traffic
+uses an equivalent queue on `s2 → s1`. Access links are 300 Mbps. Both TCP senders
+have one unlimited data connection, without an iperf bitrate or parallel-flow
+limit. Cubic disables ECN; Prague requests Accurate ECN at both endpoints.
+The guest must provide TCP Prague: setup and startup fail on missing support,
+controller fallback, missing negotiated ECN, or missing background data.
+
+`--bottleneck` overrides the shared rate. For direct runs, edit the bandwidth,
+total one-way propagation, DualPI2 target/update/step/coupling and background
+warmup constants in `player_topology.py`. Suites set the same values in TOML and
+retain a standalone configured copy of this source. Every pair has the same
+total one-way delay (default 40 ms), split across its two access egresses;
+propagation remains separate from the inter-switch dropping AQM. Background
+receivers must see payload, then complete warmup before scene services start.
 
 ## Produce video and similarity measurements
 
@@ -140,20 +154,6 @@ trailing 100 ms received application-payload goodput to the recorded video,
 while quality PNGs remain clean. This rate excludes protocol overhead and is
 not the configured link capacity.
 
-`--topology-script tools/l4s/thesis_player_topology.py` selects the Figures 9–10
-two-switch graph: 300 Mbps provider and 100 Mbps downstream, both using DualPI2
-for both Reno and Prague. Both AQMs use `target 15ms tupdate 16ms step_thresh 1ms`,
-matching the earlier corrected L4S profile. There is 10 ms at each endpoint and two unlimited non-ECN Cubic
-background flows after a 2-second warmup. Guest queue/link snapshots use a
-100 ms target interval; actual sample timestamps and before/after state are
-retained with transport telemetry, without packet captures. A single pair is
-descriptive evidence rather than a repeated statistical comparison.
-
-The October 18 scene observations used a different profile: step 5ms on both
-AQMs, with FIFO 128 at s2 for Reno. Their saved videos and measurements retain
-that provenance; they do not validate the corrected configuration. Plot labels
-come from each run's `tc-state-before.txt`, including historical FIFO/step 5ms runs.
-
 Outputs under the new run directory:
 
 - `camera-trace.mp4` and `camera-trace.webm`: video at `--fps` (default 30).
@@ -176,11 +176,6 @@ for FFmpeg-compatible RGB SSIM/PSNR after recording. The default remains CPU;
 CUDA requests fail explicitly when unavailable. Quality reports record the device
 and library versions.
 
-For the same two-switch topology with a 20 Mbps downstream link, add
-`--bottleneck 20mbit` with the thesis topology script. The provider stays at
-300 Mbps; downstream burst/cburst remain 128k, and the delays, background flows
-and shared DualPI2 queue policy remain the same.
-
 After a run, audit delivery and native sender progress before interpreting a
 flat payload-rate interval:
 
@@ -202,8 +197,8 @@ bins, including zeros, and identify envelope goodput separately from accepted
 payload counters and link capacity. Native transport progress, quality and
 sampled queue statistics are retained alongside the topology/rate context.
 
-To try the same video/metric path without QEMU, use `--transport http` and omit
-`--network-path qemu`. This is also the small CPU acceptance path. Use a fresh
+For the ideal scenario without QEMU, use `--transport ideal` as shown below.
+HTTP loading and native loopback remain internal reference/acceptance facilities. Use a fresh
 output directory and `--gpu-mode software` when appropriate.
 
 Without `--quality`, the launcher can still record video; `--no-record` disables
@@ -217,24 +212,9 @@ the active tree. Recover it from Git revision `d7d6cab` if needed. Stored eviden
 under `l4s/` and `results/` is unchanged. Only the current player workflow and its
 checks are maintained here.
 
-For the earlier shared-bottleneck L4S operating profile, select
-`--topology-script tools/l4s/historical_shared_topology.py` and omit
-`--bottleneck` (the downstream link defaults to 100 Mbps). This puts the 20 Mbps
-bottleneck on s1->s2, shared by the main stream and both existing unlimited
-non-ECN Cubic flows. It uses the historical 32 KiB HTB burst, implicit cburst,
-DualPI2 target 15ms/update 16ms/step 1ms, and no added propagation delay. Both
-controllers use exactly the same network configuration. This transfers the
-historical network profile to the current two-switch/two-background graph;
-it does not recreate the older single-background experiment or its revisions.
-Use a fresh output directory; existing scene videos retain their original profile.
-The [current setup and experimental findings](l4s/current-experiment.md) records
-the measured Prague advantage, retained negative comparisons and its limits.
-
-The current 20 Mbps, step 5 ms native Prague/Cubic diagnostic is runnable with
-`python3 tools/l4s/run_sustained_profile.py`. See [the consolidated setup and
-evidence](l4s/current-experiment.md) for CPU assignments, resource guards,
-transport changes and measured effects. This is separate from the scene presets.
-
+Historical topology variants and standalone sustained-traffic diagnostics have
+been removed. Existing reports and captures retain their original provenance;
+use Git history to recover their source rather than running them as current presets.
 
 ### Ideal application-level bandwidth and delay
 

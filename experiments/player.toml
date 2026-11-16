@@ -7,9 +7,8 @@ scenes = ["bicycle", "train", "playroom"]
 bandwidth_mbps = 50
 delays_ms = [160, 320] # Total ONE-WAY propagation, not RTT.
 duration_seconds = 19 # 1x camera speed for the three original 19-second traces.
-path = "ideal" # "ideal": no VM; "qemu": full MoQ + Reno/Prague.
-controllers = ["prague", "reno"] # QEMU only; run adjacent at each fixed delay.
-switches = 2 # QEMU only; every non-client-facing link is 300 Mbps.
+path = "ideal" # "ideal": payload delivery; "qemu": scene + Cubic TCP + Prague TCP.
+controllers = ["prague"] # One scene stream; optional Reno uses the same network.
 reruns = 1 # Total repetitions per scene/delay/controller, including the first.
 on_failure = "continue" # Log failures and continue; exactly one attempt per item.
 max_retries = 0
@@ -40,7 +39,7 @@ base = "~/sandbox/p4/work.qcow2"
 runner = "tools/l4s/run_qemu_player.py"
 cpus = 7
 memory_mib = 2048
-performance_mode = true # Seven pinned vCPUs, host performance power profile, guest priorities/offloads and 250 us Prague pacing.
+performance_mode = false # Optional: Seven pinned vCPUs, host performance power profile, guest priorities/offloads and 250 us Prague pacing.
 
 [analysis]
 enabled = true
@@ -65,16 +64,15 @@ trace = "results/thesis-scenes-19s-20261018/playroom-trace-19s.json"
 name = "all-scenes-ideal-50mbps-1x"
 path = "ideal"
 delays_ms = [320, 160] # Ideal runs higher delay first for each scene.
-reruns = 10
+reruns = 1
 
 [[experiments]]
 name = "all-scenes-qemu-50mbps-1x"
-delays_ms = [10] # Fixed one-way propagation per physical main-path link.
-qemu_delay_mode = "per-link" # Two switches: 3 links, 30 ms one-way / nominal 60 ms RTT.
-background_link_delay_ms = 50 # Each dedicated background access link, each direction; +100 ms one-way per flow.
 path = "qemu"
-controllers = ["prague", "reno"]
-background = true # One independent competing TCP flow per switch.
-background_cc = "cubic" # Linux TCP algorithm in the guest, e.g. cubic, reno, bbr.
-background_warmup_seconds = 4 # Active background data for 4 seconds before scene/client startup.
-reruns = 10
+delays_ms = [10] # Total one-way propagation, identical for all three pairs.
+controllers = ["prague"]
+dualpi2_target_ms = 15
+dualpi2_update_ms = 16
+dualpi2_step_ms = 1
+dualpi2_coupling_factor = 1
+background_warmup_seconds = 4 # Starts after both receivers see TCP data.

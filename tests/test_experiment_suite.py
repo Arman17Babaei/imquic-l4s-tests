@@ -79,41 +79,52 @@ name = "example"
         self.assertEqual([(c['rerun'],c['delay_ms'],c['controller']) for c in cases],
                          [(r,d,c) for r in (1,2) for d in (160,320) for c in ('prague','reno')])
 
-    def test_background_config_is_qemu_only_and_cc_is_recorded(self):
+    def test_removed_topology_options_fail_clearly(self):
         original=self.config_file.read_text()
-        self.config_file.write_text(original.replace('path = "ideal"',
-            'path = "qemu"\nbackground = true\nbackground_cc = "reno"'))
-        cfg=self.load();cases=self.config.expand_cases(cfg)
-        self.assertTrue(all(c['background'] and c['background_cc']=='reno' for c in cases))
-        self.assertTrue(all(c['background_warmup_seconds']==4 for c in cases))
-        self.config_file.write_text(self.config_file.read_text().replace('path = "qemu"','path = "ideal"'))
-        with self.assertRaisesRegex(ValueError,'QEMU'):self.load()
-        self.config_file.write_text(original.replace('path = "ideal"',
-            'path = "qemu"\nbackground = true\nbackground_cc = "bad cc"'))
-        with self.assertRaisesRegex(ValueError,'background_cc'):self.load()
+        for setting in ('switches = 3','background = false','background_cc = "bbr"',
+                        'background_link_delay_ms = 50','qemu_delay_mode = "per-link"'):
+            self.config_file.write_text(original.replace('path = "ideal"', 'path = "qemu"\n'+setting))
+            with self.subTest(setting=setting), self.assertRaisesRegex(ValueError,'unknown'):
+                self.load()
 
-    def test_runner_generates_enabled_background_topology_and_keeps_settings(self):
+    def test_qemu_defaults_to_one_prague_scene_with_fixed_mixed_backgrounds(self):
+        self.config_file.write_text(self.config_file.read_text().replace('path = "ideal"','path = "qemu"'))
+        cases=self.config.expand_cases(self.load())
+        self.assertEqual({c['controller'] for c in cases},{'prague'})
+        self.assertEqual({c['switches'] for c in cases},{2})
+        self.assertEqual({c['background_profile'] for c in cases},{'cubic-prague-unlimited'})
+
+    def test_runner_generates_shared_background_topology_and_configurable_aqm(self):
         cfg=self.load()
         cfg['experiments'][0].update(path='qemu',controllers=['reno'],reruns=1,delays_ms=[160],
-                                     background=True,background_cc='bbr',background_warmup_seconds=6,
-                                     background_link_delay_ms=50,qemu_delay_mode='per-link')
+                                     background_warmup_seconds=6,dualpi2_target_ms=10,
+                                     dualpi2_update_ms=20,dualpi2_step_ms=2,dualpi2_coupling_factor=2)
         cfg['qemu']['performance_mode']=True
         ledger,calls=self.execute(cfg,[{'status':'PASS','video_status':'PASS','quality_status':'PASS'}])
         item=ledger['items'][0]
-        self.assertTrue(item['background'])
-        self.assertEqual(item['background_cc'],'bbr')
+        self.assertEqual(item['background_profile'],'cubic-prague-unlimited')
         command=calls[0]
         source=Path(command[command.index('--topology-script')+1]).read_text()
         namespace={}
         exec(compile(source,'<generated-topology>','exec'),namespace)
-        self.assertTrue(namespace['BACKGROUND'])
-        self.assertEqual(namespace['BACKGROUND_CC'],'bbr')
         self.assertEqual(namespace['BACKGROUND_WARMUP_SECONDS'],6)
-        self.assertEqual(namespace['BACKGROUND_LINK_DELAY_MS'],50)
-        self.assertEqual(namespace['PROPAGATION_MODE'],'per-link')
+        self.assertEqual(namespace['DUALPI2_TARGET_MS'],10)
+        self.assertEqual(namespace['DUALPI2_UPDATE_MS'],20)
+        self.assertEqual(namespace['DUALPI2_STEP_MS'],2)
+        self.assertEqual(namespace['DUALPI2_COUPLING_FACTOR'],2)
         self.assertTrue(namespace['PERFORMANCE_MODE'])
         self.assertTrue(command[command.index('--qemu-runner')+1].endswith('/qemu_player_performance.py'))
-        self.assertEqual(len(namespace['background_pairs']()),2)
+        self.assertEqual([p['cc'] for p in namespace['background_pairs']()],['cubic','prague'])
+
+    def test_invalid_l4s_parameters_are_rejected(self):
+        original=self.config_file.read_text()
+        for field in ('dualpi2_target_ms','dualpi2_update_ms','dualpi2_step_ms','dualpi2_coupling_factor'):
+            for value in ('nan','inf','-1','true'):
+                self.config_file.write_text(original.replace('path = "ideal"', f'path = "qemu"\n{field} = {value}'))
+                with self.subTest(field=field,value=value), self.assertRaises(ValueError):self.load()
+        for value in ('0','1.5','256'):
+            self.config_file.write_text(original.replace('path = "ideal"',f'path = "qemu"\ndualpi2_coupling_factor = {value}'))
+            with self.subTest(value=value), self.assertRaises(ValueError):self.load()
 
     def test_scaling_preserves_all_spatial_data(self):
         report = self.runner.scale_trace(self.root/'trace.json', self.root/'scaled.json', 5)
@@ -131,7 +142,7 @@ name = "example"
         self.assertEqual(self.load()['runner']['python'],str(interpreter))
 
     def test_qemu_command_is_explicit_and_topology_not_ideal(self):
-        cfg = self.load(); cfg['experiments'][0].update(path='qemu', controllers=['reno','prague'], switches=3)
+        cfg = self.load(); cfg['experiments'][0].update(path='qemu', controllers=['reno','prague'])
         cases = self.config.expand_cases(cfg)
         self.assertEqual(len(cases),8)
         command=self.runner.build_command(cases[0],cfg,self.root/'results/out',self.root/'scaled.json',self.root/'topology.py')
