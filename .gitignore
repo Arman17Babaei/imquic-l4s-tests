@@ -2,7 +2,7 @@ results/
 __pycache__/
 *.pyc
 /build/
-/data/
+/data
 deps/imquic/_deps/
 deps/imquic/build/
 deps/picoquic/_deps/
