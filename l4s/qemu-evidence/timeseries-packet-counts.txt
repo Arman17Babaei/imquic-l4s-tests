@@ -1,2 +1,0 @@
-ECT(1) packets=489
-CE packets=170
