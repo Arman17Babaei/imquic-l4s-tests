@@ -161,4 +161,30 @@ class SetupCacheTest(unittest.TestCase):
         self.assertFalse(cache.entry.exists())
 
 
+class SparseArchiveTest(unittest.TestCase):
+    def test_clean_sparse_checkout_does_not_reintroduce_excluded_model(self):
+        from run_qemu_player import archive_repository
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            repository = root / 'source'
+            repository.mkdir()
+            def git(*args):
+                return subprocess.run(['git', '-C', str(repository), *args], check=True,
+                                      capture_output=True, text=True)
+            git('init')
+            git('config', 'user.name', 'Fixture')
+            git('config', 'user.email', 'fixture@example.invalid')
+            (repository / 'client.py').write_text('print(1)\n')
+            (repository / 'demo.splat').write_bytes(b'fixture model')
+            git('add', '.')
+            git('commit', '-m', 'fixture')
+            git('sparse-checkout', 'set', '--no-cone', '/*', '!/demo.splat')
+            self.assertEqual(git('status', '--porcelain').stdout, '')
+            archive = root / 'source.tar.gz'
+            archive_repository(repository, archive)
+            with tarfile.open(archive) as packed:
+                self.assertIn('client.py', packed.getnames())
+                self.assertNotIn('demo.splat', packed.getnames())
+
+
 if __name__ == '__main__': unittest.main()

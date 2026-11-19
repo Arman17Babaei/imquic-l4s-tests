@@ -52,7 +52,13 @@ def archive_repository(repository, destination):
         text=True,
         capture_output=True,
     ).stdout
-    if status:
+    sparse = subprocess.run(
+        ["git", "config", "--bool", "core.sparseCheckout"], cwd=repository,
+        text=True, capture_output=True,
+    ).stdout.strip() == "true"
+    # git archive includes excluded blobs and can fetch private demo models in
+    # a filtered clone. Stage only the files present in a sparse worker checkout.
+    if status or sparse:
         archive_worktree(repository, destination)
     else:
         run(
