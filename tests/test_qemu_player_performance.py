@@ -1,6 +1,7 @@
 """Host performance profile lifecycle; no QEMU or host settings are changed."""
 import sys
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch,call
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'tools/l4s'))
@@ -8,6 +9,15 @@ import qemu_player_performance as profile
 
 
 class PerformanceTests(unittest.TestCase):
+    def test_fixed_performance_placement_rejects_requested_resource_flags(self):
+        for name, value in (('host_cpus', '2-8'), ('host_numa_node', 0),
+                            ('preallocate_memory', True), ('lock_memory', True)):
+            with self.subTest(name=name), patch.object(profile.subprocess, 'Popen') as popen:
+                with self.assertRaisesRegex(ValueError, 'resource flags.*performance'):
+                    profile.boot(SimpleNamespace(cpus=7, memory=128, forward_sidecar_port=0, **{name: value}),
+                                 Path('overlay'), Path('serial'), 22)
+                popen.assert_not_called()
+
     def test_power_mode_restored_after_success_or_launcher_failure(self):
         for error in (None,RuntimeError('boot failed')):
             with self.subTest(error=error), patch.object(profile.subprocess,'check_output',return_value='balanced\n'), \

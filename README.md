@@ -358,6 +358,21 @@ Replay defaults to hardware GPU, 960x540 and 5 fps. `--skip-reference` isolates
 candidate rendering; otherwise a trace-defined cached full reference, strict
 SSIM/PSNR comparison and MP4 are generated. VMAF is a separate analysis step.
 
+For dedicated capture workers, both `run_network_capture.py` and the direct
+`run_qemu_player.py` wrapper accept `--host-cpus 2-5 --host-numa-node 0
+--preallocate-memory --lock-memory`. Combine these with `--cpus 4` and
+`--memory-mib 8192` (direct wrapper: `--memory 8192`). The CPU set must be within
+the launcher's allowed affinity, contain at least one CPU per guest vCPU, and
+belong to the selected NUMA node. QEMU threads inherit the worker CPU set; each
+KVM vCPU is pinned to a distinct CPU in ascending order. Guest RAM uses an
+unmerged memory backend, optional preallocation, and strict binding to the
+requested NUMA node. Locking requires permission to set unlimited
+`RLIMIT_MEMLOCK` (usually root); setup fails explicitly if this cannot be set.
+These settings also apply during setup-cache preparation and are recorded in
+capture provenance and guest source/cache evidence. Set resource flags on the
+session owner when using reusable VMs; a case cannot change an existing VM's
+placement. Omitting the flags preserves the normal launch behavior.
+
 Replay verifies the manifest and exact trace hashes, then exposes only complete
 objects whose recorded arrival time is at or before each logical frame time.
 It waits for decoding, dependencies, GPU sorting and PNG persistence without

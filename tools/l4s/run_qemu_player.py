@@ -7,6 +7,7 @@ import json
 import os
 import platform
 import re
+import resource
 import shlex
 import signal
 import socket
@@ -235,20 +236,132 @@ cp /home/{shlex.quote(user)}/{provenance_name} .source-provenance.json
 '''
 
 
+def add_host_resource_arguments(parser):
+    parser.add_argument('--host-cpus', help='host CPU list, for example 2-5')
+    parser.add_argument('--host-numa-node', type=int, help='bind guest RAM to this host NUMA node')
+    parser.add_argument('--preallocate-memory', action='store_true')
+    parser.add_argument('--lock-memory', action='store_true', help='lock QEMU memory; requires unlimited memlock')
+
+
+def parse_cpu_list(value):
+    cpus = set()
+    for part in value.split(','):
+        if not re.fullmatch(r'\d+(?:-\d+)?', part):
+            raise ValueError('CPU list must contain CPU numbers or ascending ranges')
+        ends = [int(number) for number in part.split('-')]
+        first, last = ends[0], ends[-1]
+        if first > last:
+            raise ValueError('CPU ranges must be ascending')
+        cpus.update(range(first, last + 1))
+    return sorted(cpus)
+
+
+def validate_host_resources(args):
+    if args.cpus <= 0 or args.memory <= 0:
+        raise ValueError('--cpus and guest memory must be positive')
+    value = getattr(args, 'host_cpus', None)
+    cpus = parse_cpu_list(value) if value is not None else None
+    if cpus is not None:
+        if not set(cpus) <= os.sched_getaffinity(0):
+            raise ValueError('--host-cpus must be contained in the current allowed affinity')
+        if len(cpus) < args.cpus:
+            raise ValueError('--host-cpus must provide at least one host CPU per guest vCPU')
+    node = getattr(args, 'host_numa_node', None)
+    if node is not None:
+        node_path = Path(f'/sys/devices/system/node/node{node}/cpulist')
+        if node < 0 or not node_path.is_file():
+            raise ValueError('--host-numa-node must name an existing NUMA node')
+        if cpus is not None and not set(cpus) <= set(parse_cpu_list(node_path.read_text().strip())):
+            raise ValueError('--host-cpus must belong to --host-numa-node')
+        status = Path('/proc/self/status').read_text()
+        allowed = re.search(r'^Mems_allowed_list:\s*(.*)$', status, re.MULTILINE)
+        if allowed and node not in parse_cpu_list(allowed.group(1).strip()):
+            raise ValueError('--host-numa-node is outside the allowed memory nodes')
+    return cpus
+
+
+def host_resource_record(args):
+    return {name: getattr(args, name, default) for name, default in (
+        ('host_cpus', None), ('host_numa_node', None),
+        ('preallocate_memory', False), ('lock_memory', False))}
+
+
+def qemu_child_setup(cpus, lock_memory):
+    def setup():
+        if cpus is not None:
+            os.sched_setaffinity(0, cpus)
+        if lock_memory:
+            resource.setrlimit(resource.RLIMIT_MEMLOCK,
+                               (resource.RLIM_INFINITY, resource.RLIM_INFINITY))
+    return setup
+
+
+def pin_vcpu_threads(process, cpus, count, *, task_root=None, timeout=10):
+    tasks = task_root or Path(f'/proc/{process.pid}/task')
+    pinned = set()
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        for task in sorted(tasks.iterdir()):
+            try:
+                match = re.fullmatch(r'CPU (\d+)/KVM', (task / 'comm').read_text().strip())
+                if match and int(match[1]) < count:
+                    index = int(match[1])
+                    os.sched_setaffinity(int(task.name), {cpus[index]})
+                    pinned.add(index)
+            except FileNotFoundError:
+                continue
+        if len(pinned) == count:
+            return
+        if process.poll() is not None:
+            raise RuntimeError('QEMU exited before vCPU affinity could be applied')
+        time.sleep(0.05)
+    raise RuntimeError('timed out identifying QEMU KVM vCPU threads for CPU pinning')
+
+
 def boot_qemu(args, overlay, serial_log, port):
     host_forwards = f"hostfwd=tcp:127.0.0.1:{port}-:22"
     if args.forward_sidecar_port:
         host_forwards += f",hostfwd=tcp:127.0.0.1:{args.forward_sidecar_port}-:7790"
-    return subprocess.Popen(
-        [
-            "qemu-system-x86_64", "-enable-kvm", "-cpu", "host",
-            "-m", str(args.memory), "-smp", str(args.cpus),
-            "-drive", f"file={overlay},format=qcow2,if=ide,cache=none,aio=native,discard=unmap",
-            "-netdev", f"user,id=n0,{host_forwards}",
-            "-device", "e1000,netdev=n0", "-boot", "c", "-display", "none",
-            "-serial", f"file:{serial_log}",
-        ]
-    )
+    cpus = validate_host_resources(args)
+    command = [
+        "qemu-system-x86_64", "-enable-kvm", "-cpu", "host",
+        "-m", str(args.memory), "-smp", str(args.cpus),
+        "-drive", f"file={overlay},format=qcow2,if=ide,cache=none,aio=native,discard=unmap",
+        "-netdev", f"user,id=n0,{host_forwards}",
+        "-device", "e1000,netdev=n0", "-boot", "c", "-display", "none",
+        "-serial", f"file:{serial_log}",
+    ]
+    node = getattr(args, 'host_numa_node', None)
+    preallocate = getattr(args, 'preallocate_memory', False)
+    lock = getattr(args, 'lock_memory', False)
+    if node is not None or preallocate or lock:
+        backend = f'memory-backend-ram,id=ram,size={args.memory}M,merge=off,prealloc={"on" if preallocate else "off"}'
+        if node is not None:
+            backend += f',host-nodes={node},policy=bind'
+        command += ['-object', backend, '-numa', 'node,memdev=ram']
+    if lock:
+        command += ['-overcommit', 'mem-lock=on']
+    options = {}
+    if cpus is not None or lock:
+        options['preexec_fn'] = qemu_child_setup(cpus, lock)
+    try:
+        process = subprocess.Popen(command, **options)
+    except subprocess.SubprocessError as error:
+        raise RuntimeError('cannot configure QEMU CPU affinity or unlimited RLIMIT_MEMLOCK; '
+                           'memory locking requires permission to raise the hard memlock limit') from error
+    if cpus is not None:
+        try:
+            pin_vcpu_threads(process, cpus, args.cpus,
+                             timeout=getattr(args, 'boot_timeout', 180))
+        except BaseException:
+            process.terminate()
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise
+    return process
 
 
 def stop_qemu(args, port, qemu, *, require_clean=False):
@@ -325,7 +438,12 @@ def main():
     )
     parser.add_argument("--session-owner",type=Path,help="publish a suite-owned VM session")
     parser.add_argument("--owner-pid",type=int,default=os.getppid())
+    add_host_resource_arguments(parser)
     args = parser.parse_args()
+    try:
+        validate_host_resources(args)
+    except ValueError as error:
+        parser.error(str(error))
 
     if not args.base.is_file():
         raise SystemExit(f"QEMU base image does not exist: {args.base}")
@@ -355,6 +473,9 @@ def main():
             raise SystemExit(f"{label} must be a safe relative path")
 
     if os.environ.get('IMQUIC_QEMU_SESSION') and not args.session_owner:
+        if (args.host_cpus is not None or args.host_numa_node is not None
+                or args.preallocate_memory or args.lock_memory):
+            raise SystemExit('host resource flags require a new VM; unset IMQUIC_QEMU_SESSION or configure its session owner')
         from qemu_session import run_case
         return run_case(sys.modules[__name__],args,Path(os.environ['IMQUIC_QEMU_SESSION']))
 
@@ -379,7 +500,7 @@ def main():
         else:
             run(["git", "archive", "--format=tar.gz", f"--output={source_archive}", "HEAD"], cwd=ROOT)
         source_provenance.write_text(
-            json.dumps(repository_snapshot(ROOT), indent=2, sort_keys=True) + "\n",
+            json.dumps(dict(repository_snapshot(ROOT), host_resources=host_resource_record(args)), indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
         archive_repository(ROOT / "deps" / "picoquic", picoquic_archive)
@@ -393,7 +514,8 @@ def main():
         archive_repository(ROOT / "deps" / "imquic", imquic_archive)
         archive_repository(ROOT / "deps" / "gaussian-player", gaussian_player_archive)
         setup = setup_script(guest_root, args.user, args.password, args.cpus)
-        cache_evidence = {'enabled': not args.no_setup_cache, 'hit': False, 'key': None}
+        cache_evidence = {'enabled': not args.no_setup_cache, 'hit': False, 'key': None,
+                          'host_resources': host_resource_record(args)}
         prepared_base = args.base.resolve()
         if not args.no_setup_cache:
             configuration = {

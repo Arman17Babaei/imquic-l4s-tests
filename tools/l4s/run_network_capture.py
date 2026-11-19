@@ -18,6 +18,7 @@ from run_camera_trace_player import ROOT, PLAYER, scene_archive, completed_qemu_
 from experiment_suite_topology import topology_source
 from run_experiments import scale_trace
 from guest_cleanup import process_record, stop_record
+from run_qemu_player import add_host_resource_arguments, validate_host_resources, host_resource_record
 
 
 def adapter_archive(target: Path):
@@ -39,7 +40,12 @@ def main():
     parser.add_argument('--bandwidth-mbps',type=float,default=150);parser.add_argument('--one-way-delay-ms',type=float,default=10)
     parser.add_argument('--duration-seconds',type=float,default=20);parser.add_argument('--cpus',type=int,default=4);parser.add_argument('--memory-mib',type=int,default=2048)
     parser.add_argument('--base',type=Path,default=Path('~/sandbox/p4/work.qcow2').expanduser())
-    args=parser.parse_args();out=args.output.resolve();manifest=args.manifest.resolve()
+    add_host_resource_arguments(parser)
+    args=parser.parse_args()
+    args.memory=args.memory_mib
+    try:validate_host_resources(args)
+    except ValueError as error:parser.error(str(error))
+    out=args.output.resolve();manifest=args.manifest.resolve()
     if out.exists() or not out.is_relative_to(ROOT/'results'):raise ValueError('output must be new under results')
     validate_manifest(manifest);out.mkdir(parents=True)
     provenance=scale_trace(args.trace.resolve(),out/'trace.json',args.duration_seconds)
@@ -51,6 +57,10 @@ def main():
         '--guest-timeout','1200','--guest-result-name','player','--guest-result-root','results/l4s',
         '--destination-root','results/l4s','--destination-prefix',f'network-{out.name}',
         '--forward-sidecar-port',str(free_port(socket.SOCK_STREAM))]
+    for name in ('host_cpus','host_numa_node'):
+        if getattr(args,name) is not None:command += ['--'+name.replace('_','-'),str(getattr(args,name))]
+    for name in ('preallocate_memory','lock_memory'):
+        if getattr(args,name):command += ['--'+name.replace('_','-')]
     for path,target in [(out/'scene.tar','inputs/player-scene.tar'),(out/'adapter.tar','inputs/adapter.tar'),(out/'trace.json','inputs/capture-trace.json'),(topology,'inputs/player-topology.py'),(Path(shutil.which('node')),'inputs/node')]:
         command+=['--guest-file',f'{path}={target}']
     for setting in ['CAMERA_PRIORITY_SCENE_ARCHIVE=inputs/player-scene.tar','CAMERA_PRIORITY_NODE=inputs/node',
@@ -60,7 +70,7 @@ def main():
         command+=['--make-variable',setting]
     record=dict(schema_version=1,mode='separated-network-capture',controller=args.controller,ecn_mode='ect0' if args.controller=='bbr' else 'ect1',bandwidth_mbps=args.bandwidth_mbps,
         one_way_delay_ms=args.one_way_delay_ms,base_rtt_ms=2*args.one_way_delay_ms,cpus=args.cpus,memory_mib=args.memory_mib,
-        manifest=str(manifest),manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),trace=provenance,
+        host_resources=host_resource_record(args),manifest=str(manifest),manifest_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),trace=provenance,
         command=command,started_unix=time.time(),source_sha256={str(p.relative_to(ROOT)):hashlib.sha256(p.read_bytes()).hexdigest() for p in [Path(__file__),ROOT/'tools/l4s/priority_moq_sidecar.c',ROOT/'tools/l4s/priority_ws_bridge.mjs',PLAYER/'src/network-capture-client.ts',PLAYER/'src/network-capture.ts']})
     (out/'provenance.json').write_text(json.dumps(record,indent=2)+'\n')
     with (out/'qemu.log').open('w') as log:

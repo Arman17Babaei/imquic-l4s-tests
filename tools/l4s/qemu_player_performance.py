@@ -22,6 +22,12 @@ atexit.register(lambda:[d.cleanup() for d in directories])
 
 
 def boot(args,overlay,serial_log,port):
+    if (getattr(args, 'host_cpus', None) is not None
+            or getattr(args, 'host_numa_node', None) is not None
+            or getattr(args, 'preallocate_memory', False)
+            or getattr(args, 'lock_memory', False)):
+        raise ValueError('host resource flags are unsupported by the fixed performance profile; '
+                         'use run_qemu_player.py for configurable CPU and RAM placement')
     assert args.cpus==7
     temporary=tempfile.TemporaryDirectory(prefix='prague-qmp-');directories.append(temporary)
     address=Path(temporary.name)/'qmp.sock'
