@@ -206,6 +206,15 @@ class ResourcePinningTest(unittest.TestCase):
         process.terminate.assert_called_once()
         process.wait.assert_called_once_with(timeout=10)
 
+    def test_vcpu_pinning_enables_qemu_thread_names(self):
+        import run_qemu_player as runner
+        with patch.object(runner, 'validate_host_resources', return_value=[2, 3]), \
+             patch.object(runner.subprocess, 'Popen') as popen, \
+             patch.object(runner, 'pin_vcpu_threads'):
+            runner.boot_qemu(self.args(host_cpus='2-3'), Path('overlay'), Path('serial'), 22)
+        command = popen.call_args.args[0]
+        self.assertIn('debug-threads=on', command[command.index('-name') + 1])
+
     def test_vcpu_discovery_uses_boot_timeout_during_preallocation(self):
         import run_qemu_player as runner
         process = Mock()

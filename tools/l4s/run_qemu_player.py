@@ -342,6 +342,8 @@ def boot_qemu(args, overlay, serial_log, port):
     if lock:
         command += ['-overcommit', 'mem-lock=on']
     options = {}
+    if cpus is not None:
+        command += ['-name', 'live4s,debug-threads=on']
     if cpus is not None or lock:
         options['preexec_fn'] = qemu_child_setup(cpus, lock)
     try:
