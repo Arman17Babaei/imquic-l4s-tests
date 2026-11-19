@@ -7,7 +7,7 @@ from pathlib import Path
 
 def topology_source(bandwidth_mbps: float, delay_ms: float, *,
                     dualpi2_target_ms: float = 15, dualpi2_update_ms: float = 16,
-                    dualpi2_step_ms: float = 1, dualpi2_coupling_factor: int = 1,
+                    dualpi2_step_ms: float = 1, dualpi2_coupling_factor: int = 3,
                     background_warmup_seconds: float = 4, performance_mode: bool = False) -> str:
     settings = dict(BOTTLENECK=f'{bandwidth_mbps:g}mbit', PROPAGATION_DELAY_MS=delay_ms,
                     DUALPI2_TARGET_MS=dualpi2_target_ms, DUALPI2_UPDATE_MS=dualpi2_update_ms,

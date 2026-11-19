@@ -1,7 +1,7 @@
 # Gaussian streaming through QEMU
 
 There are two experiment scenarios: ideal payload delivery at a specified bandwidth,
-and QEMU scene streaming alongside unlimited Cubic and Prague TCP traffic.
+and QEMU scene streaming alongside unlimited BBR and Prague TCP traffic.
 
 The maintained workflow is: **PLY → progressive splats → QEMU topology → player → video → SSIM/PSNR**.
 
@@ -31,16 +31,16 @@ Use a standard Graphdeco 3DGS PLY with position, opacity, scales, rotations and
 all degree-3 spherical-harmonic coefficients. Preparation needs NumPy and plyfile:
 
 ```sh
-python3 -m venv results/venvs/3dgs
-results/venvs/3dgs/bin/pip install numpy==2.5.2 plyfile==1.1.5
-results/venvs/3dgs/bin/python -m unittest tests.test_player_sh3
+python3 -m venv .venvs/3dgs
+.venvs/3dgs/bin/pip install numpy==2.5.2 plyfile==1.1.5
+.venvs/3dgs/bin/python -m unittest tests.test_player_sh3
 ```
 
 These exporter regressions are separate from the dependency-light player/bridge
 CPU smoke, which uses simulated native delivery.
 
 ```sh
-results/venvs/3dgs/bin/python tools/l4s/prepare_player_sh3.py \
+.venvs/3dgs/bin/python tools/l4s/prepare_player_sh3.py \
   --source data/scene.ply --output results/scene \
   --grid 10x10x3 --max-tile-gaussians 16384
 ```
@@ -57,7 +57,7 @@ GSP2 decoding and packing use a bounded Web Worker pool.
 For compatibility with tools that require an ordinary `.splat` file:
 
 ```sh
-results/venvs/3dgs/bin/python tools/l4s/convert_3dgs_ply_to_splat.py \
+.venvs/3dgs/bin/python tools/l4s/convert_3dgs_ply_to_splat.py \
   data/scene.ply results/scene.splat
 ```
 
@@ -76,19 +76,19 @@ configuration framework. For a different graph, edit both functions, including
 interface roles and shaping placement.
 
 The graph has exactly two switches. Three sender/receiver pairs attach on either
-side: the scene server/player client, Cubic TCP, and Prague TCP. All forward data
+side: the scene server/player client, BBR TCP, and Prague TCP. All forward data
 shares the `s1 → s2` HTB/DualPI2 bottleneck (default 50 Mbps); reverse traffic
 uses an equivalent queue on `s2 → s1`. Access links are 300 Mbps. Both TCP senders
 have one unlimited data connection, without an iperf bitrate or parallel-flow
-limit. Cubic disables ECN; Prague requests Accurate ECN at both endpoints.
-The guest must provide TCP Prague: setup and startup fail on missing support,
+limit. BBR requests classic ECN (ECT(0)); Prague requests Accurate ECN at both endpoints.
+The guest must provide TCP BBR and Prague: setup and startup fail on missing support,
 controller fallback, missing negotiated ECN, or missing background data.
 
 `--bottleneck` overrides the shared rate. For direct runs, edit the bandwidth,
 total one-way propagation, DualPI2 target/update/step/coupling and background
 warmup constants in `player_topology.py`. Suites set the same values in TOML and
 retain a standalone configured copy of this source. Every pair has the same
-total one-way delay (default 40 ms), split across its two access egresses;
+total one-way delay (default 40 ms), split equally across all three links;
 propagation remains separate from the inter-switch dropping AQM. Background
 receivers must see payload, then complete warmup before scene services start.
 
@@ -144,6 +144,12 @@ player and harness files, and reruns native checks. Guest `setup-cache.json`
 records the key and hit/miss. The base identity uses file metadata rather than
 a full image hash. Direct wrapper options `--setup-cache-dir` and
 `--no-setup-cache` allow a separate cache or an uncached run.
+
+The browser bridge permits 64 outstanding objects by default (`--object-window`),
+and the native sidecar buffers up to 64 MiB before applying backpressure. These
+queues absorb temporary browser-processing stalls; a sustained slow consumer
+can still fill them. QEMU VMAF uses live rendered frames: arrival timestamps
+are telemetry, not an offline replay that makes objects visible retroactively.
 
 For bounded observations, `--fixed-horizon` closes delivery at the trace's last
 timestamp and records a censored snapshot instead of draining the remaining
@@ -208,23 +214,24 @@ an automatic trace. Existing endpoints are owned by their launcher.
 
 The CPU smoke leaves a tiny example video and quality CSV under `results/cpu-check/`.
 Historical runner, plotting, training and CUDA-reference code was removed from
-the active tree. Recover it from Git revision `d7d6cab` if needed. Stored evidence
-under `l4s/` and `results/` is unchanged. Only the current player workflow and its
+the active tree. Recover it from Git revision `d7d6cab` if needed. Previous experiment outputs and reports were intentionally deleted for a clean baseline. Only the current player workflow and its
 checks are maintained here.
 
 Historical topology variants and standalone sustained-traffic diagnostics have
-been removed. Existing reports and captures retain their original provenance;
-use Git history to recover their source rather than running them as current presets.
+been removed. Old reports and captures have been deleted. Git history retains previously
+tracked material; it is not a current runtime preset.
 
 ### Ideal application-level bandwidth and delay
 
-Use the ideal link to isolate payload bandwidth and data propagation from transport
-behavior. It launches no QUIC, QEMU, AQM, or competing traffic. For example:
+Ideal mode runs deterministic offline rendering on top of the real IMQUIC MoQ
+publisher, relay and subscriber. Local QUIC carries permitted objects; its
+wall-clock throughput is not the modeled link. It needs the native MoQ binaries
+and player build, but no QEMU, AQM or competing traffic. For example:
 
 ```sh
-results/venvs/3dgs/bin/python tools/l4s/run_camera_trace_player.py \
-  --manifest results/scene-videos-20261018/train-scene/manifest-v2.json \
-  --trace results/thesis-scenes-19s-20261018/train-trace-19s.json \
+.venvs/3dgs/bin/python tools/l4s/run_camera_trace_player.py \
+  --manifest data/scenes/train/manifest-v2.json \
+  --trace data/traces/thesis-scenes-19s/train-trace-19s.json \
   --output results/my-ideal-train --transport ideal \
   --ideal-bandwidth-mbps 20 --ideal-data-delay-ms 40 \
   --format mp4 --headless
@@ -234,24 +241,36 @@ The delay is one-way data propagation, not RTT. Requests and priority controls
 are immediate. One shared payload budget serializes an object in
 `8 * payload_bytes / (bandwidth_mbps * 1e6)` seconds; propagation overlaps
 serialization of later objects. Priority updates apply at object boundaries,
-with stable manifest/object ties. Serialized and in-flight objects are not
+with IMQUIC ties ordered by publisher priority and request ID. Serialized and in-flight objects are not
 preempted. Envelope/control bytes are outside this application payload budget.
 Bounded queue overflow is a method failure, rather than an implicit rate change.
 
-Ideal mode defaults to an empty start, fixed horizon, clean render-loop quality
-capture at 30 fps, and CUDA comparison after recording. At 19 seconds it requires
-570 actual clean PNG samples on `[0, 19 s)`. Missed slots are retained as missing;
-they are never reconstructed. Full-scene references use each captured timestamp
-and pose. Incomplete capture produces quality FAIL even when partial matched
-scores and a valid video are available. CUDA uses one image pair per batch.
+Time zero is the initial request with an empty scene. Each frame at `k / fps`
+advances a rational byte clock, receives all objects due by that simulated time,
+awaits object preparation and GPU sorting, and renders the exact trace pose.
+Then its camera priorities are acknowledged before the next object selection.
+No rendering, encoding or host wait consumes simulated time. The relay cache is
+fully populated before the initial FETCHes; only one permitted object is sent
+at a time, so host scheduling cannot change the selected object sequence.
 
-`ideal-events.jsonl` records controls, selections, serialization, modeled arrivals,
-dispatches, and cancellations. `ideal-summary.json` checks publisher execution and
-queue budgets; `ideal-delivery.json` reconciles dispatched object identities with
-browser receipts. Missing, unexpected or duplicate objects and invalid modeled
-metadata fail delivery. Wall-clock speed is not graded. `validation-summary.json`
-separates video, quality, and delivery status. Cwnd, ECN, packet loss and transport
-RTT are inapplicable to this model.
+Delivery advances through the full trace horizon for counters; video excludes
+the endpoint and keeps its final captured scene count separately. Every video
+frame is captured as a PNG and encoded at `--fps` without wall-clock
+retiming. `--quality-fps` must divide video FPS; quality uses those exact frame
+indices and matching full-scene reference poses. Defaults are 30 FPS and CUDA
+quality comparison. Missing frames fail the run. `--start-after-first-object`,
+base buffering and the removed `--playback-delay-ms` do not apply to ideal runs.
+
+`ideal-events.jsonl` retains native control acknowledgements, serialization,
+modeled arrivals and dispatches. `ideal-summary.json` records model
+`offline-imquic-v1`; `ideal-delivery.json` reconciles object identities, bytes and
+simulated arrivals with browser receipts. `render-frame` telemetry records poses
+and applied-object deltas/counts for repeatability checks. Native logs retain operational
+transport diagnostics; those are not ideal-link metrics. `validation-summary.json`
+keeps video, quality and delivery status independent. Run `make ideal-player-check`
+for the real native/player repeatability fixtures. Identical inputs yield
+identical modeled delivery and frame membership; pixel repeatability is scoped
+to the same renderer and environment.
 
 
 ### Continuous camera priorities
@@ -273,26 +292,85 @@ higher layers. Outside priorities remain `240 + layer` for layers 0–3. Explici
 legacy base buffering still assigns enhancements 255. Old center/periphery and
 near/middle/far labels are retained for diagnostics and do not determine scores.
 
-The wire priority is `floor(score)`. Ideal mode also sends `priority_score` on
-opens/updates, orders integer ties using that score, and records
-`subscriber_score` on object events. Score-only changes within the same integer
-priority are propagated in ideal mode; exact ties retain manifest/object order.
-In-flight or serializing objects are not preempted. Reno/L4S use their existing
-8-bit subscriber-priority field, so fractional tie ordering is not guaranteed
-there. Initial request lists use the full score to resolve integer ties.
-New run provenance includes the policy, precision mode, and ranking-source hash.
+The wire priority is `floor(score)` for both ideal and QEMU. IMQUIC orders
+pending FETCH objects by subscriber priority, publisher priority and request ID.
+Initial request lists use the full score to resolve integer ties. In-flight or
+serializing objects are not preempted. Ideal priorities update at fixed simulated
+frame timestamps; QEMU priorities follow the live trace clock. New run provenance
+records the policy and ranking-source hash.
 
-For exact cross-run camera alignment, ideal mode supports
-`--quality-fps 5 --quality-camera-timestamps fixed`. It targets 95 original
-render-loop PNGs over 19 seconds, using poses at 0, 0.2, ..., 18.8 seconds.
-Selected video/render frames use the nominal camera pose, then restore the live
-camera. Priorities, delivery and horizon cutoff continue on the actual clock.
-Frame metadata records the camera `timestampMs`; missed samples remain missing.
-The default `actual` camera timestamp mode is unchanged.
+## Local inputs and disposable outputs
 
-Fixed-camera mode compacts ideal priority acknowledgements into batches of 64
-without changing score precision or update cadence. Every request-level accepted
-update is retained in `ideal-events.jsonl`. Output queues remain bounded; overflow
-is a method failure. A failed transport exits browser recording promptly instead
-of waiting for a download that cannot complete. Exact pose alignment and quality
-capture completeness and object delivery are validated independently.
+`results/` is reserved for new generated experiments and can be cleared after
+runs. Persistent local inputs and dependencies live outside it:
+
+- `data/datasets/nthu/`: 13 final source models, all raw NTHU traces and the
+  reproducible five-per-scene selection (40 selected traces).
+- `data/scenes/`: prepared payloads for all eight configured NTHU scenes. Bicycle
+  uses `bicycle-30000/` to match the copied final checkpoint.
+- `data/traces/nthu-selected/`: one normalized selected NTHU trace per scene,
+  plus input hashes and the reproduction script.
+- `data/traces/thesis-scenes-19s/`: the three earlier camera input traces.
+- `data/reproduction-scripts/`: preserved script/configuration sources; historical
+  paths may need adapting before reuse with fresh data.
+- `.venvs/` and `.toolchains/`: Python environments and VMAF build dependencies.
+
+Old experiment captures, metrics, logs, reports and cached QEMU run artifacts
+were intentionally removed. Source code, datasets and dependencies remain.
+
+QEMU experiment `controllers` can include `"prague"` (Prague with ECT(1)),
+`"reno"` (Reno with ECN disabled), and `"reno-ect0"` (classic Reno with ECT(0)).
+`experiments/player.toml` includes all three; each uses the same BBR/Prague
+background flows. The launcher also accepts `--transport-mode reno-ect0`.
+Reno ECT(0) is a distinct condition in case IDs and reports, including paired
+quality comparisons; existing Reno results remain the Not-ECT condition.
+
+The QEMU mode `bbr` selects picoquic BBR with ECN ECT(0) on both relay and subscriber. Earlier retained BBR runs explicitly used Not-ECT; do not pool those with the ECN-enabled condition. The final entry in `experiments/player.toml` schedules one Bicycle BBR sample at 50 Mbps and 30 ms base RTT, separate from the replicated controller comparisons.
+## Independent network capture and offline arrival replay
+
+The opt-in `recorded-arrivals-v1` workflow separates real IMQUIC/QEMU receiving
+from rendering. The receiver guest runs a Node adapter with the shared camera
+and `PriorityAbr` implementation, updating priorities every 100 ms. It FETCHes
+all nonempty objects and records their native complete-object arrival times,
+identities, byte lengths and verified payload hashes. It has no renderer.
+
+Build the player with `cd deps/gaussian-player && npm run build`, then run from
+this repository root (output directories must be new):
+
+```sh
+.venvs/3dgs/bin/python tools/l4s/run_network_capture.py \
+  --manifest data/scenes/train/manifest-v2.json \
+  --trace data/traces/nthu-selected-150mbps/user8_train.json \
+  --controller prague --bandwidth-mbps 150 --one-way-delay-ms 10 \
+  --cpus 4 --memory-mib 2048 --output results/train-prague-capture
+
+.venvs/3dgs/bin/python tools/l4s/render_arrival_replay.py \
+  --manifest data/scenes/train/manifest-v2.json \
+  --trace results/train-prague-capture/trace.json \
+  --journal results/train-prague-capture/arrivals.json \
+  --fps 5 --output results/train-prague-replay
+```
+
+Use `--controller bbr` with a separate output for picoquic BBR. Capture uses the
+existing topology with both Prague and BBR TCP backgrounds. Defaults are a
+20-second trace, 150 Mbps and 10 ms one-way propagation delay (20 ms base RTT).
+Replay defaults to hardware GPU, 960x540 and 5 fps. `--skip-reference` isolates
+candidate rendering; otherwise a trace-defined cached full reference, strict
+SSIM/PSNR comparison and MP4 are generated. VMAF is a separate analysis step.
+
+Replay verifies the manifest and exact trace hashes, then exposes only complete
+objects whose recorded arrival time is at or before each logical frame time.
+It waits for decoding, dependencies, GPU sorting and PNG persistence without
+advancing logical time. A frame membership audit reconciles every eligible
+object dispatch and every dependency-ready applied Gaussian against the journal.
+This measures network-arrival-limited visual quality, excluding real-time
+renderer/decode stalls. Keep it separate from earlier live-render experiments.
+
+The Train pilot in `results/separated-train-20261119/` validated two concurrent
+4-vCPU/2-GiB capture VMs with the earlier CUBIC + Prague backgrounds, or two
+candidate replay jobs. Capture concurrency with the current BBR + Prague
+backgrounds needs separate validation. Both parallel replays
+matched their serial RGB frames exactly (100/100 each). Full-reference generation
+and quality scoring were tested serially; combined capture/replay load and three
+or more workers have not been validated. See that directory's `README.md`,
+`parallelism.json` and reproduction scripts for measured timing/resource limits.

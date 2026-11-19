@@ -54,6 +54,8 @@ static gpointer enqueue_second(gpointer unused) {
 }
 
 static void bounded_output_test(void) {
+	g_atomic_int_set(&producer_done, 0);
+	gsize original_limit = output_limit_bytes;
 	blocked_output sink = { .bytes = g_byte_array_new() };
 	FILE *original = stdout;
 	stdout = tmpfile();
@@ -95,7 +97,53 @@ static void bounded_output_test(void) {
 	assert(offset == sink.bytes->len && output_bytes == 0);
 	g_byte_array_unref(sink.bytes);
 	g_mutex_clear(&sink.mutex); g_cond_clear(&sink.condition);
-	output_limit_bytes = 4 * 1024 * 1024;
+	output_limit_bytes = original_limit;
+}
+
+static gpointer enqueue_burst(gpointer unused) {
+	(void)unused;
+	uint8_t *payload = g_malloc0(65536);
+	memset(payload, 0x7b, 65536);
+	for(int sequence = 0; sequence < 128; sequence++) {
+		json_t *header = json_pack("{s:i}", "sequence", sequence);
+		write_frame(header, payload, 65536);
+		json_decref(header);
+	}
+	g_free(payload);
+	g_atomic_int_set(&producer_done, 1);
+	return NULL;
+}
+
+static void output_burst_test(void) {
+	/* An 8 MiB receive burst must fit while browser output temporarily stalls. */
+	blocked_output sink = { .bytes = g_byte_array_new() };
+	FILE *original = stdout;
+	stdout = tmpfile(); assert(stdout);
+	blocked_sink = &sink; writer_hook = blocked_fd_write;
+	g_atomic_int_set(&producer_done, 0);
+	output_start();
+	GThread *producer = g_thread_new("burst-producer", enqueue_burst, NULL);
+	gint64 deadline = g_get_monotonic_time() + 2000000;
+	while(!g_atomic_int_get(&producer_done) && g_get_monotonic_time() < deadline) g_usleep(1000);
+	assert(g_atomic_int_get(&producer_done));
+	g_mutex_lock(&output_mutex);
+	assert(output_bytes >= 8 * 1024 * 1024 && output_bytes <= output_limit_bytes);
+	g_mutex_unlock(&output_mutex);
+	g_mutex_lock(&sink.mutex); sink.released = TRUE;
+	g_cond_broadcast(&sink.condition); g_mutex_unlock(&sink.mutex);
+	g_thread_join(producer); output_stop();
+	gsize offset = 0;
+	for(int sequence = 0; sequence < 128; sequence++) {
+		uint32_t length; memcpy(&length, sink.bytes->data + offset, 4); length = ntohl(length); offset += 4;
+		json_t *header = json_loadb((char *)sink.bytes->data + offset, length, 0, NULL);
+		assert(header && json_integer_value(json_object_get(header, "sequence")) == sequence);
+		json_decref(header); offset += length;
+		for(gsize index = 0; index < 65536; index++) assert(sink.bytes->data[offset + index] == 0x7b);
+		offset += 65536;
+	}
+	assert(offset == sink.bytes->len && output_bytes == 0);
+	writer_hook = NULL; blocked_sink = NULL; fclose(stdout); stdout = original;
+	g_byte_array_unref(sink.bytes); g_mutex_clear(&sink.mutex); g_cond_clear(&sink.condition);
 }
 
 static GByteArray *fault_bytes;
@@ -151,6 +199,7 @@ static void fatal_output_test(void) {
 }
 
 int main(void) {
+	output_burst_test();
 	bounded_output_test();
 	transient_output_test();
 	fatal_output_test();
@@ -160,6 +209,10 @@ int main(void) {
 	assert(cc == IMQUIC_CONGESTION_PRAGUE && ecn == IMQUIC_ECN_ECT1);
 	assert(parse_mode("reno", &cc, &ecn) == 0);
 	assert(cc == IMQUIC_CONGESTION_RENO && ecn == IMQUIC_ECN_NOT_ECT);
+	assert(parse_mode("reno-ect0", &cc, &ecn) == 0);
+	assert(cc == IMQUIC_CONGESTION_RENO && ecn == IMQUIC_ECN_ECT0);
+	assert(parse_mode("bbr", &cc, &ecn) == 0);
+	assert(cc == IMQUIC_CONGESTION_BBR && ecn == IMQUIC_ECN_ECT0);
 	assert(parse_mode("cubic", &cc, &ecn) < 0);
 	fetch_state fetch = { .request_id = 7, .update_id = 8, .tile_id = "tile",
 		.refinement = 2, .applied_priority = 48, .desired_priority = 28,

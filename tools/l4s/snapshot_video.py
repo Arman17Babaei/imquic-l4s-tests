@@ -8,6 +8,29 @@ from pathlib import Path
 import subprocess
 
 
+def sample_snapshot_manifest(manifest: Path, fps: float, source_fps: int) -> Path:
+    """Select a quality grid from complete video frames without copying pixels."""
+    record = json.loads(manifest.read_text())
+    if not isinstance(source_fps, int) or source_fps <= 0 or not math.isfinite(fps) or fps <= 0:
+        raise ValueError('quality sampling requires positive finite frame rates')
+    stride = source_fps / fps
+    if stride < 1 or not math.isclose(stride, round(stride), rel_tol=0, abs_tol=1e-9):
+        raise ValueError('ideal quality FPS must divide video FPS')
+    frames = record.get('frames', [])
+    if record.get('complete') is not True or len(frames) != record.get('expectedFrames', len(frames)):
+        raise ValueError('ideal quality sampling requires a complete capture')
+    selected = []
+    for index, frame in enumerate(frames[::round(stride)]):
+        if abs(frame['timestampMs'] - index * 1000 / fps) > 1e-6:
+            raise ValueError('quality sample does not lie on the exact frame grid')
+        selected.append(dict(frame, index=index, slot=index, nominalTimestampMs=index * 1000 / fps))
+    result = dict(record, requestedFps=fps, sourceCaptureFps=source_fps,
+                  expectedFrames=len(selected), capturedFrames=len(selected), missingSlots=[], frames=selected)
+    target = manifest.with_name('quality-frames.json')
+    target.write_text(json.dumps(result, indent=2) + '\n')
+    return target
+
+
 def snapshot_video_command(manifest: Path, output: Path, fps: int = 10) -> list[str]:
     if not isinstance(fps, int) or fps <= 0:
         raise ValueError('snapshot FPS must be a positive integer')

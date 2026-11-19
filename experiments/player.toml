@@ -3,13 +3,13 @@ version = 1
 output = "results/player-experiments"
 
 [defaults]
-scenes = ["bicycle", "train", "playroom"]
-bandwidth_mbps = 50
-delays_ms = [160, 320] # Total ONE-WAY propagation, not RTT.
-duration_seconds = 19 # 1x camera speed for the three original 19-second traces.
-path = "ideal" # "ideal": payload delivery; "qemu": scene + Cubic TCP + Prague TCP.
-controllers = ["prague"] # One scene stream; optional Reno uses the same network.
-reruns = 1 # Total repetitions per scene/delay/controller, including the first.
+scenes = ["bicycle", "drjohnson", "playroom", "room", "stump", "train", "treehill", "truck"]
+delays_ms = [0, 1, 5, 10, 50, 100, 500] # Total ONE-WAY propagation, not RTT.
+duration_seconds = 20 # Original ~60-second NTHU duration; normalize small recording-end differences.
+path = "ideal" # "ideal": deterministic offline IMQUIC; "qemu": scene + BBR TCP + Prague TCP.
+controllers = ["prague", "reno", "reno-ect0"] # ECT(1), Not-ECT, ECT(0); QEMU only; fixed backgrounds.
+dualpi2_coupling_factor = 2
+reruns = 5 # Total repetitions per scene/delay/controller, including the first; applies only to QEMU.
 on_failure = "continue" # Log failures and continue; exactly one attempt per item.
 max_retries = 0
 retry_exhausted = "continue" # "continue" or "stop".
@@ -18,13 +18,13 @@ failure_criterion = "quality" # "capture", "quality", or "all"; see docs.
 [capture]
 width = 960
 height = 540
-fps = 30
+fps = 5
 quality_fps = 5
 quality_backend = "cuda"
 gpu_mode = "hardware"
 headless = true
-start_after_first_object = true # Time 0: first successfully applied object; QEMU backgrounds are already warmed up.
-max_missing_snapshot_fraction = 0.05 # Accept up to 5% missing slots; keep their absence recorded.
+start_after_first_object = true # QEMU only: first applied object; ideal starts empty at its initial request.
+max_missing_snapshot_fraction = 0.05 # QEMU tolerance; ideal requires every frame.
 
 [runner]
 timeout_seconds = 900
@@ -32,9 +32,10 @@ attempt_timeout_seconds = 3000
 memory_limit_mib = 7168 # systemd user scope; 0 disables this limit.
 min_available_memory_gib = 4
 min_free_disk_gib = 5
-python = "results/venvs/3dgs/bin/python" # Existing CUDA/PyTorch environment.
+python = ".venvs/3dgs/bin/python" # Existing CUDA/PyTorch environment.
 
 [qemu]
+reuse_vm = true # One VM per batch; fresh processes and topology per case.
 base = "~/sandbox/p4/work.qcow2"
 runner = "tools/l4s/run_qemu_player.py"
 cpus = 7
@@ -46,33 +47,95 @@ enabled = true
 vmaf = true
 vmaf_backend = "cuda"
 plots = true
-vmaf_binary = "results/toolchains/vmaf-cuda-src/libvmaf/build/tools/vmaf"
-vmaf_model = "results/toolchains/vmaf-cuda-src/model/vmaf_v0.6.1.json"
+vmaf_binary = ".toolchains/vmaf-cuda-src/libvmaf/build/tools/vmaf"
+vmaf_model = ".toolchains/vmaf-cuda-src/model/vmaf_v0.6.1.json"
 
-# Existing local scene exports and matching traces. Replace paths as needed.
+# Train and Dr Johnson use the second saved trace; other scenes retain the first.
+# Selection seed: 12411750058326799050. Normalized traces retain native timing;
+# duration_seconds above controls playback retiming. Raw traces remain unchanged.
 [scenes.bicycle]
-manifest = "results/player-sh3-adaptive-16k-20261014/manifest-v2.json"
-trace = "results/thesis-scenes-19s-20261018/bicycle-trace-19s.json"
-[scenes.train]
-manifest = "results/scene-videos-20261018/train-scene/manifest-v2.json"
-trace = "results/thesis-scenes-19s-20261018/train-trace-19s.json"
+manifest = "data/scenes/bicycle-30000/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/bicycle/user4_bicycle.json
+trace = "data/traces/nthu-selected/user4_bicycle.json"
+
+[scenes.drjohnson]
+manifest = "data/scenes/drjohnson/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/drjohnson/user2_drjohnson.json
+trace = "data/traces/nthu-selected-150mbps/user2_drjohnson.json"
+
 [scenes.playroom]
-manifest = "results/scene-videos-20261018/playroom-scene/manifest-v2.json"
-trace = "results/thesis-scenes-19s-20261018/playroom-trace-19s.json"
+manifest = "data/scenes/playroom/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/playroom/user1_playroom.json
+trace = "data/traces/nthu-selected/user1_playroom.json"
+
+[scenes.room]
+manifest = "data/scenes/room/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/room/user2_room.json
+trace = "data/traces/nthu-selected/user2_room.json"
+
+[scenes.stump]
+manifest = "data/scenes/stump/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/stump/user10_stump.json
+trace = "data/traces/nthu-selected/user10_stump.json"
+
+[scenes.train]
+manifest = "data/scenes/train/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/train/user8_train.json
+trace = "data/traces/nthu-selected-150mbps/user8_train.json"
+
+[scenes.treehill]
+manifest = "data/scenes/treehill/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/treehill/user2_treehill.json
+trace = "data/traces/nthu-selected/user2_treehill.json"
+
+[scenes.truck]
+manifest = "data/scenes/truck/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/truck/user4_truck.json
+trace = "data/traces/nthu-selected/user4_truck.json"
 
 [[experiments]]
-name = "all-scenes-ideal-50mbps-1x"
+name = "selected-traces-ideal-10mbps-60s"
 path = "ideal"
-delays_ms = [320, 160] # Ideal runs higher delay first for each scene.
-reruns = 1
+bandwidth_mbps = 10
 
 [[experiments]]
-name = "all-scenes-qemu-50mbps-1x"
+name = "selected-traces-ideal-50mbps-60s"
+path = "ideal"
+bandwidth_mbps = 50
+
+[[experiments]]
+name = "selected-traces-ideal-100mbps-60s"
+path = "ideal"
+bandwidth_mbps = 100
+
+# Every QEMU case has one unlimited BBR TCP and one unlimited Prague TCP
+# background stream sharing the scene bottleneck.
+# QEMU: 30 ms base RTT = 15 ms total one-way = 5 ms per link per direction.
+# Scene Prague/Reno/Reno-ECT(0) selection does not change these two background streams.
+[[experiments]]
+name = "selected-traces-qemu-10mbps-20s-rtt30ms"
 path = "qemu"
-delays_ms = [10] # Total one-way propagation, identical for all three pairs.
-controllers = ["prague"]
-dualpi2_target_ms = 15
-dualpi2_update_ms = 16
-dualpi2_step_ms = 1
-dualpi2_coupling_factor = 1
-background_warmup_seconds = 4 # Starts after both receivers see TCP data.
+bandwidth_mbps = 10
+delays_ms = [15]
+
+[[experiments]]
+name = "selected-traces-qemu-50mbps-20s-rtt30ms"
+path = "qemu"
+bandwidth_mbps = 50
+delays_ms = [15]
+
+[[experiments]]
+name = "selected-traces-qemu-100mbps-20s-rtt30ms"
+path = "qemu"
+bandwidth_mbps = 100
+delays_ms = [15]
+
+# One diagnostic BBR sample; do not expand this into a replicated BBR suite.
+[[experiments]]
+name = "bicycle-qemu-bbr-50mbps-20s-rtt30ms"
+path = "qemu"
+bandwidth_mbps = 50
+scenes = ["bicycle"]
+controllers = ["bbr"] # BBR, ECT(0); same BBR + Prague backgrounds.
+delays_ms = [15]
+reruns = 1

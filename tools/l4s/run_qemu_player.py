@@ -317,6 +317,8 @@ def main():
         metavar="SOURCE=RELATIVE_DEST",
         help="copy a host input into the ephemeral guest checkout",
     )
+    parser.add_argument("--session-owner",type=Path,help="publish a suite-owned VM session")
+    parser.add_argument("--owner-pid",type=int,default=os.getppid())
     args = parser.parse_args()
 
     if not args.base.is_file():
@@ -345,6 +347,10 @@ def main():
         path = Path(value)
         if path.is_absolute() or ".." in path.parts or not path.parts:
             raise SystemExit(f"{label} must be a safe relative path")
+
+    if os.environ.get('IMQUIC_QEMU_SESSION') and not args.session_owner:
+        from qemu_session import run_case
+        return run_case(sys.modules[__name__],args,Path(os.environ['IMQUIC_QEMU_SESSION']))
 
     timestamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     destination = ROOT / args.destination_root / f"{args.destination_prefix}-{timestamp}"
@@ -447,6 +453,12 @@ def main():
                 f"{shlex.quote(str(Path(guest_root) / relative))}"
                 for staged_name, relative in staged_guest_files
             )
+            if args.session_owner:
+                from qemu_session import serve
+                stage=stage_runtime_script(guest_root,args.user,source_archive.name,
+                    gaussian_player_archive.name,source_provenance.name,install_guest_files)
+                ssh_command(port,args.user,args.password,stage,timeout=args.guest_timeout)
+                return serve(sys.modules[__name__],args,port,guest_root,cache_evidence,qemu)
             provision = stage_runtime_script(guest_root, args.user, source_archive.name,
                 gaussian_player_archive.name, source_provenance.name, install_guest_files) + f'''set -e
 make -C deps/imquic/src check

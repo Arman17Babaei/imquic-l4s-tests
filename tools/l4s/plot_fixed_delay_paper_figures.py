@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export one paper PDF per scene/metric from retained, unmodified observations.
 
-Run from the repository root with results/venvs/3dgs/bin/python.
+Run from the repository root with .venvs/3dgs/bin/python.
 LaTeX owns all scene headings, panel labels, captions, and panel positioning.
 """
 from __future__ import annotations

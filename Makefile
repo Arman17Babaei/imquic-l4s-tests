@@ -10,15 +10,22 @@ init:
 cpu-check:
 	node tools/l4s/check_cpu_prerequisites.mjs
 	cd $(CURDIR)/deps/gaussian-player && npm test && npm run build
-	python3 -m unittest tests.test_camera_priority_trace tests.test_camera_trace_player tests.test_experiment_metadata tests.test_player_workflow tests.test_priority_publisher_supervisor tests.test_tcp_forward tests.test_experiment_suite_topology tests.test_qemu_setup_cache tests.test_scene_experiment_plots tests.test_player_stalls tests.test_ideal_link tests.test_ideal_delivery tests.test_player_quality_partial tests.test_player_quality_cuda tests.test_snapshot_video tests.test_trace_reference
-	node --test tests/test_priority_ws_bridge.mjs tests/test_player_playback.mjs tests/test_player_capture.mjs tests/test_player_sources.mjs
+	python3 -m unittest tests.test_camera_priority_trace tests.test_camera_trace_player tests.test_experiment_metadata tests.test_player_workflow tests.test_priority_publisher_supervisor tests.test_tcp_forward tests.test_experiment_suite_topology tests.test_qemu_setup_cache tests.test_guest_cleanup tests.test_guest_signal_cleanup tests.test_qemu_session tests.test_scene_experiment_plots tests.test_player_stalls tests.test_ideal_link tests.test_ideal_delivery tests.test_player_quality_partial tests.test_player_quality_cuda tests.test_arrival_replay tests.test_replay_audit tests.test_network_capture_runner tests.test_snapshot_video tests.test_trace_reference tests.test_trace_reference_cache
+	node --test tests/test_priority_ws_bridge.mjs tests/test_player_playback.mjs tests/test_player_capture.mjs tests/test_player_sources.mjs tests/test_arrival_replay_playback.mjs tests/test_network_capture_client.mjs
 
 experiment-record-check:
 	python3 -m unittest discover -s tests -p 'test_experiment_metadata.py' -v
 
+.PHONY: ideal-player-check
+ideal-player-check: build-3dgs-priority-mvp-only
+	cd $(IMQUIC_DIR)/examples && $(MAKE) imquic-moq-relay
+	cd $(CURDIR)/deps/gaussian-player && npm run build
+	python3 -m unittest tests.test_ideal_imquic -v
+	node --test tests/test_ideal_playback.mjs
+
 .PHONY: experiment-suite-check
 experiment-suite-check:
-	python3 -m unittest tests.test_experiment_suite tests.test_experiment_suite_topology tests.test_experiment_suite_analysis tests.test_qemu_player_performance
+	python3 -m unittest tests.test_experiment_suite tests.test_experiment_suite_topology tests.test_experiment_suite_analysis tests.test_qemu_player_performance tests.test_guest_cleanup tests.test_guest_signal_cleanup tests.test_qemu_session
 
 build: init
 	cmake -S $(PICOQUIC_DIR) -B $(PICOQUIC_DIR)/build \
@@ -80,15 +87,19 @@ CAMERA_PLAYER_ADMISSION_DELAY_US ?= 0
 CAMERA_PLAYER_BOTTLENECK ?=
 CAMERA_PLAYER_TOPOLOGY_SCRIPT ?= tools/l4s/player_topology.py
 CAMERA_PLAYER_PERSISTENT ?= 0
+CAMERA_PLAYER_CAPTURE_TRACE ?=
+CAMERA_PLAYER_ADAPTER_ARCHIVE ?=
 l4s-camera-player-guest-check: build-3dgs-priority-mvp-only
 	@test -n "$(L4S_RESULT_DIR)" -a -n "$(CAMERA_PRIORITY_SCENE_ARCHIVE)"
 	@test -x "$(CAMERA_PRIORITY_NODE)"
 	mkdir -p $(CURDIR)/results/3dgs/camera-player-input
 	tar -xf "$(CAMERA_PRIORITY_SCENE_ARCHIVE)" -C $(CURDIR)/results/3dgs/camera-player-input
+	$(if $(CAMERA_PLAYER_ADAPTER_ARCHIVE),mkdir -p inputs/network-adapter && tar -xf "$(CAMERA_PLAYER_ADAPTER_ARCHIVE)" -C inputs/network-adapter,true)
 	CAMERA_PRIORITY_NODE="$(abspath $(CAMERA_PRIORITY_NODE))" python3 tools/l4s/run_camera_player_guest.py \
 		--manifest $(CURDIR)/results/3dgs/camera-player-input/manifest-v2.json \
 		--output "$(L4S_RESULT_DIR)" --transport-mode "$(CAMERA_PLAYER_MODE)" \
 		--duration "$(CAMERA_PLAYER_DURATION)" --origin "$(CAMERA_PLAYER_ORIGIN)" \
 		--admission-delay-us "$(CAMERA_PLAYER_ADMISSION_DELAY_US)" --bottleneck "$(CAMERA_PLAYER_BOTTLENECK)" \
 		--topology-script "$(CAMERA_PLAYER_TOPOLOGY_SCRIPT)" \
-		$(if $(filter 1,$(CAMERA_PLAYER_PERSISTENT)),--persistent,)
+		$(if $(filter 1,$(CAMERA_PLAYER_PERSISTENT)),--persistent,) \
+		$(if $(CAMERA_PLAYER_CAPTURE_TRACE),--network-capture-trace "$(CAMERA_PLAYER_CAPTURE_TRACE)" --network-capture-client inputs/network-adapter/dist-headless/network-capture-client.js,)

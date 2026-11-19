@@ -9,11 +9,12 @@ const MAX_BROWSER_BUFFER = 128 * 1024 * 1024;
 
 function argsOf(argv) {
     const out = { listen: 8787, relayHost: "127.0.0.1", relayPort: 4443,
-        native: "./priority_moq_sidecar", transportMode: "reno", objectWindow: 16, origins: [] };
+        native: "./priority_moq_sidecar", transportMode: "reno", objectWindow: 64, origins: [] };
     for (let i = 0; i < argv.length; i++) {
         if (argv[i] === "--listen") out.listen = Number(argv[++i]);
         else if (argv[i] === "--relay-host") out.relayHost = argv[++i];
         else if (argv[i] === "--relay-port") out.relayPort = Number(argv[++i]);
+        else if (argv[i] === "--replay-config") out.replayConfig = argv[++i];
         else if (argv[i] === "--ideal-config") out.idealConfig = argv[++i];
         else if (argv[i] === "--native") out.native = argv[++i];
         else if (argv[i] === "--transport-mode") out.transportMode = argv[++i];
@@ -25,7 +26,7 @@ function argsOf(argv) {
         else throw new Error(`unknown argument ${argv[i]}`);
     }
     if (!out.origins.length) out.origins = ["http://127.0.0.1:5173", "http://localhost:5173"];
-    if (out.transportMode !== "reno" && out.transportMode !== "prague") throw new Error("invalid transport mode");
+    if (!["reno", "prague", "reno-ect0", "bbr"].includes(out.transportMode)) throw new Error("invalid transport mode");
     if (!Number.isInteger(out.objectWindow) || out.objectWindow < 1 || out.objectWindow > 64) throw new Error("invalid object window");
     return out;
 }
@@ -46,6 +47,8 @@ function close(socket, code, reason) {
 }
 
 const options = argsOf(process.argv.slice(2));
+if (options.idealConfig && options.replayConfig) throw new Error("choose one offline backend");
+const offlineConfig = options.idealConfig ?? options.replayConfig;
 let server;
 let native = null;
 let client = null, nativeReady = false, nativeBytes = Buffer.alloc(0), browserBytes = Buffer.alloc(0);
@@ -59,7 +62,7 @@ let outstandingPayloads = [];
 let peakOutstandingObjects = 0, peakOutstandingBytes = 0, peakBrowserWriteBytes = 0, peakNativeBytes = 0;
 let windowFullSince = null, windowFullMs = 0;
 function bufferMetrics() {
-    return { type: "adapter-buffers", backend: options.idealConfig ? "ideal" : "moqt", client_started: Boolean(native), object_window: options.objectWindow,
+    return { type: "adapter-buffers", backend: options.replayConfig ? "replay" : options.idealConfig ? "ideal" : "moqt", client_started: Boolean(native), object_window: options.objectWindow,
         outstanding_objects: outstandingObjects, outstanding_payload_bytes: outstandingPayloads.reduce((a, b) => a + b, 0),
         native_parser_bytes: nativeBytes.length, native_readable_bytes: native?.stdout.readableLength ?? 0,
         native_paused: native?.stdout.isPaused() ?? false, browser_write_bytes: client?.writableLength ?? 0,
@@ -172,9 +175,9 @@ function startNative() {
     nativeCommands = []; outstandingObjects = 0; outstandingPayloads = [];
     peakOutstandingObjects = peakOutstandingBytes = peakBrowserWriteBytes = peakNativeBytes = 0;
     windowFullSince = null; windowFullMs = 0;
-    const executable = options.idealConfig ? (process.env.IDEAL_LINK_PYTHON ?? 'python3') : options.native;
-    const arguments_ = options.idealConfig
-        ? [fileURLToPath(new URL('./ideal_link.py', import.meta.url)), '--config', options.idealConfig]
+    const executable = offlineConfig ? (process.env.IDEAL_LINK_PYTHON ?? 'python3') : options.native;
+    const arguments_ = offlineConfig
+        ? [fileURLToPath(new URL(options.replayConfig ? './arrival_replay.py' : './ideal_link.py', import.meta.url)), '--config', offlineConfig]
         : [options.relayHost, String(options.relayPort), options.transportMode,
            ...(options.congestionOptions ? [options.congestionOptions] : [])];
     const child = spawn(executable, arguments_, { stdio: ["pipe", "pipe", "inherit"] });
@@ -254,7 +257,8 @@ function handleBrowserData(chunk) {
             if (outstandingObjects < options.objectWindow) native?.stdout.resume();
             continue;
         }
-        if (command.type !== "open" && command.type !== "priorities" && command.type !== "close") { close(client, 1008, "unsupported message type"); return; }
+        if (command.type !== "open" && command.type !== "priorities" && command.type !== "close" &&
+            !(offlineConfig && (command.type === "advance" || command.type === "horizon"))) { close(client, 1008, "unsupported message type"); return; }
         if (command.type === "close") {
             gracefulClosing = true;
             outstandingObjects = 0; outstandingPayloads = []; updateBufferPeaks();

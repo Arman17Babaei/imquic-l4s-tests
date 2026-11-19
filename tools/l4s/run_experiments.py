@@ -54,13 +54,14 @@ def build_command(case,cfg,attempt_dir,trace_path,topology_path=None):
     capture=cfg['capture'];qemu=cfg['qemu']
     command=[cfg['runner']['python'],str(Path(cfg['repo_root'])/'tools/l4s/run_camera_trace_player.py'),
              '--manifest',case['manifest'],'--trace',str(trace_path),'--output',str(attempt_dir),
+             '--reference-cache',str(Path(cfg['output'])/'references'),
              '--quality','--quality-fps',str(capture['quality_fps']),'--quality-camera-timestamps','fixed',
              '--quality-backend',capture['quality_backend'],'--gpu-mode',capture['gpu_mode'],
-             '--max-missing-snapshot-fraction',str(capture['max_missing_snapshot_fraction']),
+             '--max-missing-snapshot-fraction',str(capture['max_missing_snapshot_fraction'] if case['path']=='qemu' else 0),
              '--width',str(capture['width']),'--height',str(capture['height']),'--fps',str(capture['fps']),
              '--format','mp4','--no-dye','--fixed-horizon','--timeout-seconds',str(cfg['runner']['timeout_seconds'])]
     if capture['headless']:command.append('--headless')
-    if capture['start_after_first_object']:command.append('--start-after-first-object')
+    if case['path']=='qemu' and capture['start_after_first_object']:command.append('--start-after-first-object')
     if case['path']=='ideal':
         command += ['--transport','ideal','--ideal-bandwidth-mbps',str(case['bandwidth_mbps']),
                     '--ideal-data-delay-ms',str(case['delay_ms'])]
@@ -84,7 +85,7 @@ def make_plan(cfg):
                       'command':build_command(case,cfg,attempt,inputs/'trace.json',topology)})
     return dict(schema_version=1,config=cfg,items=items,execution_status='planned',status='NOT_RUN',
                 delay_semantics={'ideal':'data-only one-way propagation; controls immediate',
-                                 'qemu':'total one-way propagation for every pair; two access egresses each add half the delay'},
+                                 'qemu':'total one-way propagation for every pair; each of three links adds one third of the delay'},
                 topology_runtime_status='UNVERIFIED' if any(c['path']=='qemu' for c in items) else 'NOT_APPLICABLE')
 
 
@@ -100,6 +101,8 @@ def resources(cfg):
 
 
 def process_executor(cfg):
+    from qemu_session import SuiteSession
+    session=SuiteSession(cfg)
     def execute(command,log,timeout):
         invocation=list(command);unit=None
         if cfg['runner']['memory_limit_mib']:
@@ -107,11 +110,15 @@ def process_executor(cfg):
             unit=f'player-suite-{os.getpid()}-{time.monotonic_ns()}'
             invocation=['systemd-run','--user','--scope','--quiet',f'--unit={unit}',
                         '-p',f'MemoryMax={cfg["runner"]["memory_limit_mib"]}M','-p','MemorySwapMax=0',*invocation]
-        process=None
+        process=None;using_session=False
         try:
+            environment=dict(os.environ)
+            if '--network-path' in command and command[command.index('--network-path')+1]=='qemu' and cfg['qemu']['reuse_vm']:
+                using_session=True
+                environment.update(session.environment())
             with log.open('w') as stream:
                 process=subprocess.Popen(invocation,cwd=cfg['repo_root'],stdout=stream,stderr=subprocess.STDOUT,
-                                         start_new_session=True,env={**os.environ,'PYTHONUNBUFFERED':'1'})
+                                         start_new_session=True,env={**environment,'PYTHONUNBUFFERED':'1'})
                 return process.wait(timeout=timeout)
         except BaseException:
             # Terminate only this attempt's process group/scope, never unrelated experiments.
@@ -126,6 +133,9 @@ def process_executor(cfg):
                 except subprocess.TimeoutExpired:
                     os.killpg(process.pid,signal.SIGKILL);process.wait(timeout=15)
             raise
+        finally:
+            if using_session:session.reset()
+    execute.close=session.close
     return execute
 
 
@@ -176,7 +186,7 @@ def save(batch,ledger):
     if (batch/'analysis/README.md').is_file():
         lines.append('- [Automated analysis and plots](analysis/README.md)')
     lines += ['',
-              'Ideal delays apply to data only with immediate controls. QEMU uses two switches, a shared inter-switch HTB/DualPI2 bottleneck and 300 Mbps access links. Two unlimited TCP data streams (Cubic without ECN and Prague with ECN) share the scene path. All three pairs have the same configured total one-way propagation.', '',
+              'Ideal delays apply to data only with immediate controls. QEMU uses two switches, a shared inter-switch HTB/DualPI2 bottleneck and 300 Mbps access links. Two unlimited TCP data streams (BBR with classic ECN and Prague with Accurate ECN) share the scene path. All three pairs have the same configured total one-way propagation.', '',
               'Browser object prevalidation remains disabled as requested; workers prepare GSP2 objects. Offline quality is evaluated separately. Missing samples are never filled.']
     if ledger.get('analysis_error'):lines += ['',f'Analysis error: {ledger["analysis_error"]}']
     (batch/'README.md').write_text('\n'.join(lines)+'\n')
@@ -196,6 +206,8 @@ def run_batch(cfg,executor=None):
         str(path.relative_to(REPO)): sha(path)
         for path in (Path(__file__), REPO/'tools/l4s/experiment_suite_config.py',
                      REPO/'tools/l4s/experiment_suite_topology.py', REPO/'tools/l4s/player_topology.py',
+                     REPO/'tools/l4s/qemu_session.py', REPO/'tools/l4s/guest_cleanup.py',
+                     REPO/'tools/l4s/run_qemu_player.py', REPO/'tools/l4s/run_camera_player_guest.py',
                      REPO/'tools/l4s/experiment_suite_analysis.py')})
     ledger['execution_status']='running';ledger['started_unix']=time.time();save(batch,ledger)
     execute=executor or process_executor(cfg)
@@ -237,7 +249,13 @@ def run_batch(cfg,executor=None):
                     attempt.update(classify(directory,code,item['failure_criterion'],'interrupted'))
                     attempt['finished_unix']=time.time();ledger['execution_status']='interrupted';save(batch,ledger)
                     return ledger
-                except Exception as failure:error=f'{type(failure).__name__}: {failure}'
+                except Exception as failure:
+                    from qemu_session import ResetFailure
+                    if isinstance(failure,ResetFailure):
+                        attempt.update(classify(directory,code,item['failure_criterion'],str(failure)))
+                        attempt['finished_unix']=time.time()
+                        raise
+                    error=f'{type(failure).__name__}: {failure}'
                 attempt.update(classify(directory,code,item['failure_criterion'],error));attempt['finished_unix']=time.time()
                 # Failed launchers may not create their result directory.
                 directory.mkdir(parents=True,exist_ok=True)
@@ -252,6 +270,8 @@ def run_batch(cfg,executor=None):
         ledger['execution_status']='interrupted'
     except Exception as error:
         ledger['execution_status']='stopped';ledger['setup_error']=f'{type(error).__name__}: {error}'
+    finally:
+        if hasattr(execute,'close'):execute.close()
     ledger['finished_unix']=time.time();save(batch,ledger)
     if cfg['analysis']['enabled']:
         analyze(batch,ledger)
@@ -277,6 +297,8 @@ def analysis_failed(ledger):
 
 
 def main(argv=None):
+    def interrupted(signum,frame):raise KeyboardInterrupt()
+    signal.signal(signal.SIGTERM,interrupted)
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--config',type=Path)
     parser.add_argument('--output',help='new output directory; overrides TOML output')

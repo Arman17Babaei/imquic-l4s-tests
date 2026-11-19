@@ -51,7 +51,7 @@ static GCond output_space;
 static GQueue output_frames = G_QUEUE_INIT;
 static GThread *output_thread = NULL;
 static gsize output_bytes = 0, output_peak_bytes = 0;
-static gsize output_limit_bytes = 4 * 1024 * 1024;
+static gsize output_limit_bytes = 64 * 1024 * 1024;
 static gboolean output_closing = FALSE, output_failed = FALSE;
 static gint64 output_full_since = 0, output_full_us = 0;
 
@@ -182,6 +182,16 @@ static int parse_mode(const char *mode, imquic_congestion_controller *cc, imquic
 	if(!strcmp(mode, "prague")) {
 		*cc = IMQUIC_CONGESTION_PRAGUE;
 		*ecn = IMQUIC_ECN_ECT1;
+		return 0;
+	}
+	if(!strcmp(mode, "bbr")) {
+		*cc = IMQUIC_CONGESTION_BBR;
+		*ecn = IMQUIC_ECN_ECT0;
+		return 0;
+	}
+	if(!strcmp(mode, "reno-ect0")) {
+		*cc = IMQUIC_CONGESTION_RENO;
+		*ecn = IMQUIC_ECN_ECT0;
 		return 0;
 	}
 	if(!strcmp(mode, "reno")) {
@@ -576,7 +586,7 @@ static gpointer metrics_worker(gpointer user_data) {
 
 int main(int argc, char **argv) {
 	if(argc < 3 || argc > 5) {
-		fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT [reno|prague [CONGESTION_OPTIONS]]\n", argv[0]);
+		fprintf(stderr, "usage: %s RELAY_HOST RELAY_PORT [reno|reno-ect0|prague|bbr [CONGESTION_OPTIONS]]\n", argv[0]);
 		return 2;
 	}
 	imquic_congestion_controller cc;

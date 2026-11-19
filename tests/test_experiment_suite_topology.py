@@ -63,7 +63,7 @@ class SuiteTopologyTests(unittest.TestCase):
     def test_exactly_two_switches_and_three_pairs_share_the_inter_switch_link(self):
         module, (net, client, server, devices) = self.build()
         self.assertEqual(set(net.nodes), {'s1','s2','server','client',
-                                         'cubicsrc','cubicsink','praguesrc','praguesink'})
+                                         'bbrsrc','bbrsink','praguesrc','praguesink'})
         self.assertEqual(len(net.links), 7)
         self.assertIn(('s1','s2'), net.links)
         self.assertIn(('server','s1'), net.links)
@@ -75,6 +75,9 @@ class SuiteTopologyTests(unittest.TestCase):
         self.assertEqual(len(devices), 14)
         self.assertTrue(set(module.METRIC_ROLES).issubset(devices))
 
+    def test_default_coupling_is_three(self):
+        self.assertEqual(generated().DUALPI2_COUPLING_FACTOR,3)
+
     def test_host_names_fit_linux_interface_name_limit(self):
         _,(net,_,_,_)=self.build()
         for name in net.nodes:
@@ -84,9 +87,10 @@ class SuiteTopologyTests(unittest.TestCase):
         module, (_, _, _, devices) = self.build(bandwidth=25, delay=12,
             dualpi2_target_ms=10, dualpi2_update_ms=20, dualpi2_step_ms=2,
             dualpi2_coupling_factor=2)
+        physical=dict(devices)
         with patch.object(module.subprocess,'run'):
             module.configure_topology(devices, '55mbit')
-        for role, (node, dev) in devices.items():
+        for role, (node, dev) in physical.items():
             commands=[c for c in node.commands if dev in c]
             rate=next(c for c in commands if c[:3]==['tc','class','replace'])
             shared=role in ('s1_to_s2','s2_to_s1')
@@ -97,14 +101,39 @@ class SuiteTopologyTests(unittest.TestCase):
                 self.assertEqual(len(aqm),1)
                 self.assertEqual(aqm[0][-8:], ['coupling_factor','2','target','10ms','tupdate','20ms','step_thresh','2ms'])
                 self.assertEqual(delays,[])
+                delay_node,ifb=devices[role+'_ingress_delay']
+                self.assertIs(delay_node,node)
+                redirect=next(c for c in commands if 'mirred' in c)
+                self.assertEqual(redirect[-1],ifb)
+                netem=next(c for c in node.commands if ifb in c and 'netem' in c)
+                self.assertEqual(netem[netem.index('delay')+1],'4ms')
+                self.assertFalse(any('dualpi2' in c for c in node.commands if ifb in c))
             else:
                 self.assertEqual(aqm,[])
                 self.assertEqual(len(delays),1)
-                self.assertEqual(delays[0][delays[0].index('delay')+1],'6ms')
+                self.assertEqual(delays[0][delays[0].index('delay')+1],'4ms')
 
-    def test_backgrounds_are_one_unlimited_cubic_and_one_unlimited_prague(self):
+    def test_shared_delay_devices_are_cleaned_up_after_partial_configuration(self):
+        module,(_,_,_,devices)=self.build()
+        original=module.run_command
+        def command(node,cmd):
+            if cmd[:5]==['ip','link','set','dev','ifb-s1']:
+                raise RuntimeError('failed to bring up IFB')
+            return original(node,cmd)
+        with patch.object(module.subprocess,'run'), patch.object(module,'run_command',side_effect=command):
+            with self.assertRaisesRegex(RuntimeError,'bring up IFB'):
+                module.configure_topology(devices)
+        node,_=devices['s1_to_s2']
+        module.cleanup_topology(devices)
+        self.assertIn(['ip','link','delete','ifb-s1'],node.commands)
+        self.assertNotIn('s1_to_s2_ingress_delay',devices)
+        self.assertNotIn('s2_to_s1_ingress_delay',devices)
+        module.cleanup_topology(devices)  # Already released; no second deletion.
+        self.assertEqual(node.commands.count(['ip','link','delete','ifb-s1']),1)
+
+    def test_backgrounds_are_one_unlimited_bbr_and_one_unlimited_prague(self):
         module=generated()
-        self.assertEqual([p['cc'] for p in module.background_pairs()], ['cubic','prague'])
+        self.assertEqual([p['cc'] for p in module.background_pairs()], ['bbr','prague'])
         for pair in module.background_pairs():
             command=module.background_command(pair)
             self.assertEqual(command[command.index('-C')+1],pair['cc'])
@@ -112,16 +141,17 @@ class SuiteTopologyTests(unittest.TestCase):
                 self.assertNotIn(forbidden,command)
         self.assertEqual(module.DUALPI2_STEP_MS,1)
 
-    def test_ecn_is_enabled_only_for_prague_endpoints_and_algorithms_are_explicit(self):
+    def test_background_ecn_and_algorithms_are_explicit(self):
         module,(_,_,_,devices)=self.build()
         with patch.object(module.subprocess,'run') as run:
             module.configure_topology(devices)
         self.assertIn(unittest.mock.call(['modprobe','tcp_prague'],check=True),run.call_args_list)
+        self.assertIn(unittest.mock.call(['modprobe','tcp_bbr'],check=True),run.call_args_list)
         for pair in module.background_pairs():
             for role in (pair['source_role'],pair['sink_role']):
                 node,_=devices[role]
                 self.assertIn(['sysctl','-w',f"net.ipv4.tcp_congestion_control={pair['cc']}"],node.commands)
-                self.assertIn(['sysctl','-w',f"net.ipv4.tcp_ecn={3 if pair['cc']=='prague' else 0}"],node.commands)
+                self.assertIn(['sysctl','-w',f"net.ipv4.tcp_ecn={3 if pair['cc']=='prague' else 1}"],node.commands)
 
     def test_invalid_parameters_fail_before_source_is_generated(self):
         for name in ('bandwidth','delay','dualpi2_target_ms','dualpi2_update_ms',
@@ -138,7 +168,7 @@ class SuiteTopologyTests(unittest.TestCase):
         module,(_,_,_,devices)=self.build()
         def state(pair, ecn=True):
             return ''.join(f"0 0 10.0.0.3:{port} {pair['destination']}:{pair['port']}\n "
-                           f"{pair['cc']} {'ecn' if ecn and pair['cc']=='prague' else ''} bytes_sent:20000\n"
+                           f"{pair['cc']} {'ecn' if ecn and pair['tcp_ecn']>0 else ''} bytes_sent:20000\n"
                            for port in (30000,30001))
         def command(node, cmd):
             pair=next(p for p in module.background_pairs() if str(p['port'])==cmd[-1])
@@ -210,8 +240,8 @@ class SuiteTopologyTests(unittest.TestCase):
             config=json.loads((Path(tmp)/'background-config.json').read_text())
             self.assertEqual(config['status'],'PASS')
             self.assertEqual(config['rate'],'unlimited')
-            self.assertEqual([p['cc'] for p in config['pairs']],['cubic','prague'])
-            self.assertEqual([p['tcp_ecn'] for p in config['pairs']],[0,3])
+            self.assertEqual([p['cc'] for p in config['pairs']],['bbr','prague'])
+            self.assertEqual([p['tcp_ecn'] for p in config['pairs']],[1,3])
             for p,h in result:p.terminate();h.close()
         spawned.clear()
         with tempfile.TemporaryDirectory() as tmp, patch.object(module.time,'sleep'), \
@@ -238,7 +268,7 @@ class SuiteTopologyTests(unittest.TestCase):
             self.assertIn('pacing_interval=1/4000',module.os.environ['CAMERA_PLAYER_SUBSCRIBER_CONGESTION_OPTIONS'])
             profile=json.loads((Path(tmp)/'performance-profile.json').read_text())
             self.assertEqual(profile['dualpi2_step_ms'],2)
-            self.assertEqual(profile['dualpi2_coupling_factor'],1)
+            self.assertEqual(profile['dualpi2_coupling_factor'],3)
 
     def test_source_is_standalone_and_guest_command_failure_surfaces(self):
         module=generated(performance_mode=True)

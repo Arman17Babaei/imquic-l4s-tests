@@ -14,3 +14,7 @@ presentation figures/
 
 # Generated transport diagnostics belong under results/.
 *.qlog
+
+# Persistent local dependencies are separate from disposable experiment outputs.
+/.venvs/
+/.toolchains/

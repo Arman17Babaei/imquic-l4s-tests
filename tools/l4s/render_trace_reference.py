@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
+import math
 from pathlib import Path
 import socket
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from urllib.parse import urlencode
 from urllib.request import urlopen
@@ -53,6 +56,72 @@ def snapshot_player_ui(dist: Path, target: Path) -> None:
     target.mkdir()
     shutil.copy2(dist / 'index.html', target / 'index.html')
     shutil.copytree(dist / 'assets', target / 'assets')
+
+
+def cached_trace_reference(*, cache_root: Path, manifest: Path, trace: Path, dist: Path,
+                           fps: int, width: int, height: int, gpu_mode: str,
+                           headless: bool, timeout_seconds: float) -> Path:
+    """Publish a complete trace reference once; candidate captures never define it."""
+    from compare_player_sequence import load_frames, snapshot_coverage
+
+    cache_root = cache_root.resolve()
+    if not cache_root.is_relative_to(ROOT / 'results'):
+        raise ValueError('reference cache must be under repository results/')
+    provenance = input_provenance(manifest, trace)
+    # Input locations vary per attempt; only contents and render settings matter.
+    identity = {'version': 1, 'manifest': provenance['manifest']['sha256'],
+                'trace': provenance['trace']['sha256'], 'assets': provenance['assets'],
+                'fps': fps, 'viewport': [width, height], 'gpu_mode': gpu_mode, 'headless': headless,
+                'player': {str(path.relative_to(dist)): sha256(path)
+                           for path in [dist / 'index.html', *sorted((dist / 'assets').rglob('*'))]
+                           if path.is_file()},
+                'renderer': {name: sha256(ROOT / 'tools/l4s' / name) for name in (
+                    'render_trace_reference.py', 'camera_trace_browser_runner.mjs',
+                    'player_quality.mjs', 'camera_trace_player_server.py')}}
+    key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    cache_root.mkdir(parents=True, exist_ok=True)
+    entry = cache_root / key
+
+    def validate(directory):
+        summary = json.loads((directory / 'reference-summary.json').read_text())
+        frames_path = directory / 'reference-frames/frames.json'
+        frames = load_frames(frames_path)
+        record = json.loads(frames_path.read_text())
+        expected = math.ceil(json.loads(trace.read_text())[-1]['timestamp_ms'] * fps / 1000)
+        if (not summary.get('complete') or not snapshot_coverage(record)['accepted'] or
+                len(frames) != expected or
+                summary.get('appliedGaussians') != json.loads(manifest.read_text())['scene']['gaussian_count'] or
+                any(abs(frame['timestampMs'] - index * 1000 / fps) > 1e-6
+                    for index, frame in enumerate(frames))):
+            raise ValueError(f'incomplete trace reference cache: {directory}')
+        for name in ('reference.mp4', 'reference-telemetry.json'):
+            if not (directory / name).is_file():
+                raise ValueError(f'missing cached reference artifact: {directory / name}')
+
+    # Concurrent runners sharing a cache must never publish two renders of one key.
+    with (cache_root / (key + '.lock')).open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if entry.exists():
+            if json.loads((entry / 'cache-identity.json').read_text()) != identity:
+                raise ValueError(f'reference cache identity mismatch: {entry}')
+            validate(entry)
+            print(f'REFERENCE cache hit: {entry}', flush=True)
+            return entry
+        # Failed staging directories retain logs, but cannot count as cache hits.
+        staging = Path(tempfile.mkdtemp(prefix=key + '.pending-', dir=cache_root)) / 'render'
+        command = ['--manifest', str(manifest), '--trace', str(trace), '--dist', str(dist),
+                   '--output', str(staging), '--fps', str(fps), '--width', str(width),
+                   '--height', str(height), '--gpu-mode', gpu_mode,
+                   '--timeout-seconds', str(timeout_seconds)]
+        if headless:
+            command.append('--headless')
+        print(f'REFERENCE render: {entry}', flush=True)
+        main(command)
+        validate(staging)
+        (staging / 'cache-identity.json').write_text(json.dumps(identity, indent=2) + '\n')
+        staging.rename(entry)
+        staging.parent.rmdir()
+        return entry
 
 
 def main(argv: list[str] | None = None) -> None:

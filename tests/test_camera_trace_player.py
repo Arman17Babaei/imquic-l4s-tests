@@ -46,6 +46,11 @@ def write_manifest(root: Path) -> Path:
 
 
 class CameraTracePlayerTest(unittest.TestCase):
+    def test_reno_ect0_transport_mode_is_accepted(self):
+        args=RUNNER.parse_args(['--manifest','unused','--trace','unused','--output','results/unused',
+                                '--transport-mode','reno-ect0'])
+        self.assertEqual(args.transport_mode,'reno-ect0')
+
     def test_failure_before_time_zero_has_no_measurement_window(self):
         self.assertEqual(RUNNER.measurement_window({'startedUnixMs':None,'nominalDurationMs':19000}),(None,None))
         self.assertEqual(RUNNER.measurement_window({'startedUnixMs':1000,'nominalDurationMs':19000}),(1000,20000))
@@ -55,33 +60,23 @@ class CameraTracePlayerTest(unittest.TestCase):
         self.assertFalse(RUNNER.quality_allows_success(True,None))
         self.assertTrue(RUNNER.quality_allows_success(True,{'status':'PASS','snapshot_coverage':{'complete':False,'accepted':True}}))
         self.assertTrue(RUNNER.quality_allows_success(False,None))
-    def test_worker_buffer_options_and_control_measurement_window(self):
-        base = ['--manifest', 'unused', '--trace', 'unused', '--output', 'results/unused', '--transport', 'ideal']
-        args = RUNNER.parse_args(base + ['--receipt-thread', 'worker', '--playback-delay-ms', '4000'])
-        self.assertEqual(args.receipt_thread, 'worker')
-        self.assertEqual(args.playback_delay_ms, 4000)
-        self.assertEqual(RUNNER.measurement_window({'startedUnixMs': 5000, 'controlStartedUnixMs': 1000,
-            'nominalDurationMs': 6000, 'playbackDelayMs': 4000}), (1000, 7000))
-        for extra in (['--playback-delay-ms', '4000'],
-                      ['--receipt-thread', 'worker', '--playback-delay-ms', '4000', '--start-after-first-object'],
-                      ['--receipt-thread', 'worker', '--playback-delay-ms', '-1']):
-            with self.assertRaises(SystemExit):
-                RUNNER.parse_args(base + extra)
+    def test_removed_ideal_buffer_option_is_rejected(self):
+        base = ['--manifest','unused','--trace','unused','--output','results/unused','--transport','ideal']
+        with self.assertRaises(SystemExit): RUNNER.parse_args(base + ['--playback-delay-ms','4000'])
+        self.assertEqual(RUNNER.measurement_window({'startedUnixMs':5000,'controlStartedUnixMs':1000,
+            'nominalDurationMs':6000,'playbackDelayMs':4000}), (1000,7000))  # Historical evidence.
 
-    def test_buffered_capture_uses_one_png_per_trace_grid_frame(self):
-        base = ['--manifest', 'unused', '--trace', 'unused', '--output', 'results/unused',
-                '--transport', 'ideal', '--receipt-thread', 'worker', '--playback-delay-ms', '4000']
-        args = RUNNER.parse_args(base)
-        self.assertEqual(args.quality_fps, 10)
-        self.assertEqual(args.quality_camera_timestamps, 'fixed')
-        self.assertEqual(args.fps, 10)
-        for extra in (['--quality-fps', '5'], ['--fps', '30']):
-            with self.assertRaises(SystemExit):
-                RUNNER.parse_args(base + extra)
+    def test_offline_ideal_requires_every_frame_and_divisible_quality_grid(self):
+        base = ['--manifest','unused','--trace','unused','--output','results/unused','--transport','ideal']
+        args = RUNNER.parse_args(base + ['--fps','30','--quality-fps','5','--max-missing-snapshot-fraction','.05'])
+        self.assertEqual((args.fps,args.quality_fps,args.max_missing_snapshot_fraction), (30,5,0))
+        self.assertEqual(args.quality_camera_timestamps,'fixed')
+        for extra in (['--quality-fps','7'], ['--start-after-first-object'], ['--start-after-base']):
+            with self.assertRaises(SystemExit): RUNNER.parse_args(base + extra)
 
     def test_first_object_start_and_snapshot_tolerance_options(self):
         args=RUNNER.parse_args(['--manifest','unused','--trace','unused','--output','results/unused',
-            '--transport','ideal','--start-after-first-object','--max-missing-snapshot-fraction','0.05'])
+            '--transport','moqt','--start-after-first-object','--max-missing-snapshot-fraction','0.05'])
         self.assertTrue(args.start_after_first_object)
         self.assertEqual(args.max_missing_snapshot_fraction,.05)
         with self.assertRaises(SystemExit):
@@ -99,6 +94,17 @@ class CameraTracePlayerTest(unittest.TestCase):
             '--output', 'results/unused', '--transport', 'moqt', '--network-path', 'qemu',
             '--quality', '--quality-camera-timestamps', 'fixed'])
         self.assertEqual(args.quality_camera_timestamps, 'fixed')
+
+    def test_reference_cache_requires_fixed_trace_grid_and_divisible_fps(self):
+        base = ['--manifest', 'unused', '--trace', 'unused', '--output', 'results/unused',
+                '--reference-cache', 'results/references', '--transport', 'moqt', '--fps', '10']
+        args = RUNNER.parse_args(base + ['--quality', '--quality-camera-timestamps', 'fixed',
+                                        '--quality-fps', '5'])
+        self.assertEqual(args.reference_cache, Path('results/references'))
+        for options in ([], ['--quality'], ['--quality', '--quality-camera-timestamps', 'fixed',
+                                           '--quality-fps', '7']):
+            with self.subTest(options=options), self.assertRaises(SystemExit):
+                RUNNER.parse_args(base + options)
 
     def test_completed_qemu_result_uses_success_log_not_historical_name_matches(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -228,9 +234,11 @@ class CameraTracePlayerTest(unittest.TestCase):
             root = Path(directory)
             dist = root / "dist"; dist.mkdir()
             (dist / "index.html").write_text("player", encoding="utf-8")
+            (dist / "manifest-v2.json").write_text('{"wrongScene":true}', encoding="utf-8")
             manifest = write_manifest(root)
             trace = root / "trace.json"; trace.write_text("[]", encoding="utf-8")
             routes = SERVER.route_map(dist, manifest, trace)
+            self.assertEqual(routes['/manifest-v2.json'], manifest)
             server = ThreadingHTTPServer(("127.0.0.1", 0), SERVER.handler_for(routes))
             thread = threading.Thread(target=server.serve_forever); thread.start()
             try:

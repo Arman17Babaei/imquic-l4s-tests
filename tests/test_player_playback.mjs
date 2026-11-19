@@ -48,7 +48,7 @@ function object(id, layer = 0) {
     return Buffer.concat([header, payload]);
 }
 
-for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateReady = false, fixedHorizon = false, startAfterFirstObject = false, buffered = false, injectFailure = false] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false], [false, true, true, true], [false, true, true, true, true], [false, true, true, false, true], [false, true, false, false, false, true], [false, true, false, false, true, true], [false, true, false, false, false, false, true], [false, true, false, false, false, true, true], [false, true, false, false, true, true, false, true], [false, true, false, false, true, true, false, true, true]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled}, base buffering: ${startAfterBase}, late ready: ${lateReady}, fixed horizon: ${fixedHorizon}, first object: ${startAfterFirstObject}, buffered: ${buffered}, failure: ${injectFailure})`, { timeout: 60000 }, async () => {
+for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateReady = false, fixedHorizon = false, startAfterFirstObject = false] of [[false, true, true], [true, true, true], [true, false, true], [true, false, false], [false, true, true, true], [false, true, true, true, true], [false, true, true, false, true], [false, true, false, false, false, true], [false, true, false, false, true, true], [false, true, false, false, false, false, true], [false, true, false, false, false, true, true]]) test(`MoQ loading (Play: ${playRequired}, autoplay: ${autoplay}, dye: ${dyeEnabled}, base buffering: ${startAfterBase}, late ready: ${lateReady}, fixed horizon: ${fixedHorizon}, first object: ${startAfterFirstObject})`, { timeout: 60000 }, async () => {
     const resultFile = path.join(artifacts, `play-${playRequired}-auto-${autoplay}-dye-${dyeEnabled}.json`);
     fs.rmSync(resultFile, { force: true });
     const objects = [object(0), object(1)], combined = Buffer.concat(objects);
@@ -71,7 +71,7 @@ for (const [playRequired, autoplay, dyeEnabled, startAfterBase = false, lateRead
             objects: [{ id: 0, offset: 0, bytes: enhancement.length, gaussian_count: 1,
                 publisher_priority: 0, sha256: hash(enhancement) }] });
     }
-    const trace = [0, buffered ? 900 : startAfterFirstObject ? 600 : 100].map(timestamp_ms => ({ timestamp_ms, camera_position: [0, 0, 0],
+    const trace = [0, startAfterFirstObject ? 600 : 100].map(timestamp_ms => ({ timestamp_ms, camera_position: [0, 0, 0],
         camera_forward: [0, 0, -1], camera_up: [0, 1, 0], yaw_degrees: 0, fov: 60, aspect_ratio: 16 / 9 }));
     const server = http.createServer((request, response) => {
         const pathname = new URL(request.url, 'http://localhost').pathname;
@@ -111,7 +111,6 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     const message = JSON.parse(line);
     if (message.type === 'open') {
         openedAt = Date.now();
-        if (${injectFailure}) setTimeout(() => emit({ wire: 'control', message: { type: 'error', message: 'fixture transport failure' } }), 700);
         setTimeout(() => emit({ wire: 'control', message: { type: 'fetch-opened', tile_id: 'tile0', refinement: 0, request_id: 1, initial_priority: 0 } }), 200);
         objects.forEach((payload, id) => setTimeout(() => {
             if (id === 1) lastObjectAt = Date.now();
@@ -121,7 +120,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             setTimeout(() => emit({ wire: 'control', message: { type: 'fetch-opened', tile_id: 'tile0',
                 refinement: 1, request_id: 3, initial_priority: 255 } }), 2500);
             setTimeout(() => emit({ wire: 'object', tile_id: 'tile0', refinement: 1, object_id: 0,
-                request_id: 3, payload_bytes: ${enhancement.length} }, Buffer.from('${enhancement.toString('base64')}', 'base64')), ${buffered ? 450 : 2750});
+                request_id: 3, payload_bytes: ${enhancement.length} }, Buffer.from('${enhancement.toString('base64')}', 'base64')), 2750);
         }
     } else if (message.type === 'close') {
         if (${fixedHorizon}) {
@@ -151,8 +150,6 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         browser = await chromium.launch({ headless: true,
             args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
         const page = await browser.newPage({ viewport: { width: 640, height: 360 } });
-        const gridCapture = buffered && !injectFailure ? await installRenderLoopCapture(page,
-            path.join(temporary, 'grid-frames'), 10, 'fixed') : null;
         await page.addInitScript(() => {
             window.__workerTerminations = 0;
             const BrowserWorker = window.Worker;
@@ -169,73 +166,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         const requests = [], sockets = [];
         page.on('request', request => requests.push(new URL(request.url()).pathname));
         page.on('websocket', socket => sockets.push(socket.url()));
-        await page.goto(`http://127.0.0.1:${port}/?transport=${buffered ? "ideal" : "moqt"}&receiptThread=${buffered ? "worker" : "main"}&playbackDelayMs=${buffered ? 4000 : 0}&sidecar=ws://127.0.0.1:${bridgePort}&trace=/trace.json&autoplay=${Number(autoplay)}&overlays=${autoplay ? 0 : 1}&dye=${Number(dyeEnabled)}&play=${Number(playRequired)}&startAfterBase=${Number(startAfterBase)}&fixedHorizon=${Number(fixedHorizon)}&startAfterFirstObject=${Number(startAfterFirstObject)}&record=${Number(startAfterFirstObject)}`);
-        if (buffered) {
-            await page.waitForFunction(() => window.__priorityMoqMvp?.trace.requestsStartedAtMs !== null);
-            await page.evaluate(() => { const until = performance.now() + 600; while (performance.now() < until) {} });
-            const waiting = await page.evaluate(() => window.__priorityMoqMvp);
-            if (injectFailure) {
-                await page.waitForFunction(() => window.__priorityMoqMvp?.failure);
-                const failed = await page.evaluate(() => window.__priorityMoqMvp);
-                assert.match(failed.failure, /fixture transport failure/);
-                assert.equal(failed.trace.state, 'failed');
-                assert.equal(failed.playback.queuedObjects, 0);
-                assert.equal(failed.playback.queuedBytes, 0);
-                assert.ok(failed.events.some(event => event.type === 'buffer-discarded'));
-                assert.ok(await page.evaluate(() => window.__workerTerminations) >= failed.objectProcessing.workerCount + 1,
-                    'transport failure must terminate receipt and decoder workers');
-                return;
-            }
-            assert.equal(waiting.appliedGaussians, 0, 'nothing displayed before scheduled release');
-            assert.equal(waiting.trace.state, 'buffering');
-            assert.equal(waiting.recording.state, 'disabled');
-            await page.waitForFunction(() => window.__priorityMoqMvp?.trace.state === 'complete', null, { timeout: 15000 });
-            const state = await page.evaluate(() => window.__priorityMoqMvp);
-            assert.equal(state.failure, null);
-            const snapshots = await captureRenderLoop(page, gridCapture, 5000);
-            assert.equal(snapshots.complete, true, JSON.stringify(snapshots.errors));
-            assert.deepEqual(snapshots.frames.map(frame => frame.timestampMs), [0,100,200,300,400,500,600,700,800]);
-            assert.deepEqual(state.events.filter(event => event.type === 'render-frame').map(event => event.timestampMs),
-                [0,100,200,300,400,500,600,700,800]);
-            assert.equal(snapshots.frames[0].appliedGaussians, 0, 'trace time zero starts empty in both sequences');
-            assert.equal(snapshots.frames.find(frame => frame.timestampMs === 200).appliedGaussians, 0);
-            assert.equal(snapshots.frames.find(frame => frame.timestampMs === 300).appliedGaussians, 1,
-                '250ms object first appears at its 300ms trace frame');
-            assert.equal(state.appliedGaussians, 1, 'transport close must preserve the queued pre-horizon object');
-            const received = state.events.find(e => e.type === 'object' && e.refinement === 0);
-            const applied = state.events.find(e => e.type === 'object-applied' && e.refinement === 0);
-            assert.equal(applied.frameTimestampMs, 300);
-            assert.equal(state.events.some(e => e.type === 'object-applied' && e.refinement === 1), false,
-                'dependency-held enhancement is not applied');
-            assert.ok(received.timestampMs - received.receivedAtMs > 100, 'worker receives while main thread is blocked');
-            assert.ok(state.trace.startedAtMs - state.trace.controlStartedAtMs >= 4000 - .01);
-            assert.ok(state.events.findIndex(e => e.type === 'audit-complete') < state.events.indexOf(applied),
-                'transport audit can finish before queued application');
-            assert.equal(state.events.some(e => e.type === 'object-playback'), false);
-            assert.equal('latenessMs' in state.events.find(e => e.type === 'render-frame'), false);
-            // The complete-scene reference uses the same nominal grid and independent camera-trace zero.
-            const referencePage = await browser.newPage({ viewport: { width: 640, height: 360 } });
-            await referencePage.goto(`http://127.0.0.1:${port}/?transport=http&trace=/trace.json&fixedFrame=1&overlays=0&record=0`);
-            const traceFile = path.join(temporary, 'trace.json'); fs.writeFileSync(traceFile, JSON.stringify(trace));
-            const referenceDirectory = path.join(temporary, 'reference-grid');
-            await renderReference(referencePage, null, traceFile, referenceDirectory, 10000, { traceGrid: true, fps: 10 });
-            const references = JSON.parse(fs.readFileSync(path.join(referenceDirectory, 'frames.json')));
-            assert.deepEqual(references.frames.map(frame => frame.timestampMs), snapshots.frames.map(frame => frame.timestampMs));
-            for (let index = 0; index < references.frames.length; index++) {
-                assert.equal(references.frames[index].appliedGaussians, 3);
-                assert.deepEqual(references.frames[index].cameraPose, snapshots.frames[index].cameraPose);
-            }
-            const comparison = await runProcess('python3', ['tools/l4s/compare_player_sequence.py',
-                '--candidate', path.join(gridCapture.directory, 'frames.json'),
-                '--reference', path.join(referenceDirectory, 'frames.json'), '--output', path.join(temporary, 'grid-quality'), '--backend', 'cpu']);
-            assert.equal(comparison.code, 0, comparison.log);
-            const encoded = await runProcess('python3', ['-c',
-                'from pathlib import Path; import sys; from tools.l4s.snapshot_video import encode_snapshot_video; encode_snapshot_video(Path(sys.argv[1]),Path(sys.argv[2]))',
-                path.join(gridCapture.directory, 'frames.json'), path.join(temporary, 'grid-video.mp4')]);
-            assert.equal(encoded.code, 0, encoded.log);
-            await referencePage.close();
-            return;
-        }
+        await page.goto(`http://127.0.0.1:${port}/?transport=moqt&receiptThread=main&sidecar=ws://127.0.0.1:${bridgePort}&trace=/trace.json&autoplay=${Number(autoplay)}&overlays=${autoplay ? 0 : 1}&dye=${Number(dyeEnabled)}&play=${Number(playRequired)}&startAfterBase=${Number(startAfterBase)}&fixedHorizon=${Number(fixedHorizon)}&startAfterFirstObject=${Number(startAfterFirstObject)}&record=${Number(startAfterFirstObject)}`);
         if (startAfterFirstObject) {
             await page.waitForFunction(() => window.__priorityMoqMvp?.trace.requestsStartedAtMs !== null);
             const waiting = await page.evaluate(() => window.__priorityMoqMvp);

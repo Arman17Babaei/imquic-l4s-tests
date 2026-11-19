@@ -65,6 +65,32 @@ class ToleratedComparisonTest(unittest.TestCase):
             self.assertEqual(len((root / 'quality/frame-quality.csv').read_text().splitlines()), 95)
 
 
+    def test_complete_trace_reference_can_cover_missing_candidate_slots(self):
+        from unittest.mock import patch
+        with tempfile.TemporaryDirectory(dir='results') as temporary:
+            root = Path(temporary)
+            (root / 'image.png').write_bytes(b'fixture; mocked metrics')
+            pose = dict(viewMatrix=[1], position=[0, 0, 0], up=[0, 1, 0], fov=50, aspect=1)
+            frames = [dict(index=i, slot=i, file='image.png', timestampMs=i * 200,
+                           appliedGaussians=0, cameraPose=pose) for i in range(20)]
+            candidate, reference = root / 'candidate.json', root / 'reference.json'
+            available = [dict(frame, index=i) for i, frame in enumerate(frames) if i != 7]
+            available = [dict(frame, index=i) for i, frame in enumerate(available)]
+            candidate.write_text(json.dumps(dict(complete=False, expectedFrames=20,
+                                                missingSlots=[7], frames=available)))
+            reference.write_text(json.dumps(dict(complete=True, expectedFrames=20, frames=frames)))
+            values = {i: 1.0 for i in range(19)}
+            with patch('compare_player_sequence.cuda_metrics', return_value=(values, values, {})) as metrics:
+                result = compare_sequence(candidate, reference, root / 'quality',
+                                          backend='cuda', max_missing_fraction=.05)
+                self.assertEqual([f['timestampMs'] for f in metrics.call_args.args[1]],
+                                 [f['timestampMs'] for f in available])
+            self.assertEqual(result['status'], 'PASS')
+            self.assertEqual(result['frames'], 19)
+            self.assertEqual(result['snapshot_coverage']['missing_frames'], 1)
+            self.assertEqual(result['reference_snapshot_coverage']['available_frames'], 20)
+
+
 class SnapshotCoverageTest(unittest.TestCase):
     def coverage(self, available, **extra):
         from compare_player_sequence import snapshot_coverage

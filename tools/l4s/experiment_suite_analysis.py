@@ -93,7 +93,9 @@ def common_poses(series: list[dict]):
 def frame_pairs(directory: Path):
     manifests = []
     for kind in ('candidate', 'reference'):
-        manifest_path = directory / f'{kind}-frames/frames.json'
+        manifest_path = directory / f'{kind}-frames/quality-frames.json'
+        if not manifest_path.is_file():
+            manifest_path = directory / f'{kind}-frames/frames.json'
         manifest = read_json(manifest_path, {})
         frames = {}
         for frame in manifest.get('frames', []):
@@ -133,18 +135,20 @@ def browser_bins(telemetry: dict, duration: float):
     start = number(trace.get('startedAtMs'))
     if start is None or duration <= 0:
         return []
+    offline = telemetry.get('deliveryModel') == 'offline-imquic-v1'
     rows = [{'seconds': i, 'duration_seconds': min(1.0, duration - i), 'payload_bytes': 0,
+             'modeled_arrival_events': 0,
              'receipt_timestamp_events': 0, 'legacy_completion_timestamp_events': 0}
             for i in range(math.ceil(duration))]
     for event in telemetry.get('events', []):
         receipt = number(event.get('receivedAtMs'))
-        timestamp = receipt if receipt is not None else number(event.get('timestampMs'))
+        timestamp = number(event.get('ideal_arrival_ms')) if offline else receipt if receipt is not None else number(event.get('timestampMs'))
         payload = number(event.get('payload_bytes'))
         if event.get('type') == 'object' and timestamp is not None and payload is not None:
             seconds = (timestamp - start) / 1000
             if 0 <= seconds < duration:
                 rows[int(seconds)]['payload_bytes'] += payload
-                field = 'receipt_timestamp_events' if receipt is not None else 'legacy_completion_timestamp_events'
+                field = 'modeled_arrival_events' if offline else 'receipt_timestamp_events' if receipt is not None else 'legacy_completion_timestamp_events'
                 rows[int(seconds)][field] += 1
     for row in rows:
         row['browser_payload_mbps'] = row['payload_bytes'] * 8 / row['duration_seconds'] / 1e6
@@ -155,7 +159,9 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
     run = {key: item.get(key) for key in (
         'id', 'scene', 'bandwidth_mbps', 'delay_ms', 'duration_seconds', 'path', 'controller',
         'switches', 'rerun', 'experiment_index', 'selected_attempt', 'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode',
-        'background_profile','dualpi2_target_ms','dualpi2_update_ms','dualpi2_step_ms','dualpi2_coupling_factor')}
+        'background_profile','dualpi2_target_ms','dualpi2_update_ms','dualpi2_step_ms','dualpi2_coupling_factor','delivery_model')}
+    if run['path'] == 'ideal' and run['delivery_model'] is None:
+        run['delivery_model'] = 'live-ideal-legacy'
     run.update(status='BLOCKED', quality_frames=0, mean_ssim=None, mean_browser_payload_mbps=None,
                capture_status=None, quality_status=None)
     quality, bins, pairs = [], [], {}
@@ -188,12 +194,15 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
         bins = browser_bins(telemetry, float(item['duration_seconds']))
         receipt_count = sum(row['receipt_timestamp_events'] for row in bins)
         legacy_count = sum(row['legacy_completion_timestamp_events'] for row in bins)
+        modeled_count = sum(row['modeled_arrival_events'] for row in bins)
         run['browser_payload_timestamp_basis'] = (
+            'ideal_arrival_ms simulated payload arrival' if telemetry.get('deliveryModel') == 'offline-imquic-v1' else
             'receivedAtMs with legacy timestampMs completion fallback' if receipt_count and legacy_count else
             'receivedAtMs browser receipt' if receipt_count else
             'legacy timestampMs processing completion fallback' if legacy_count else 'no timed object events')
         run['browser_payload_receipt_events'] = receipt_count
         run['browser_payload_legacy_completion_events'] = legacy_count
+        run['browser_payload_modeled_arrival_events'] = modeled_count
         run['quality_frames'] = len(quality)
         values = [row['rgb_ssim'] for row in quality if row.get('rgb_ssim') is not None]
         run['mean_ssim'] = statistics.mean(values) if values else None
@@ -218,7 +227,7 @@ def load_run(batch: Path, item: dict, index: int, out: Path):
                   ['frame', 'timestamp_ms', 'rgb_ssim', 'psnr_db', 'applied_gaussians', 'applied_fraction'])
         write_csv(out / f'run-{index:04d}-browser-payload.csv', bins,
                   ['seconds', 'duration_seconds', 'payload_bytes', 'browser_payload_mbps',
-                   'receipt_timestamp_events', 'legacy_completion_timestamp_events'])
+                   'receipt_timestamp_events', 'legacy_completion_timestamp_events', 'modeled_arrival_events'])
     except (OSError, ValueError, KeyError, TypeError) as error:
         run['error'] = str(error)
         run['status'] = 'PARTIAL' if quality else 'BLOCKED'
@@ -385,10 +394,14 @@ def quality_differences(members: list):
     """Signed within-repeat pairs, including explicit unavailable planned members."""
     differences = []
     delays = sorted({member[0]['delay_ms'] for member in members}, reverse=True)
-    conditions = ([('prague', 'reno', 'Prague − Reno')]
-                  if members[0][0]['path'] == 'qemu' else
-                  [(high, low, f'{high:g} ms − {low:g} ms')
-                   for index, high in enumerate(delays) for low in delays[index + 1:]])
+    if members[0][0]['path'] == 'qemu':
+        conditions = [('prague', 'reno', 'Prague − Reno')]
+        if any(member[0]['controller'] == 'reno-ect0' for member in members):
+            conditions += [('prague', 'reno-ect0', 'Prague − Reno ECT(0)'),
+                           ('reno-ect0', 'reno', 'Reno ECT(0) − Reno')]
+    else:
+        conditions = [(high, low, f'{high:g} ms − {low:g} ms')
+                      for index, high in enumerate(delays) for low in delays[index + 1:]]
     field = 'controller' if members[0][0]['path'] == 'qemu' else 'delay_ms'
     for rerun in sorted({member[0]['rerun'] for member in members}):
         for high, low, label in conditions:
@@ -482,20 +495,25 @@ def plot_group(out: Path, name: str, group: dict, members: list):
     first = members[0][0]
     background_label=(f"{first['switches']} TCP {first.get('background_cc')} backgrounds, each targeting {first['bandwidth_mbps']} Mbps"
                       if first.get('background') else 'no background traffic')
-    if first.get('background_profile')=='cubic-prague-unlimited':
-        background_label='Unlimited TCP Cubic + Prague, shared inter-switch DualPI2'
+    if first.get('background_profile') in ('cubic-prague-unlimited','bbr-prague-unlimited'):
+        classic_cc='BBR' if first['background_profile']=='bbr-prague-unlimited' else 'Cubic'
+        background_label=f'Unlimited TCP {classic_cc} + Prague, shared inter-switch DualPI2'
         background_label += (f"; target {first.get('dualpi2_target_ms')} ms, update {first.get('dualpi2_update_ms')} ms, "
                              f"step {first.get('dualpi2_step_ms')} ms, coupling {first.get('dualpi2_coupling_factor')}")
     if first.get('background') and first.get('background_link_delay_ms'):
         background_label += f", +{first['background_link_delay_ms']:g} ms per dedicated link each direction"
     delay_unit = 'ms/link' if first.get('qemu_delay_mode')=='per-link' and first['path']=='qemu' else 'ms'
     delay_label = ', '.join(f'{delay:g}' for delay in sorted({run['delay_ms'] for run, *_ in members}, reverse=True))
-    axes[0].set_title(f"{first['scene']}, {first['bandwidth_mbps']} Mbps, {first['path']}, {delay_label} {delay_unit}, "
+    model_label = (f"ideal ({first.get('delivery_model', 'live-ideal-legacy')})"
+                   if first['path'] == 'ideal' else first['path'])
+    axes[0].set_title(f"{first['scene']}, {first['bandwidth_mbps']} Mbps, {model_label}, {delay_label} {delay_unit}, "
                       f"{first['switches']} switches, {first['duration_seconds']} s\n"
                       f"{background_label}\n"
                       f"{group['common_pose_count']} exact shared poses; analysis {group['status']}; "
                       f"{len(members)} runs; " + ', '.join(sorted({run['status'] for run, *_ in members})))
-    axes[-1].set_xlabel('Camera timestamp (s); payload: receivedAtMs, legacy timestampMs fallback')
+    axes[-1].set_xlabel('Camera timestamp (s); payload: simulated arrivals'
+        if first.get('delivery_model') == 'offline-imquic-v1' else
+        'Camera timestamp (s); payload: receivedAtMs, legacy timestampMs fallback')
     axes[-1].set_xlim(0, float(first['duration_seconds']))
     fig.tight_layout()
     for suffix in ('png', 'pdf'):
@@ -520,7 +538,7 @@ def analyze_batch(batch: Path, ledger: dict, settings: dict) -> dict:
         run = record[0]
         key_values = [run.get(field) for field in (
             'scene', 'bandwidth_mbps', 'duration_seconds', 'path', 'switches', 'experiment_index',
-            'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode')]
+            'background', 'background_cc', 'background_warmup_seconds', 'background_link_delay_ms', 'qemu_delay_mode', 'delivery_model')]
         if run['path'] == 'qemu':
             key_values.extend(run.get(field) for field in ('delay_ms','background_profile',
                 'dualpi2_target_ms','dualpi2_update_ms','dualpi2_step_ms','dualpi2_coupling_factor'))

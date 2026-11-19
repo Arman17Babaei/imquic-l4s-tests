@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import csv
 import hashlib
 import json
@@ -155,7 +156,17 @@ def compare_sequence(candidate: Path, reference: Path, output: Path, *, backend:
     if coverage['structural_errors'] or reference_coverage['structural_errors']:
         raise ValueError('; '.join(coverage['structural_errors'] + reference_coverage['structural_errors']))
     if len(candidates) != len(references):
-        raise ValueError('candidate/reference frame counts differ')
+        if not allow_partial or len(candidates) > len(references):
+            raise ValueError('candidate/reference frame counts differ')
+        # A shared full trace reference includes slots the best-effort capture missed.
+        timestamps = [frame['timestampMs'] for frame in references]
+        aligned = []
+        for frame in candidates:
+            index = bisect_left(timestamps, frame['timestampMs'] - 1e-6)
+            if index == len(references) or abs(timestamps[index] - frame['timestampMs']) > 1e-6:
+                raise ValueError('candidate/reference timestamps differ')
+            aligned.append(references[index])
+        references = aligned
     for got, expected in zip(candidates, references):
         if abs(got['timestampMs'] - expected['timestampMs']) > 1e-6:
             raise ValueError('candidate/reference timestamps differ')

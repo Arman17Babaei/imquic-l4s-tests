@@ -17,6 +17,7 @@ import threading
 from pathlib import Path
 
 from experiment_metadata import capture_mininet_state, write_experiment_record
+from guest_cleanup import Ownership, process_record, stop_record
 ROOT = Path(__file__).resolve().parents[2]
 BRIDGE = ROOT / 'tools/l4s/priority_ws_bridge.mjs'
 NODE = os.environ.get('CAMERA_PRIORITY_NODE', 'node')
@@ -36,11 +37,20 @@ def load_topology(path: Path):
 
 
 def stop(process):
-    if process.poll() is None:
-        process.send_signal(signal.SIGTERM)
-        try: process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            process.kill(); process.wait()
+    record=process_record(process.pid,group=True)
+    if record and record['pgid']==process.pid:
+        stop_record(record)
+    elif process.poll() is None:
+        process.terminate()
+    try:process.wait(timeout=5)
+    except subprocess.TimeoutExpired:process.kill();process.wait()
+
+
+def install_signal_handlers():
+    def interrupted(signum, frame):
+        raise KeyboardInterrupt(f'guest interrupted by signal {signum}')
+    signal.signal(signal.SIGTERM,interrupted)
+    signal.signal(signal.SIGINT,interrupted)
 
 
 def wait_path(path, processes, timeout):
@@ -149,18 +159,23 @@ def write_tc(output, phase, devices):
 
 
 def main():
+    install_signal_handlers()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--manifest', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
-    parser.add_argument('--transport-mode', choices=('prague', 'reno'), required=True)
+    parser.add_argument('--transport-mode', choices=('prague', 'reno', 'reno-ect0', 'bbr'), required=True)
     parser.add_argument('--duration', type=float, default=600)
     parser.add_argument('--origin', default='')
     parser.add_argument('--admission-delay-us', type=int, default=0)
     parser.add_argument('--bottleneck', default=None, help='Optional override of the topology script rate')
     parser.add_argument('--topology-script', type=Path, default=ROOT / 'tools/l4s/player_topology.py')
     parser.add_argument('--persistent', action='store_true')
+    parser.add_argument('--network-capture-trace', type=Path)
+    parser.add_argument('--network-capture-client', type=Path)
     parser.add_argument('--admission-queue-bytes', type=int, default=262144)
     args = parser.parse_args()
+    if bool(args.network_capture_trace) != bool(args.network_capture_client):
+        parser.error('network capture requires both trace and client')
     if not 65536 <= args.admission_queue_bytes <= 2097152:
         parser.error('--admission-queue-bytes must be in 65536..2097152')
     args.output.mkdir(parents=True, exist_ok=False)
@@ -169,6 +184,8 @@ def main():
     if hasattr(topology, 'set_output'):
         topology.set_output(args.output)
     net, client, server, devices = topology.build_topology()
+    ownership=Ownership(Path(os.environ.get('CAMERA_PLAYER_OWNERSHIP',args.output/'ownership.json')),net.hosts)
+    topology.PROCESS_STARTED=lambda process:ownership.add(process.pid)
     processes, handles = [], []
     background = []
     sampler = None
@@ -177,11 +194,12 @@ def main():
             command = topology.process_command(node, name, command)
         if node is None:
             handle = (args.output / f'{name}.log').open('wb')
-            process = subprocess.Popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env)
+            process = subprocess.Popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env,start_new_session=True)
         else:
             handle = (args.output / f'{name}.log').open('wb')
             process = node.popen(command, cwd=ROOT, stdout=handle, stderr=subprocess.STDOUT, env=env)
         processes.append(process); handles.append(handle)
+        ownership.add(process.pid)
         if hasattr(topology, 'process_started'):
             topology.process_started(name, process)
         return process
@@ -253,12 +271,20 @@ def main():
                  'IMQUIC_STREAM_RECEIVE_WINDOW_BYTES': '1048576'})
         proxy = launch(None, 'proxy', [sys.executable, str(ROOT / 'tools/l4s/tcp_forward.py'),
             '--listen', '0.0.0.0:7790', '--target', '127.0.0.1:8787', '--network-pid', str(client.pid)])
+        collector = None
+        if args.network_capture_trace:
+            collector = launch(client, 'network-capture', [NODE, '--experimental-websocket',
+                str(args.network_capture_client.resolve()), '--manifest', str(args.manifest.resolve()),
+                '--trace', str(args.network_capture_trace.resolve()), '--sidecar', 'ws://127.0.0.1:8787',
+                '--output', str((args.output/'network-capture').resolve())])
         deadline = time.monotonic() + args.duration
         next_priority_check = 0
         while time.monotonic() < deadline and bridge.poll() is None:
             if hasattr(topology, 'validate_processes') and time.monotonic() >= next_priority_check:
                 topology.validate_processes()
                 next_priority_check = time.monotonic() + 1
+            if collector is not None and collector.poll() not in (None, 0):
+                raise RuntimeError('headless network collector failed; see network-capture.log')
             if sampler:
                 sampler.check()
             if any(process.poll() is not None for process, _ in background):
@@ -268,6 +294,8 @@ def main():
             time.sleep(.2)
         if bridge.poll() is None: raise TimeoutError('browser did not close its MoQ audit before deadline')
         if bridge.returncode: raise RuntimeError(f'bridge failed: {bridge.returncode}')
+        if collector is not None and collector.wait(timeout=10):
+            raise RuntimeError('headless collector failed after bridge close')
         background_connections = {}
         if hasattr(topology, 'assert_background'):
             background_connections = topology.assert_background(devices)
@@ -278,14 +306,17 @@ def main():
             sampler.check()
         (args.output / 'guest-summary.json').write_text(json.dumps({'status': 'PASS',
             'controller': args.transport_mode, 'audit_closed': True,
+            'network_only_capture': bool(args.network_capture_trace),
             'background_active_at_completion': bool(background),
             'background_connections_at_completion': background_connections,
             'completion_unix_ns': time.time_ns(),
             'completion_monotonic_ns': time.monotonic_ns()}, indent=2) + '\n')
-    except Exception as error:
+    except BaseException as error:
         (args.output / 'failure.txt').write_text(f'{type(error).__name__}: {error}\n')
         raise
     finally:
+        signal.signal(signal.SIGTERM,signal.SIG_IGN)
+        signal.signal(signal.SIGINT,signal.SIG_IGN)
         try:
             if sampler:
                 sampler.stop()
@@ -295,7 +326,11 @@ def main():
                 for process in reversed(processes): stop(process)
             finally:
                 for handle in handles: handle.close()
-                net.stop()
+                try:
+                    if hasattr(topology, 'cleanup_topology'):
+                        topology.cleanup_topology(devices)
+                finally:
+                    net.stop()
 
 
 if __name__ == '__main__':

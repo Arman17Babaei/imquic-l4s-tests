@@ -1,0 +1,100 @@
+# Paths resolve relative to the repository root. Python 3.11+.
+version = 1
+output = "results/bicycle-bbr-50mbps-rtt30ms-20261118/batch"
+
+[defaults]
+scenes = ["bicycle"]
+delays_ms = [15] # 30 ms base RTT; 5 ms per link per direction across 3 links.
+duration_seconds = 20 # Original ~60-second NTHU duration; normalize small recording-end differences.
+path = "qemu" # IMQUIC scene + unlimited BBR TCP + unlimited Prague TCP.
+controllers = ["bbr"] # BBR/Not-ECT; both backgrounds remain enabled.
+dualpi2_coupling_factor = 2
+reruns = 1 # One diagnostic BBR sample; not replicated evidence.
+on_failure = "continue" # Log failures and continue; exactly one attempt per item.
+max_retries = 0
+retry_exhausted = "continue" # "continue" or "stop".
+failure_criterion = "quality" # "capture", "quality", or "all"; see docs.
+
+[capture]
+width = 960
+height = 540
+fps = 5
+quality_fps = 5
+quality_backend = "cuda"
+gpu_mode = "hardware"
+headless = true
+start_after_first_object = true # QEMU only: first applied object; ideal starts empty at its initial request.
+max_missing_snapshot_fraction = 0.05 # QEMU tolerance; ideal requires every frame.
+
+[runner]
+timeout_seconds = 900
+attempt_timeout_seconds = 3000
+memory_limit_mib = 7168 # systemd user scope; 0 disables this limit.
+min_available_memory_gib = 4
+min_free_disk_gib = 5
+python = ".venvs/3dgs/bin/python" # Existing CUDA/PyTorch environment.
+
+[qemu]
+reuse_vm = true # One VM per batch; fresh processes and topology per case.
+base = "~/sandbox/p4/work.qcow2"
+runner = "tools/l4s/run_qemu_player.py"
+cpus = 7
+memory_mib = 2048
+performance_mode = false # Optional: Seven pinned vCPUs, host performance power profile, guest priorities/offloads and 250 us Prague pacing.
+
+[analysis]
+enabled = true
+vmaf = true
+vmaf_backend = "cuda"
+plots = true
+vmaf_binary = ".toolchains/vmaf-cuda-src/libvmaf/build/tools/vmaf"
+vmaf_model = ".toolchains/vmaf-cuda-src/model/vmaf_v0.6.1.json"
+
+# One trace per scene: first entry from the saved five-per-scene selection.
+# Selection seed: 12411750058326799050. Normalized traces retain native timing;
+# duration_seconds above controls playback retiming. Raw traces remain unchanged.
+[scenes.bicycle]
+manifest = "data/scenes/bicycle-30000/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/bicycle/user4_bicycle.json
+trace = "data/traces/nthu-selected/user4_bicycle.json"
+
+[scenes.drjohnson]
+manifest = "data/scenes/drjohnson/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/drjohnson/user1_drjohnson.json
+trace = "data/traces/nthu-selected/user1_drjohnson.json"
+
+[scenes.playroom]
+manifest = "data/scenes/playroom/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/playroom/user1_playroom.json
+trace = "data/traces/nthu-selected/user1_playroom.json"
+
+[scenes.room]
+manifest = "data/scenes/room/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/room/user2_room.json
+trace = "data/traces/nthu-selected/user2_room.json"
+
+[scenes.stump]
+manifest = "data/scenes/stump/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/stump/user10_stump.json
+trace = "data/traces/nthu-selected/user10_stump.json"
+
+[scenes.train]
+manifest = "data/scenes/train/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/train/user7_train.json
+trace = "data/traces/nthu-selected/user7_train.json"
+
+[scenes.treehill]
+manifest = "data/scenes/treehill/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/treehill/user2_treehill.json
+trace = "data/traces/nthu-selected/user2_treehill.json"
+
+[scenes.truck]
+manifest = "data/scenes/truck/manifest-v2.json"
+# Raw selection: data/datasets/nthu/selected-5-per-scene/traces/truck/user4_truck.json
+trace = "data/traces/nthu-selected/user4_truck.json"
+
+[[experiments]]
+name = "bicycle-bbr-qemu-50mbps-20s-rtt30ms"
+path = "qemu"
+bandwidth_mbps = 50
+delays_ms = [15]

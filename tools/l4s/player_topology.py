@@ -1,4 +1,4 @@
-"""Two-switch scene testbed with unlimited Cubic and Prague TCP competition.
+"""Two-switch scene testbed with unlimited BBR and Prague TCP competition.
 
 Edit these constants for direct runs. The experiment suite copies this source
 and overrides the same constants, preserving a standalone guest topology.
@@ -17,21 +17,21 @@ PROPAGATION_DELAY_MS = 40
 DUALPI2_TARGET_MS = 15
 DUALPI2_UPDATE_MS = 16
 DUALPI2_STEP_MS = 1
-DUALPI2_COUPLING_FACTOR = 1
+DUALPI2_COUPLING_FACTOR = 3
 BACKGROUND_WARMUP_SECONDS = 4
 PERFORMANCE_MODE = False
 OUTPUT = None
 
 
 def background_pairs():
-    return [dict(index=i, cc=cc, tcp_ecn=3 if cc == 'prague' else 0, source=f'{cc}src', sink=f'{cc}sink',
+    return [dict(index=i, cc=cc, tcp_ecn=3 if cc == 'prague' else 1, source=f'{cc}src', sink=f'{cc}sink',
                  source_role=f'{cc}src_to_s1', sink_role=f'{cc}sink_to_s2',
                  destination=f'10.0.0.{2*i+2}', port=5200+i, shared_role='s1_to_s2')
-            for i, cc in enumerate(('cubic', 'prague'), 1)]
+            for i, cc in enumerate(('bbr', 'prague'), 1)]
 
 
 METRIC_ROLES = ('s1_to_s2', 's2_to_s1', 'server_to_s1', 'client_to_s2',
-                'cubicsrc_to_s1', 'cubicsink_to_s2',
+                'bbrsrc_to_s1', 'bbrsink_to_s2',
                 'praguesrc_to_s1', 'praguesink_to_s2')
 
 
@@ -70,14 +70,28 @@ def shaping_commands(device: str, *, shared: bool, rate: str | None = None):
          'htb', 'rate', (rate or BOTTLENECK) if shared else '300mbit',
          'burst', '512k', 'cburst', '512k'],
     ]
-    # Both access links contribute half the one-way propagation. Their netem
-    # queues are physically separate from the inter-switch dropping AQM.
+    # Each of the three links contributes one third of the one-way delay.
+    # Shared-link delay uses ingress IFBs, separate from its dropping AQM.
     leaf = (['dualpi2', 'coupling_factor', str(DUALPI2_COUPLING_FACTOR),
              'target', f'{DUALPI2_TARGET_MS:g}ms', 'tupdate', f'{DUALPI2_UPDATE_MS:g}ms',
              'step_thresh', f'{DUALPI2_STEP_MS:g}ms'] if shared else
-            ['netem', 'delay', f'{PROPAGATION_DELAY_MS/2:g}ms', 'limit', '100000'])
+            ['netem', 'delay', f'{PROPAGATION_DELAY_MS/3:g}ms', 'limit', '100000'])
     return commands + [['tc', 'qdisc', 'replace', 'dev', device, 'parent', '10:1',
                         'handle', '20:', *leaf]]
+
+
+def shared_delay_commands(device: str, ifb: str):
+    return [
+        ['ip', 'link', 'add', ifb, 'type', 'ifb'],
+        ['ip', 'link', 'set', 'dev', ifb, 'up'],
+        ['ethtool', '-K', ifb, 'gro', 'off', 'gso', 'off', 'tso', 'off'],
+        ['tc', 'qdisc', 'replace', 'dev', ifb, 'root', 'netem',
+         'delay', f'{PROPAGATION_DELAY_MS/3:g}ms', 'limit', '100000'],
+        ['tc', 'qdisc', 'replace', 'dev', device, 'handle', 'ffff:', 'ingress'],
+        ['tc', 'filter', 'replace', 'dev', device, 'parent', 'ffff:',
+         'protocol', 'all', 'pref', '1', 'u32', 'match', 'u32', '0', '0',
+         'action', 'mirred', 'egress', 'redirect', 'dev', ifb],
+    ]
 
 
 def run_command(node, command):
@@ -89,22 +103,37 @@ def run_command(node, command):
 
 
 def configure_topology(devices, rate: str | None = None):
-    for module in ('sch_dualpi2', 'tcp_cubic', 'tcp_prague'):
+    for module in ('sch_dualpi2', 'tcp_bbr', 'tcp_prague', 'ifb'):
         subprocess.run(['modprobe', module], check=True)
     for role, (node, device) in devices.items():
         # Avoid batching bypassing queue accounting, for both scene and TCP.
         run_command(node, ['ethtool', '-K', device, 'gro', 'off', 'gso', 'off', 'tso', 'off'])
         for command in shaping_commands(device, shared=role in ('s1_to_s2', 's2_to_s1'), rate=rate):
             run_command(node, command)
+    for role, ifb in (('s1_to_s2', 'ifb-s1'), ('s2_to_s1', 'ifb-s2')):
+        node, device = devices[role]
+        commands = shared_delay_commands(device, ifb)
+        run_command(node, commands[0])
+        devices[role+'_ingress_delay'] = (node, ifb)
+        for command in commands[1:]:
+            run_command(node, command)
     for pair in background_pairs():
         for role in (pair['source_role'], pair['sink_role']):
             node, _ = devices[role]
             # The experiment's Prague kernel uses 3 to request Accurate ECN.
-            # Check negotiated socket state at startup rather than assuming it.
+            # BBR uses classic ECN (1); check actual negotiation at startup.
             run_command(node, ['sysctl', '-w', f"net.ipv4.tcp_ecn={pair['tcp_ecn']}"])
             run_command(node, ['sysctl', '-w', f"net.ipv4.tcp_congestion_control={pair['cc']}"])
     if PERFORMANCE_MODE:
         configure_performance()
+
+
+def cleanup_topology(devices):
+    for role in ('s1_to_s2_ingress_delay', 's2_to_s1_ingress_delay'):
+        if role in devices:
+            node, ifb = devices[role]
+            run_command(node, ['ip', 'link', 'delete', ifb])
+            del devices[role]
 
 
 def process_command(node, name, command):
@@ -162,7 +191,7 @@ def assert_background(devices):
             raise RuntimeError(f"background {pair['cc']} lacks its single TCP data connection: {state}")
         if any(not re.match(rf"{pair['cc']}\b", detail) for detail in details):
             raise RuntimeError(f"background did not retain requested {pair['cc']} algorithm: {state}")
-        if pair['cc'] == 'prague':
+        if pair['tcp_ecn'] > 0:
             def counter(detail, name):
                 match = re.search(rf'\b{name}:(\d+)', detail)
                 return int(match[1]) if match else 0
@@ -171,7 +200,7 @@ def assert_background(devices):
             # Nonzero CE feedback is direct evidence that ECN is operating;
             # merely requesting tcp_ecn=3 or seeing a control socket is not.
             if not re.search(r'\becn\b', data) and counter(data, 'delivered_ce') == 0:
-                raise RuntimeError(f'Prague background lacks negotiated ECN or observed CE feedback: {state}')
+                raise RuntimeError(f"{pair['cc']} background lacks negotiated ECN or observed CE feedback: {state}")
         connections[str(pair['port'])] = state.strip()
     return connections
 
@@ -207,6 +236,8 @@ def start_background(devices, output: Path):
                     handle.close()
                     raise
                 processes.append((process, handle))
+                callback=globals().get('PROCESS_STARTED')
+                if callback:callback(process)
                 records.append(dict(name=name, node=node.name, pid=process.pid, command=command))
             if server:
                 time.sleep(.2)

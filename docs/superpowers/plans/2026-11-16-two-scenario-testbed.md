@@ -1,5 +1,10 @@
 # Two-scenario Testbed Implementation Plan
 
+> Design revision, 2026-11-16: the ideal scenario in the linked spec now requires
+> deterministic offline rendering. The completed tasks and execution evidence
+> below describe the earlier implementation; they do not establish completion
+> of the revised ideal path. Its implementation plan remains to be written.
+
 > **For agentic workers:** Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** Keep ideal delivery and a two-switch QEMU scene path with unlimited Cubic and Prague TCP competition.
@@ -14,7 +19,7 @@
 
 - Exactly two switches; both TCP backgrounds share s1 → s2 with the scene.
 - One unlimited data stream per TCP background; no rate or parallel-flow options.
-- Separate propagation from dropping AQM; defaults target 15ms/update 16ms/step 1ms/coupling 1.
+- Separate propagation from dropping AQM; defaults target 15ms/update 16ms/step 1ms/coupling 3.
 - Preserve experiment evidence and submodules; commit locally as requested in the follow-up, without pushing.
 - Execute in this checkout on a local branch to retain existing dependencies and results.
 
@@ -29,7 +34,7 @@
 ### Task 1: Shared topology
 
 Files: `tools/l4s/player_topology.py`, `tools/l4s/experiment_suite_topology.py`, `tests/test_experiment_suite_topology.py`.
-Interface: `topology_source(bandwidth_mbps, delay_ms, *, dualpi2_target_ms=15, dualpi2_update_ms=16, dualpi2_step_ms=1, dualpi2_coupling_factor=1, background_warmup_seconds=4, performance_mode=False) -> str`.
+Interface: `topology_source(bandwidth_mbps, delay_ms, *, dualpi2_target_ms=15, dualpi2_update_ms=16, dualpi2_step_ms=1, dualpi2_coupling_factor=3, background_warmup_seconds=4, performance_mode=False) -> str`.
 
 - [x] Write failing tests for exact graph, bottleneck, delay, mixed unlimited commands, ECN, readiness and cleanup.
 - [x] Inspect guest TCP Prague requirements and implement one reusable standalone topology.
@@ -53,10 +58,8 @@ Files: Makefile, README, docs/player-experiments.md, experiments/player.toml; re
 - [x] Run `make cpu-check`, deletion reference audit, `git diff --check` and short scene QEMU capture if feasible.
 - [x] Review final diff and report runtime evidence separately from CPU checks.
 
-## Execution evidence
+## Validation outputs
 
-See `results/two-scenario-validation/README.md`. CPU/suite/full Python checks and
-live shared topology passed. Traced Train video and guest transport audit passed;
-full-scene software reference timed out, so its quality and overall run remain FAIL.
-Independent review found no Critical/Important issues. Documentation corrections
-were applied. The user subsequently requested a local commit; no push was requested.
+Previous experiment evidence was intentionally deleted during the clean-baseline
+reset. The checks above can generate fresh artifacts under `results/`; historical
+numerical results are no longer retained in this checkout.

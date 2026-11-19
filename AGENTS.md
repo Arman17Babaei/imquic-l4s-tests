@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository owns the PLY-to-splats, configurable QEMU topology, Gaussian player, video and same-player similarity workflow. `tools/l4s/` contains its launcher, exporter, bridge and helpers; `tests/priority_moq_sidecar_unit.c` checks the native sidecar. Tracked reports, summaries, and plots live in `l4s/`, while large captures and live outputs belong in the ignored `results/` directory. `deps/imquic/` and `deps/picoquic/` are pinned submodules; the top-level picoquic checkout is authoritative, so do not initialize IMQUIC's nested picoquic dependency.
+This repository owns the PLY-to-splats, configurable QEMU topology, Gaussian player, video and same-player similarity workflow. `tools/l4s/` contains its launcher, exporter, bridge and helpers; `tests/priority_moq_sidecar_unit.c` checks the native sidecar. Generated reports, summaries, plots and captures belong in the ignored `results/` directory. Persistent models and traces live under `data/`; local environments and toolchains live under `.venvs/` and `.toolchains/`. `deps/imquic/` and `deps/picoquic/` are pinned submodules; the top-level picoquic checkout is authoritative, so do not initialize IMQUIC's nested picoquic dependency.
 
 ## Build, Test, and Development Commands
 
@@ -15,7 +15,7 @@ This repository owns the PLY-to-splats, configurable QEMU topology, Gaussian pla
 - Edit `tools/l4s/player_topology.py` directly to configure the guest graph, link rates, delay and DualPI2 queues.
 - Launch video/quality runs with `tools/l4s/run_camera_trace_player.py`; see `README.md` for commands.
 
-Set `JOBS`, for example `make build JOBS=8`, to control build parallelism. Consult `README.md` before using the QEMU wrapper; reports under `l4s/` describe historical experiments.
+Set `JOBS`, for example `make build JOBS=8`, to control build parallelism. Consult `README.md` before using the QEMU wrapper. Previous experiment outputs and historical reports were intentionally cleared; new runs must retain their own provenance.
 
 ## Coding Style & Naming Conventions
 
@@ -23,7 +23,7 @@ Follow the surrounding code. Python uses four spaces, type hints, `pathlib.Path`
 
 ## Testing Guidelines
 
-Run `make cpu-check` for player/bridge changes and `make check` inside configured `deps/imquic` for transport changes. Run `results/venvs/3dgs/bin/python -m unittest tests.test_player_sh3` for exporter changes. Historical experiment implementations are recoverable at Git revision `d7d6cab`. Place generated test artifacts under `results/`, not `l4s/`. Update tracked evidence only from a reproducible completed run, and record environment or submodule revisions in the relevant report.
+Run `make cpu-check` for player/bridge changes and `make check` inside configured `deps/imquic` for transport changes. Run `.venvs/3dgs/bin/python -m unittest tests.test_player_sh3` for exporter changes. Historical experiment implementations are recoverable at Git revision `d7d6cab`. Place generated test artifacts under `results/`, not `l4s/`. Update tracked evidence only from a reproducible completed run, and record environment or submodule revisions in the relevant report.
 
 ## Commit & Pull Request Guidelines
 

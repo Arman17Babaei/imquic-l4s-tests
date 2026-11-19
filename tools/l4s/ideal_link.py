@@ -1,28 +1,24 @@
 #!/usr/bin/env python3
-"""Ideal, shared payload link. No transport stack or kernel shaping is involved.
+"""Deterministic offline payload clock over actual stepped IMQUIC delivery.
 
-The virtual-clock API is independent of wall time: call advance(t) before applying
-controls at t. It returns serialization and arrival records; controls never consume
-link time. The stdio peer uses that same clock, and measures completed pipe writes
-against modeled arrival times. A late host or blocked consumer fails the method;
-it never changes the configured rate to conceal that disruption.
+No wall-clock timer schedules frames or payload availability. Native QUIC carries
+one permitted object at a time; bandwidth and propagation are accounted in bytes
+and rational simulated time after its actual IMQUIC receipt.
 """
 from __future__ import annotations
 
 import argparse
-from collections import deque
 from dataclasses import dataclass
 import hashlib
 import heapq
 import json
 import math
-import os
 from pathlib import Path
-import selectors
 import signal
 import struct
 import sys
-import time
+
+from ideal_imquic import ImquicPeer
 
 DEFAULT_QUEUE_BYTES = 16 * 1024 * 1024
 
@@ -147,363 +143,163 @@ class ManifestIndex:
                 self.tracks[track] = tuple(sorted(objects, key=lambda o: o.object_id))
 
 
-class IdealScheduler:
-    """Nonpreemptive work-conserving serializer with independent propagation.
-
-    advance() preserves modeled deadlines even after a late caller wakeup. Host
-    catch-up preserves the original modeled object deadlines.
-    max_queue_bytes bounds selected active/inflight payload bytes; exceeding it
-    raises instead of pausing serialization. Pending objects are metadata only.
-    """
-    def __init__(self, index, bandwidth_mbps, data_delay_ms, max_queue_bytes=DEFAULT_QUEUE_BYTES):
-        self.index = index
-        self.rate = finite(bandwidth_mbps, 'bandwidth_mbps', True) * 1e6 / 8
-        self.delay = finite(data_delay_ms, 'data_delay_ms') / 1000
-        self.max_queue_bytes = integer(max_queue_bytes, 'max_queue_bytes', 1)
-        self.fetches = {}
-        self.next_request = 1
-        self.next_update = 1
-        self.active = None
-        self.inflight = []
-        self.queue_bytes = 0
-        self.peak_queue_bytes = 0
-        self.cursor = 0.0
-        self.closed = False
-        self.delivered = set()
-        self.sequence = 0
-
-    def open(self, command, now):
-        if self.closed or command.get('scene') != self.index.scene:
-            raise ValueError('closed link or unknown scene')
-        epoch = integer(command.get('epoch', 0), 'epoch')
-        controls = []
-        for item in command['fetches']:
-            track = item['track']
-            if track not in self.index.tracks:
-                raise ValueError('unknown track')
-            objects = self.index.tracks[track]
-            tile_id = item['tile_id']
-            refinement = integer(item['refinement'], 'refinement')
-            if any(f['track'] == track for f in self.fetches.values()):
-                raise ValueError('duplicate fetch track')
-            if objects and (objects[0].tile_id != tile_id or objects[0].refinement != refinement):
-                raise ValueError('fetch identity does not match manifest')
-            # Empty layers still have an identity in the original manifest.
-            identity = next((t['id'], l['index']) for t in self.index.data['tiles'] for l in t['refinements'] if l['track'] == track)
-            if identity != (tile_id, refinement):
-                raise ValueError('fetch identity does not match manifest')
-            priority = integer(item['priority'], 'priority')
-            if priority > 255:
-                raise ValueError('invalid priority')
-            score = finite(item.get('priority_score', priority), 'priority score')
-            if score > 255 or math.floor(score) != priority:
-                raise ValueError('priority score must quantize to priority')
-            request = self.next_request
-            self.next_request += 1
-            self.fetches[request] = dict(track=track, tile_id=tile_id, refinement=refinement, priority=priority, score=score, epoch=epoch, pending=deque(objects), remaining=len(objects))
-            controls.append(dict(type='fetch-opened', tile_id=tile_id, refinement=refinement, request_id=request, initial_priority=priority, initial_priority_score=score, epoch=epoch))
-            if not objects:
-                controls.append(dict(type='fetch-status', state='complete', request_id=request, tile_id=tile_id, refinement=refinement))
-        if self.active is None:
-            self.cursor = max(self.cursor, now)
-        return controls
-
-    def update(self, command, now):
-        if self.closed:
-            raise ValueError('closed link')
-        epoch = integer(command.get('epoch', 0), 'epoch')
-        controls = []
-        for item in command['updates']:
-            request = integer(item['request_id'], 'request ID', 1)
-            if request not in self.fetches:
-                raise ValueError('unknown request ID')
-            priority = integer(item['priority'], 'priority')
-            if priority > 255:
-                raise ValueError('invalid priority')
-            score = finite(item.get('priority_score', priority), 'priority score')
-            if score > 255 or math.floor(score) != priority:
-                raise ValueError('priority score must quantize to priority')
-            fetch = self.fetches[request]
-            old = fetch['priority']
-            fetch['priority'], fetch['score'], fetch['epoch'] = priority, score, epoch
-            update_id = self.next_update
-            self.next_update += 1
-            controls.append(dict(type='priority-accepted', request_id=request, update_id=update_id, tile_id=fetch['tile_id'], refinement=fetch['refinement'], old_priority=old, new_priority=priority, new_priority_score=score, epoch=epoch))
-        return controls
-
-    def _select(self, start):
-        eligible = [(f['priority'], f['score'], f['pending'][0].order, request) for request, f in self.fetches.items() if f['pending']]
-        if not eligible:
-            return None
-        _, _, _, request = min(eligible)
-        fetch = self.fetches[request]
-        obj = fetch['pending'][0]
-        if self.queue_bytes + obj.payload_bytes > self.max_queue_bytes:
-            raise QueueBudgetError('ideal inflight queue budget exceeded; model cannot be slowed')
-        fetch['pending'].popleft()
-        self.queue_bytes += obj.payload_bytes
-        self.peak_queue_bytes = max(self.peak_queue_bytes, self.queue_bytes)
-        finish = start + obj.payload_bytes / self.rate
-        event = dict(event='serialization', tile_id=obj.tile_id, refinement=obj.refinement, track=obj.track, object_id=obj.object_id, request_id=request, payload_bytes=obj.payload_bytes, publisher_priority=obj.publisher_priority, subscriber_priority=fetch['priority'], subscriber_score=fetch['score'], subscriber_epoch=fetch['epoch'], sha256=obj.sha256, start=start, finish=finish, arrival=finish + self.delay, object=obj)
-        self.active = event
-        self.sequence += 1
-        heapq.heappush(self.inflight, (event['arrival'], self.sequence, event))
-        return event
-
-    def advance(self, now):
-        finite(now, 'clock')
-        events = []
-        if self.closed:
-            return events
-        while True:
-            # Retire propagation first when arrival coincides with a boundary.
-            if self.inflight and self.inflight[0][0] <= now and (self.active is None or self.inflight[0][0] <= self.active['finish']):
-                _, _, selected = heapq.heappop(self.inflight)
-                event = dict(selected, event='arrival')
-                key = (event['request_id'], event['object_id'])
-                if key in self.delivered:
-                    raise ValueError('duplicate modeled delivery')
-                self.delivered.add(key)
-                self.queue_bytes -= event['payload_bytes']
-                fetch = self.fetches[event['request_id']]
-                fetch['remaining'] -= 1
-                event['fetch_complete'] = fetch['remaining'] == 0
-                events.append(event)
-                continue
-            if self.active is not None:
-                if self.active['finish'] > now:
-                    break
-                self.cursor = self.active['finish']
-                self.active = None
-            if self.cursor <= now:
-                selected = self._select(self.cursor)
-                if selected:
-                    events.append(selected)
-                    continue
-            if self.inflight and self.inflight[0][0] <= now:
-                continue
-            break
-        return events
-
-    def next_deadline(self):
-        deadlines = [self.active['finish']] if self.active else []
-        if self.inflight:
-            deadlines.append(self.inflight[0][0])
-        if self.active is None and any(f['pending'] for f in self.fetches.values()):
-            deadlines.append(self.cursor)
-        return min(deadlines) if deadlines else None
-
-    def cancel(self, now):
-        cancelled = []
-        for _, _, selected in self.inflight:
-            cancelled.append(dict(selected, event='cancel', cancel_time=now))
-        for request, fetch in self.fetches.items():
-            for obj in fetch['pending']:
-                cancelled.append(dict(event='cancel', tile_id=obj.tile_id, refinement=obj.refinement, object_id=obj.object_id, request_id=request, payload_bytes=obj.payload_bytes, cancel_time=now))
-            fetch['pending'].clear()
-        self.inflight.clear()
-        self.active = None
-        self.queue_bytes = 0
-        self.closed = True
-        return cancelled
-
 
 def frame(header, payload=b''):
     encoded = json.dumps(header, separators=(',', ':')).encode()
     return struct.pack('!I', len(encoded)) + encoded + payload
 
 
+class OfflineDelivery:
+    """Rational payload accounting around synchronous IMQUIC object selection."""
+    def __init__(self, peer, bandwidth_mbps, data_delay_ms, max_queue_bytes=DEFAULT_QUEUE_BYTES):
+        from fractions import Fraction
+        self.peer = peer
+        self.rate = Fraction(str(finite(bandwidth_mbps, 'bandwidth_mbps', True))) * 1_000_000 / 8
+        self.delay = Fraction(str(finite(data_delay_ms, 'data_delay_ms'))) / 1000
+        self.now = self.cursor = Fraction(0)
+        self.active = None
+        self.inflight = []
+        self.sequence = self.queue_bytes = self.peak_queue_bytes = 0
+        self.max_queue_bytes = integer(max_queue_bytes, 'max_queue_bytes', 1)
+
+    def open(self, command):
+        return self.peer.open(command)
+
+    def update(self, command):
+        return self.peer.update(command)
+
+    def advance(self, now):
+        if now < self.now:
+            raise ValueError('simulated time must not decrease')
+        events = []
+        while self.cursor <= now:
+            if self.active is not None:
+                if self.active > now:
+                    break
+                self.cursor, self.active = self.active, None
+                continue
+            selected = self.peer.next_object()
+            if selected is None:
+                self.cursor = now  # Idle capacity is never banked.
+                break
+            header, payload = selected
+            finish = self.cursor + len(payload) / self.rate
+            arrival = finish + self.delay
+            self.sequence += 1
+            event = dict(header, start=float(self.cursor), finish=float(finish), arrival=float(arrival))
+            # Retire arrived payloads before charging the next selected object.
+            while self.inflight and self.inflight[0][0] <= self.cursor:
+                _, _, due, data = heapq.heappop(self.inflight)
+                self.queue_bytes -= len(data)
+                events.append(dict(due, event='arrival', payload=data))
+            if self.queue_bytes + len(payload) > self.max_queue_bytes:
+                raise QueueBudgetError('ideal inflight queue budget exceeded')
+            self.queue_bytes += len(payload)
+            self.peak_queue_bytes = max(self.peak_queue_bytes, self.queue_bytes)
+            heapq.heappush(self.inflight, (arrival, self.sequence, event, payload))
+            self.active = finish
+            events.append(dict(event, event='serialization'))
+        while self.inflight and self.inflight[0][0] <= now:
+            _, _, event, payload = heapq.heappop(self.inflight)
+            self.queue_bytes -= len(payload)
+            events.append(dict(event, event='arrival', payload=payload))
+        self.now = now
+        return events
+
+
 def run(config):
+    """Blocking command protocol. Waiting and pipe backpressure cost no model time."""
+    from fractions import Fraction
     output = Path(config['output'])
-    if not output.is_absolute() or not Path(config['manifest']).is_absolute():
+    manifest = Path(config['manifest'])
+    if not output.is_absolute() or not manifest.is_absolute():
         raise ValueError('manifest and output must be absolute paths')
     output.mkdir(parents=True, exist_ok=True)
-    events_file = (output / 'ideal-events.jsonl').open('w', buffering=65536)
-    started = time.monotonic()
-    clock_origin_unix_ms = time.time_ns() / 1e6
-    summary = dict(status='FAIL', transport='ideal', clock_origin_monotonic_us=int(started * 1e6), clock_origin_unix_ms=clock_origin_unix_ms, max_queue_bytes=config.get('max_queue_bytes', DEFAULT_QUEUE_BYTES), bandwidth_mbps=config['bandwidth_mbps'], data_delay_ms=config['data_delay_ms'], delivered_objects=0, delivered_payload_bytes=0, budget_violations=0, peak_queue_bytes=0, peak_output_bytes=0, failures=[], invariants=dict(shared_payload_rate=True, nonpreemptive_objects=True, control_charged_bytes=0, independent_propagation=True, priorities_pending_only=True))
-    scheduler = None
-    outgoing = deque()
-    output_bytes = 0
-    stop = False
-    signal_stop = False
-    selector = selectors.DefaultSelector()
-    previous_signals = {}
-
-    def log(event):
-        clean = {k: v for k, v in event.items() if k != 'object'}
-        clean['monotonic_s'] = time.monotonic()
-        clean['model_clock_origin_monotonic_s'] = started
-        events_file.write(json.dumps(clean, separators=(',', ':')) + '\n')
-
-    def fail(message):
-        summary['failures'].append(str(message))
-
-    def emit(header, payload=b'', arrival=None, completion=None):
-        nonlocal output_bytes
-        encoded = frame(header, payload)
-        if output_bytes + len(encoded) + (scheduler.queue_bytes if scheduler else 0) > config.get('max_queue_bytes', DEFAULT_QUEUE_BYTES):
-            raise QueueBudgetError('ideal output queue budget exceeded')
-        outgoing.append(dict(data=encoded, offset=0, arrival=arrival, header=header, completion=completion))
-        output_bytes += len(encoded)
-        summary['peak_output_bytes'] = max(summary['peak_output_bytes'], output_bytes)
-        if not selector.get_map().get(sys.stdout.fileno()):
-            selector.register(sys.stdout.fileno(), selectors.EVENT_WRITE, 'output')
-
-    def control(message):
-        message = dict(message, monotonic_us=int(time.monotonic() * 1e6))
-        log(dict(event='control', message=message))
-        emit(dict(wire='control', message=message))
-
-    def control_updates(messages, batch_size):
-        # Same scheduler updates and raw request-level evidence, fewer wire frames.
-        for offset in range(0, len(messages), batch_size):
-            group = []
-            for message in messages[offset:offset + batch_size]:
-                stamped = dict(message, monotonic_us=int(time.monotonic() * 1e6))
-                log(dict(event='control', message=stamped))
-                group.append({key: stamped[key] for key in ('request_id', 'update_id', 'new_priority', 'new_priority_score', 'monotonic_us')})
-            emit(dict(wire='control', message=dict(type='priorities-accepted',
-                epoch=messages[offset]['epoch'], updates=group)))
-
-    def consume(events):
-        for event in events:
-            log(event)
-            if event['event'] != 'arrival':
-                continue
-            payload = event['object'].payload()
-            header = {key: event[key] for key in ('tile_id', 'refinement', 'object_id', 'request_id', 'publisher_priority', 'payload_bytes', 'subscriber_priority', 'subscriber_score', 'subscriber_epoch')}
-            header.update(wire='object', monotonic_us=int(time.monotonic() * 1e6),
-                ideal_arrival_monotonic_us=int((started + event['arrival']) * 1e6),
-                ideal_arrival_unix_ms=clock_origin_unix_ms + event['arrival'] * 1000)
-            completion = None
-            if event['fetch_complete']:
-                completion = dict(type='fetch-status', state='complete', request_id=event['request_id'], tile_id=event['tile_id'], refinement=event['refinement'])
-            emit(header, payload, event['arrival'], completion)
-
-    def close(now):
-        nonlocal stop, output_bytes
-        for event in scheduler.cancel(now):
-            log(event)
-        retained = deque()
-        for pending in outgoing:
-            if pending['arrival'] is not None and pending['offset'] == 0:
-                output_bytes -= len(pending['data'])
-                log(dict(event='cancel-output', **pending['header']))
-            else:
-                if pending['arrival'] is not None:
-                    fail('close interrupted an object pipe write')
-                retained.append(pending)
-        outgoing.clear()
-        outgoing.extend(retained)
-        control(dict(type='audit-complete', unresolved_updates=0))
-        stop = True
-
+    summary = dict(status='FAIL', transport='ideal', delivery_model='offline-imquic-v1',
+        bandwidth_mbps=config['bandwidth_mbps'], data_delay_ms=config['data_delay_ms'],
+        time_origin='initial-request', delivered_objects=0, delivered_payload_bytes=0,
+        budget_violations=0, failures=[], peak_queue_bytes=0)
+    model = None
+    closed = False
     def interrupted(signum, _frame):
-        nonlocal signal_stop
-        signal_stop = True
-        fail(f'interrupted by signal {signum}')
-
-    try:
-        batch_size = integer(config.get('priority_control_batch_size', 0), 'priority control batch size')
-        if batch_size > 128:
-            raise ValueError('priority control batches exceed header bound')
-        summary['priority_control_batch_size'] = batch_size
-        index = ManifestIndex(Path(config['manifest']))
-        scheduler = IdealScheduler(index, config['bandwidth_mbps'], config['data_delay_ms'], config.get('max_queue_bytes', DEFAULT_QUEUE_BYTES))
-        os.set_blocking(sys.stdin.fileno(), False)
-        os.set_blocking(sys.stdout.fileno(), False)
-        selector.register(sys.stdin.fileno(), selectors.EVENT_READ, 'input')
-        for sig in (signal.SIGTERM, signal.SIGINT):
-            previous_signals[sig] = signal.signal(sig, interrupted)
-        control(dict(type='ready', transport='ideal'))
-        input_buffer = bytearray()
-        close_started = None
-        while not signal_stop:
-            now = time.monotonic() - started
-            if not stop:
-                consume(scheduler.advance(now))
-            if stop and not outgoing:
-                break
-            if stop and close_started is None:
-                close_started = time.monotonic()
-            if close_started is not None and time.monotonic() - close_started > .5:
-                raise ValueError('stdout backpressure prevented close')
-            deadline = None if stop else scheduler.next_deadline()
-            timeout = .05 if deadline is None else min(.05, max(0, deadline - (time.monotonic() - started)))
-            ready = selector.select(timeout)
-            # Controls win when the input and output descriptors wake together.
-            ready.sort(key=lambda pair: pair[0].data != 'input')
-            for key, _ in ready:
-                if key.data == 'input':
-                    chunk = os.read(sys.stdin.fileno(), 65536)
-                    if not chunk:
-                        selector.unregister(sys.stdin.fileno())
-                        if not stop:
-                            close(time.monotonic() - started)
-                        continue
-                    input_buffer.extend(chunk)
-                    if len(input_buffer) > 1024 * 1024:
-                        raise ValueError('command buffer exceeds 1 MiB')
-                    while b'\n' in input_buffer and not stop:
-                        line, _, rest = input_buffer.partition(b'\n')
-                        input_buffer[:] = rest
-                        command = json.loads(line)
-                        now = time.monotonic() - started
-                        if command.get('type') == 'close':
-                            consume(scheduler.advance(now))
-                            close(now)
-                            break
-                        consume(scheduler.advance(now))
-                        if command.get('type') == 'open':
-                            controls = scheduler.open(command, now)
-                        elif command.get('type') == 'priorities':
-                            controls = scheduler.update(command, now)
+        raise InterruptedError(f'ideal driver interrupted by signal {signum}')
+    previous = {sig: signal.signal(sig, interrupted) for sig in (signal.SIGTERM, signal.SIGINT)}
+    with (output / 'ideal-events.jsonl').open('w') as events_file:
+        def log(event):
+            events_file.write(json.dumps({k: v for k, v in event.items() if k != 'payload'}, separators=(',', ':')) + '\n')
+        def emit(header, payload=b''):
+            sys.stdout.buffer.write(frame(header, payload))
+            sys.stdout.buffer.flush()
+        def control(message):
+            # Native operational timestamps are not part of simulated provenance.
+            clean = {k: v for k, v in message.items() if k != 'monotonic_us'}
+            log(dict(event='control', message=clean))
+            emit(dict(wire='control', message=clean))
+        try:
+            ManifestIndex(manifest)  # Validate every encoded slice before native publication.
+            with ImquicPeer(manifest, output) as peer:
+                model = OfflineDelivery(peer, config['bandwidth_mbps'], config['data_delay_ms'],
+                    config.get('max_queue_bytes', DEFAULT_QUEUE_BYTES))
+                control(dict(type='ready', transport='ideal', delivery_model='offline-imquic-v1'))
+                for line in sys.stdin:
+                    if len(line) > 1024 * 1024:
+                        raise ValueError('oversized ideal command')
+                    command = json.loads(line)
+                    kind = command.get('type')
+                    if kind == 'close':
+                        closed = True
+                        break
+                    if kind == 'open':
+                        for message in model.open(command):
+                            control(message)
+                    elif kind == 'priorities':
+                        for message in model.update(command):
+                            control(message)
+                    elif kind in ('advance', 'horizon'):
+                        if kind == 'advance':
+                            index = integer(command['frame_index'], 'frame index')
+                            fps = integer(command['fps'], 'fps', 1)
+                            now = Fraction(index, fps)
                         else:
-                            raise ValueError('unknown ideal control command')
-                        if command.get('type') == 'priorities' and batch_size:
-                            control_updates(controls, batch_size)
-                        else:
-                            for message in controls:
-                                control(message)
-                elif outgoing:
-                    pending = outgoing[0]
-                    try:
-                        written = os.write(sys.stdout.fileno(), memoryview(pending['data'])[pending['offset']:])
-                    except BlockingIOError:
-                        continue
-                    pending['offset'] += written
-                    output_bytes -= written
-                    if pending['offset'] == len(pending['data']):
-                        outgoing.popleft()
-                        if pending['arrival'] is not None:
+                            index = -1
+                            now = Fraction(str(finite(command['duration_ms'], 'horizon', True))) / 1000
+                        for event in model.advance(now):
+                            log(event)
+                            if event['event'] != 'arrival':
+                                continue
+                            header = {k: v for k, v in event.items() if k not in ('payload', 'event')}
+                            header.update(wire='object', monotonic_us=0,
+                                ideal_arrival_ms=event['arrival'] * 1000)
+                            emit(header, event['payload'])
                             summary['delivered_objects'] += 1
-                            summary['delivered_payload_bytes'] += pending['header']['payload_bytes']
-                            log(dict(event='dispatch', **pending['header']))
-                            if pending['completion'] and not stop:
-                                control(pending['completion'])
-                    if not outgoing:
-                        selector.unregister(sys.stdout.fileno())
-        if signal_stop and scheduler:
-            for event in scheduler.cancel(time.monotonic() - started):
-                log(event)
-    except Exception as error:
-        if isinstance(error, QueueBudgetError):
-            summary['budget_violations'] += 1
-        fail(f'{type(error).__name__}: {error}')
-        print(f'ideal link failed: {error}', file=sys.stderr)
-        if scheduler and not scheduler.closed:
-            for event in scheduler.cancel(time.monotonic() - started):
-                log(event)
-    finally:
-        for sig, previous in previous_signals.items():
-            signal.signal(sig, previous)
-        selector.close()
-        summary.update(peak_queue_bytes=scheduler.peak_queue_bytes if scheduler else 0)
-        if not summary['failures'] and not summary['budget_violations']:
+                            summary['delivered_payload_bytes'] += len(event['payload'])
+                            log(dict(header, event='dispatch'))
+                            if event['fetch_complete']:
+                                control(dict(type='fetch-status', state='complete', request_id=event['request_id'],
+                                    tile_id=event['tile_id'], refinement=event['refinement']))
+                        control(dict(type='advance-complete', frame_index=index, timestamp_ms=float(now * 1000)))
+                    else:
+                        raise ValueError('unknown ideal command')
+                if not closed:
+                    raise ValueError('ideal driver input closed before audit')
             summary['status'] = 'PASS'
-        (output / 'ideal-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
-        events_file.close()
+        except Exception as error:
+            summary['failures'].append(f'{type(error).__name__}: {error}')
+            summary['budget_violations'] += isinstance(error, QueueBudgetError)
+            print(f'ideal link failed: {error}', file=sys.stderr)
+            try:
+                control(dict(type='error', message=str(error)))
+            except (OSError, BrokenPipeError):
+                pass
+        finally:
+            for sig, handler in previous.items():
+                signal.signal(sig, handler)
+            if model:
+                summary.update(peak_queue_bytes=model.peak_queue_bytes,
+                    simulated_time_ms=float(model.now * 1000))
+            (output / 'ideal-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
+        if summary['status'] == 'PASS':
+            control(dict(type='audit-complete', unresolved_updates=0))
     return 0 if summary['status'] == 'PASS' else 1
 
 

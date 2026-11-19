@@ -53,24 +53,26 @@ name = "example"
 
     def test_expansion_and_ideal_commands(self):
         cfg = self.load(); cases = self.config.expand_cases(cfg)
-        self.assertEqual(len(cases), 4)
+        self.assertEqual(len(cases), 2)
         self.assertEqual({c['delay_ms'] for c in cases}, {160,320})
-        self.assertEqual({c['rerun'] for c in cases}, {1,2})
+        self.assertEqual({c['rerun'] for c in cases}, {1})
+        self.assertEqual({c['delivery_model'] for c in cases}, {'offline-imquic-v1'})
         self.assertEqual({c['controller'] for c in cases}, {'ideal'})
         self.assertEqual({c['switches'] for c in cases}, {0})
         command = self.runner.build_command(cases[0], cfg, self.root/'results/out', self.root/'scaled.json')
+        self.assertEqual(command[command.index('--reference-cache')+1], str(Path(cfg['output'])/'references'))
         self.assertIn('--ideal-bandwidth-mbps', command)
         self.assertNotIn('--qemu-base', command)
         self.assertEqual(command[command.index('--quality-camera-timestamps')+1], 'fixed')
-        self.assertIn('--start-after-first-object',command)
-        self.assertEqual(command[command.index('--max-missing-snapshot-fraction')+1],'0.05')
+        self.assertNotIn('--start-after-first-object',command)
+        self.assertEqual(command[command.index('--max-missing-snapshot-fraction')+1],'0')
 
     def test_ideal_runs_higher_delay_then_lower_for_each_scene_and_repeat(self):
         cfg=self.load()
         cfg['experiments'][0].update(delays_ms=[160,80,320],reruns=2)
         cases=self.config.expand_cases(cfg)
         self.assertEqual([(c['rerun'],c['delay_ms']) for c in cases],
-                         [(1,320),(1,160),(1,80),(2,320),(2,160),(2,80)])
+                         [(1,320),(1,160),(1,80)])
 
     def test_qemu_keeps_prague_reno_adjacent_at_same_delay_across_repeats(self):
         cfg=self.load()
@@ -78,6 +80,35 @@ name = "example"
         cases=self.config.expand_cases(cfg)
         self.assertEqual([(c['rerun'],c['delay_ms'],c['controller']) for c in cases],
                          [(r,d,c) for r in (1,2) for d in (160,320) for c in ('prague','reno')])
+
+    def test_reno_ect0_expands_as_distinct_qemu_case_and_reaches_runner(self):
+        self.config_file.write_text(self.config_file.read_text().replace(
+            'path = "ideal"', 'path = "qemu"\ncontrollers = ["reno-ect0", "reno", "prague"]'))
+        cfg=self.load()
+        cases=self.config.expand_cases(cfg)
+        self.assertEqual([c['controller'] for c in cases[:3]], ['prague','reno','reno-ect0'])
+        self.assertEqual(len(cases),12)
+        self.assertEqual(len({c['id'] for c in cases}),12)
+        case=next(c for c in cases if c['controller']=='reno-ect0')
+        command=self.runner.build_command(case,cfg,self.root/'results/out',self.root/'scaled.json',self.root/'topology.py')
+        self.assertEqual(command[command.index('--transport-mode')+1],'reno-ect0')
+        self.assertEqual(case['background_profile'],'bbr-prague-unlimited')
+        self.assertTrue(case['id'].endswith('-bg-bbr-prague'))
+
+    def test_bbr_is_one_distinct_configured_sample(self):
+        self.config_file.write_text(self.config_file.read_text().replace(
+            'path = "ideal"', 'path = "qemu"\ncontrollers = ["bbr"]')
+            .replace('reruns = 2','reruns = 1').replace('delays_ms = [160, 320]','delays_ms = [15]'))
+        cfg=self.load()
+        cases=self.config.expand_cases(cfg)
+        self.assertEqual(len(cases),1)
+        self.assertEqual(cases[0]['controller'],'bbr')
+        command=self.runner.build_command(cases[0],cfg,self.root/'results/out',self.root/'scaled.json',self.root/'topology.py')
+        self.assertEqual(command[command.index('--transport-mode')+1],'bbr')
+        self.assertEqual(cases[0]['background_profile'],'bbr-prague-unlimited')
+
+    def test_default_coupling_is_three(self):
+        self.assertEqual(self.load()['experiments'][0]['dualpi2_coupling_factor'],3)
 
     def test_removed_topology_options_fail_clearly(self):
         original=self.config_file.read_text()
@@ -92,7 +123,7 @@ name = "example"
         cases=self.config.expand_cases(self.load())
         self.assertEqual({c['controller'] for c in cases},{'prague'})
         self.assertEqual({c['switches'] for c in cases},{2})
-        self.assertEqual({c['background_profile'] for c in cases},{'cubic-prague-unlimited'})
+        self.assertEqual({c['background_profile'] for c in cases},{'bbr-prague-unlimited'})
 
     def test_runner_generates_shared_background_topology_and_configurable_aqm(self):
         cfg=self.load()
@@ -102,7 +133,7 @@ name = "example"
         cfg['qemu']['performance_mode']=True
         ledger,calls=self.execute(cfg,[{'status':'PASS','video_status':'PASS','quality_status':'PASS'}])
         item=ledger['items'][0]
-        self.assertEqual(item['background_profile'],'cubic-prague-unlimited')
+        self.assertEqual(item['background_profile'],'bbr-prague-unlimited')
         command=calls[0]
         source=Path(command[command.index('--topology-script')+1]).read_text()
         namespace={}
@@ -114,7 +145,7 @@ name = "example"
         self.assertEqual(namespace['DUALPI2_COUPLING_FACTOR'],2)
         self.assertTrue(namespace['PERFORMANCE_MODE'])
         self.assertTrue(command[command.index('--qemu-runner')+1].endswith('/qemu_player_performance.py'))
-        self.assertEqual([p['cc'] for p in namespace['background_pairs']()],['cubic','prague'])
+        self.assertEqual([p['cc'] for p in namespace['background_pairs']()],['bbr','prague'])
 
     def test_invalid_l4s_parameters_are_rejected(self):
         original=self.config_file.read_text()
@@ -166,7 +197,7 @@ name = "example"
     def test_dry_run_does_not_create_output_or_execute(self):
         cfg=self.load()
         plan=self.runner.make_plan(cfg)
-        self.assertEqual(len(plan['items']),4)
+        self.assertEqual(len(plan['items']),2)
         self.assertFalse(Path(cfg['output']).exists())
 
     def execute(self,cfg,results):
@@ -215,6 +246,30 @@ name = "example"
         self.assertEqual(ledger['execution_status'],'interrupted')
         stored=json.loads((Path(cfg['output'])/'ledger.json').read_text())
         self.assertEqual(stored['execution_status'],'interrupted')
+
+    def test_executor_owner_is_closed_after_interruption(self):
+        cfg=self.load()
+        class Executor:
+            closed=False
+            def __call__(self,*args):raise KeyboardInterrupt()
+            def close(self):self.closed=True
+        executor=Executor()
+        ledger=self.runner.run_batch(cfg,executor=executor)
+        self.assertTrue(executor.closed,'batch must release its VM owner on interruption')
+        self.assertEqual(ledger['execution_status'],'interrupted')
+
+    def test_dirty_vm_reset_stops_batch_even_when_failures_normally_continue(self):
+        from qemu_session import ResetFailure
+        cfg=self.load();calls=[]
+        def executor(*args):
+            calls.append(args)
+            raise ResetFailure('dirty VM')
+        ledger=self.runner.run_batch(cfg,executor=executor)
+        self.assertEqual(len(calls),1)
+        self.assertEqual(ledger['execution_status'],'stopped')
+        self.assertIn('ResetFailure',ledger['setup_error'])
+        self.assertEqual(ledger['items'][0]['attempts'][0]['status'],'FAIL')
+        self.assertEqual(ledger['items'][1]['attempts'],[])
 
     def test_existing_output_is_never_overwritten(self):
         cfg=self.load();Path(cfg['output']).mkdir()

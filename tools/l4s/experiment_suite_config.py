@@ -11,25 +11,25 @@ import tomllib
 
 REPO = Path(__file__).resolve().parents[2]
 SCENES = {
-    'bicycle': {'manifest': 'results/player-sh3-adaptive-16k-20261014/manifest-v2.json',
-                'trace': 'results/thesis-scenes-19s-20261018/bicycle-trace-19s.json'},
-    'train': {'manifest': 'results/scene-videos-20261018/train-scene/manifest-v2.json',
-              'trace': 'results/thesis-scenes-19s-20261018/train-trace-19s.json'},
-    'playroom': {'manifest': 'results/scene-videos-20261018/playroom-scene/manifest-v2.json',
-                 'trace': 'results/thesis-scenes-19s-20261018/playroom-trace-19s.json'},
+    'bicycle': {'manifest': 'data/scenes/bicycle/manifest-v2.json',
+                'trace': 'data/traces/thesis-scenes-19s/bicycle-trace-19s.json'},
+    'train': {'manifest': 'data/scenes/train/manifest-v2.json',
+              'trace': 'data/traces/thesis-scenes-19s/train-trace-19s.json'},
+    'playroom': {'manifest': 'data/scenes/playroom/manifest-v2.json',
+                 'trace': 'data/traces/thesis-scenes-19s/playroom-trace-19s.json'},
 }
 DEFAULTS = dict(scenes=['playroom'], bandwidth_mbps=50, delays_ms=[160,320], duration_seconds=19,
                 path='ideal', controllers=['prague'], reruns=1, background_warmup_seconds=4,
-                dualpi2_target_ms=15, dualpi2_update_ms=16, dualpi2_step_ms=1, dualpi2_coupling_factor=1,
+                dualpi2_target_ms=15, dualpi2_update_ms=16, dualpi2_step_ms=1, dualpi2_coupling_factor=3,
                 on_failure='continue', max_retries=0, retry_exhausted='continue', failure_criterion='capture')
 RUNNER = dict(python=sys.executable, timeout_seconds=900, attempt_timeout_seconds=3000,
               memory_limit_mib=7168, min_available_memory_gib=4, min_free_disk_gib=5)
 CAPTURE = dict(width=960, height=540, fps=30, quality_fps=5, quality_backend='cuda',
                gpu_mode='hardware', headless=True, start_after_first_object=True, max_missing_snapshot_fraction=0.05)
-QEMU = dict(base='~/sandbox/p4/work.qcow2', runner='tools/l4s/run_qemu_player.py', cpus=7, memory_mib=2048, performance_mode=False)
+QEMU = dict(base='~/sandbox/p4/work.qcow2', runner='tools/l4s/run_qemu_player.py', cpus=7, memory_mib=2048, performance_mode=False, reuse_vm=True)
 ANALYSIS = dict(enabled=True, vmaf=True, vmaf_backend='cuda', plots=True,
-                vmaf_binary='results/toolchains/vmaf-cuda-src/libvmaf/build/tools/vmaf',
-                vmaf_model='results/toolchains/vmaf-cuda-src/model/vmaf_v0.6.1.json')
+                vmaf_binary='.toolchains/vmaf-cuda-src/libvmaf/build/tools/vmaf',
+                vmaf_model='.toolchains/vmaf-cuda-src/model/vmaf_v0.6.1.json')
 
 
 def unknown(values, allowed, context):
@@ -95,7 +95,7 @@ def experiment(values, context):
     controllers=merged['controllers']
     if not isinstance(controllers,list) or not controllers or len(set(controllers))!=len(controllers):
         raise ValueError('controllers must be a nonempty distinct list')
-    for controller in controllers: choice(controller,('reno','prague'),'controller')
+    for controller in controllers: choice(controller,('reno','prague','reno-ect0','bbr'),'controller')
     for field,minimum in (('reruns',1),('max_retries',0)):
         number(merged[field],field,minimum,integer=True)
     choice(merged['on_failure'],('continue','stop','retry'),'on_failure')
@@ -142,6 +142,7 @@ def load_config(path: Path, repo_root: Path=REPO):
         number(cfg['runner'][field],field,strictly=True)
     for field in ('memory_limit_mib',):number(cfg['runner'][field],field,integer=True)
     for field in ('min_available_memory_gib','min_free_disk_gib'):number(cfg['runner'][field],field)
+    if not isinstance(cfg['qemu']['reuse_vm'],bool):raise ValueError('qemu.reuse_vm must be boolean')
     if not isinstance(cfg['qemu']['performance_mode'],bool):raise ValueError('qemu.performance_mode must be boolean')
     if cfg['qemu']['performance_mode'] and cfg['qemu']['cpus']!=7:raise ValueError('QEMU performance mode requires seven vCPUs')
     for field in ('cpus','memory_mib'):number(cfg['qemu'][field],field,1,integer=True)
@@ -172,19 +173,20 @@ def expand_cases(cfg):
     cases=[]
     for index,entry in enumerate(cfg['experiments']):
         delays=sorted(entry['delays_ms'],reverse=True) if entry['path']=='ideal' else entry['delays_ms']
-        controllers=([c for c in ('prague','reno') if c in entry['controllers']]
+        controllers=([c for c in ('prague','reno','reno-ect0','bbr') if c in entry['controllers']]
                      if entry['path']=='qemu' else ['ideal'])
         variants=list(itertools.product(entry['scenes'],delays,controllers))
-        for repeat in range(entry['reruns']):
+        for repeat in range(entry['reruns'] if entry['path']=='qemu' else 1):
             # Keep each requested comparison adjacent, including across reruns.
             for scene,delay,controller in variants:
                 switches=2 if entry['path']=='qemu' else 0
                 identifier=(f'e{index+1:02d}-{scene}-{entry["path"]}-{controller}-'
                             f'{entry["bandwidth_mbps"]:g}m-{delay:g}ms-{entry["duration_seconds"]:g}s-s{switches}-r{repeat+1:02d}')
-                if entry['path']=='qemu':identifier+='-bg-cubic-prague'
+                if entry['path']=='qemu':identifier+='-bg-bbr-prague'
                 cases.append({**entry,'id':identifier,'scene':scene,'delay_ms':delay,'controller':controller,
                               'switches':switches,'background':entry['path']=='qemu',
-                              'background_profile':'cubic-prague-unlimited' if entry['path']=='qemu' else None,
+                              'background_profile':'bbr-prague-unlimited' if entry['path']=='qemu' else None,
                               'rerun':repeat+1,'experiment_index':index,
+                              **({'delivery_model':'offline-imquic-v1'} if entry['path']=='ideal' else {}),
                               **cfg['scenes'][scene]})
     return cases

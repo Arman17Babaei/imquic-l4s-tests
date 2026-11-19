@@ -14,6 +14,32 @@ if MODULE.exists():
 
 
 class SuiteAnalysisTests(unittest.TestCase):
+    def test_quality_grid_controls_vmaf_pairs_when_video_has_more_frames(self):
+        from PIL import Image
+        for name in ('candidate-frames','reference-frames'):
+            directory = self.batch/name
+            directory.mkdir()
+            frames = []
+            for i in range(30):
+                file = f'frame-{i:06d}.png'
+                Image.new('RGB',(2,2)).save(directory/file)
+                frames.append(dict(index=i,file=file,timestampMs=i*1000/30,cameraPose={'id':i}))
+            (directory/'frames.json').write_text(json.dumps(dict(complete=True,frames=frames)))
+            (directory/'quality-frames.json').write_text(json.dumps(dict(complete=True,
+                frames=[dict(frame,index=i) for i,frame in enumerate(frames[::6])])) )
+        pairs, _ = analysis.frame_pairs(self.batch)
+        self.assertEqual(list(pairs), [0,200,400,600,800])
+
+    def test_offline_payload_bins_use_model_time_and_separate_historical_results(self):
+        bins = analysis.browser_bins({'deliveryModel':'offline-imquic-v1', 'trace':{'startedAtMs':0},
+            'events':[dict(type='object', ideal_arrival_ms=250, receivedAtMs=5000, payload_bytes=10),
+                      dict(type='object', ideal_arrival_ms=1250, receivedAtMs=5100, payload_bytes=20)]}, 2)
+        self.assertEqual([row['payload_bytes'] for row in bins], [10,20])
+        old, new = self.item('old'), self.item('new')
+        new['delivery_model'] = 'offline-imquic-v1'
+        result = analysis.analyze_batch(self.batch, {'items':[old,new]}, self.settings)
+        self.assertEqual(len(result['groups']), 2)
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
@@ -129,6 +155,15 @@ class SuiteAnalysisTests(unittest.TestCase):
         self.assertEqual(difference['ssim']['status'], 'UNAVAILABLE')
         self.assertEqual(difference['minuend_status'], 'MISSING_OR_AMBIGUOUS')
 
+    def test_reno_ect0_quality_pairs_keep_modes_distinct(self):
+        members=[self.paired_member('prague',controller='prague',ssim=.9,vmaf=95),
+                 self.paired_member('reno',controller='reno',ssim=.7,vmaf=80),
+                 self.paired_member('reno-ect0',controller='reno-ect0',ssim=.8,vmaf=90)]
+        pairs=analysis.quality_differences(members)
+        self.assertEqual([p['label'] for p in pairs],
+                         ['Prague − Reno','Prague − Reno ECT(0)','Reno ECT(0) − Reno'])
+        self.assertEqual([p['vmaf']['mean'] for p in pairs],[15,5,10])
+
     def test_selected_source_failures_cannot_be_upgraded_to_pass(self):
         for field, value in [('status', 'PARTIAL'), ('process_exit_code', 7), ('criterion_pass', False)]:
             with self.subTest(field=field):
@@ -172,15 +207,17 @@ class SuiteAnalysisTests(unittest.TestCase):
         self.assertEqual({r['background_cc'] for r in result['runs']},{'cubic','reno'})
 
     def test_mixed_background_profile_and_aqm_parameters_remain_distinct(self):
-        items=[self.item(name) for name in ('legacy','mixed','different-aqm')]
+        items=[self.item(name) for name in ('legacy','mixed','different-aqm','bbr-background')]
         for item in items:item.update(path='qemu',controller='prague',background=True,switches=2)
         items[0].update(background_cc='cubic')
         for item in items[1:]:
             item.update(background_profile='cubic-prague-unlimited',dualpi2_target_ms=15,
                         dualpi2_update_ms=16,dualpi2_step_ms=1,dualpi2_coupling_factor=1)
         items[2]['dualpi2_step_ms']=2
+        items[3]['background_profile']='bbr-prague-unlimited'
         result=analysis.analyze_batch(self.batch,{'items':items},self.settings)
-        self.assertEqual(len(result['groups']),3)
+        self.assertEqual(len(result['groups']),4)
+        self.assertEqual(result['runs'][3]['background_profile'],'bbr-prague-unlimited')
         self.assertEqual(result['runs'][1]['background_profile'],'cubic-prague-unlimited')
         self.assertEqual(result['runs'][2]['dualpi2_step_ms'],2)
         self.assertEqual(result['runs'][0]['background_cc'],'cubic')

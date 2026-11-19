@@ -16,7 +16,7 @@ def route_map(dist: Path, manifest: Path, trace: Path, *, metadata_only: bool = 
               "/manifest-v2.json": manifest, "/camera-trace.json": trace}
     for asset in dist.rglob("*"):
         if asset.is_file() and asset.suffix not in (".splat", ".ply", ".gsp2"):
-            routes[f"/{asset.relative_to(dist).as_posix()}"] = asset
+            routes.setdefault(f"/{asset.relative_to(dist).as_posix()}", asset)
     root = manifest.parent.resolve()
     for tile in document.get("tiles", []):
         for refinement in tile.get("refinements", []):

@@ -43,7 +43,7 @@ def frames(root: Path, color=0, timestamp=100):
 
 class TopologyTests(unittest.TestCase):
     def test_editable_delay_and_rate_reach_separate_qdiscs(self):
-        with patch.object(player_topology, 'PROPAGATION_DELAY_MS', 14), patch.object(player_topology, 'BOTTLENECK', '37mbit'):
+        with patch.object(player_topology, 'PROPAGATION_DELAY_MS', 21), patch.object(player_topology, 'BOTTLENECK', '37mbit'):
             delay = player_topology.shaping_commands('client-eth0', shared=False)
             aqm = player_topology.shaping_commands('s1-eth2', shared=True)
             self.assertIn('7ms', delay[-1])

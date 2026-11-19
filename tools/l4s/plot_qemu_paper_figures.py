@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Export separate QEMU scene/metric PDFs; LaTeX owns panel composition.
 
-Reproduce with results/venvs/3dgs/bin/python tools/l4s/plot_qemu_paper_figures.py.
+Reproduce with .venvs/3dgs/bin/python tools/l4s/plot_qemu_paper_figures.py.
 Uses original retained quality and browser payload receipt bins.
 """
 from __future__ import annotations

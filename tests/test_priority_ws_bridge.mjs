@@ -9,9 +9,10 @@ import { chromium } from 'playwright';
 
 const root = path.resolve(import.meta.dirname, '..');
 
-for (const objectWindow of [1, 4]) test(`bridge preserves objects with a bounded ${objectWindow}-object ACK window`, { timeout: 30000 }, async () => {
+for (const [objectWindow, transportMode, useDefaultWindow] of [[1, "prague"], [4, "prague"], [4, "reno-ect0"], [4, "bbr"], [64, "prague", true]]) test(`bridge preserves objects with a bounded ${objectWindow}-object ACK window (${transportMode})`, { timeout: 30000 }, async () => {
     fs.mkdirSync(path.join(root, 'results'), { recursive: true });
     const temporary = fs.mkdtempSync(path.join(root, 'results/bridge-test-'));
+    const objectCount = Math.max(6, objectWindow + 2);
     const native = path.join(temporary, 'native.mjs');
     fs.writeFileSync(native, `#!/usr/bin/env node
 import readline from 'node:readline';
@@ -26,7 +27,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     if (command.type === 'open') {
         emit({ wire: 'control', message: { type: 'fetch-opened', tile_id: 'tile', refinement: 0,
             request_id: 1, initial_priority: 255, mode: process.argv[4], congestion_options: process.argv[5] } });
-        for (let object_id = 0; object_id < 6; object_id++)
+        for (let object_id = 0; object_id < ${objectCount}; object_id++)
             emit({ wire: 'object', tile_id: 'tile', refinement: 0, object_id, payload_bytes: 100000 }, Buffer.alloc(100000, object_id + 1));
     }
     if (command.type === 'close') {
@@ -39,7 +40,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
     const reservation = net.createServer(); reservation.listen(0, '127.0.0.1'); await once(reservation, 'listening');
     const port = reservation.address().port; await new Promise(resolve => reservation.close(resolve));
     const bridge = spawn(process.execPath, [path.join(root, 'tools/l4s/priority_ws_bridge.mjs'), '--native', native,
-        '--listen', String(port), '--object-window', String(objectWindow), '--transport-mode', 'prague', '--congestion-options', 'pacing_interval=1/1000', '--origin', 'null'], { stdio: ['ignore', 'ignore', 'pipe'] });
+        '--listen', String(port), ...(useDefaultWindow ? [] : ['--object-window', String(objectWindow)]), '--transport-mode', transportMode, '--congestion-options', 'pacing_interval=1/1000', '--origin', 'null'], { stdio: ['ignore', 'ignore', 'pipe'] });
     let logs = ''; bridge.stderr.on('data', chunk => { logs += chunk; });
     let browser;
     try {
@@ -50,7 +51,7 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
         }
         browser = await chromium.launch({ headless: true });
         const page = await browser.newPage();
-        const result = await page.evaluate(async ({port, objectWindow}) => {
+        const result = await page.evaluate(async ({port, objectWindow, objectCount}) => {
             const socket = new WebSocket('ws://127.0.0.1:' + port, '3dgs-moqt-v1'); socket.binaryType = 'arraybuffer';
             const objects = [], events = [];
             socket.onmessage = event => {
@@ -68,11 +69,13 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
                 const deadline = Date.now() + 5000;
                 while (!predicate()) { if (Date.now() > deadline) throw new Error('timeout'); await new Promise(resolve => setTimeout(resolve, 10)); }
             };
+            const configured = await (await fetch("http://127.0.0.1:" + port + "/buffers")).json();
+            if (configured.object_window !== objectWindow) throw new Error(`expected object window ${objectWindow}, got ${configured.object_window}`);
             await wait(() => objects.length === objectWindow);
             await new Promise(resolve => setTimeout(resolve, 150));
             const heldCount = objects.length;
             const heldBuffers = await (await fetch("http://127.0.0.1:" + port + "/buffers")).json();
-            for (let count = objectWindow; count < 6; count++) {
+            for (let count = objectWindow; count < objectCount; count++) {
                 socket.send(JSON.stringify({ type: 'object-ack' }));
                 await wait(() => objects.length === count + 1);
             }
@@ -81,16 +84,16 @@ readline.createInterface({ input: process.stdin }).on('line', line => {
             await wait(() => events.some(event => event.type === 'audit-complete'));
             socket.close();
             return { objects, heldCount, heldBuffers, events };
-        }, {port, objectWindow});
+        }, {port, objectWindow, objectCount});
         assert.equal(result.heldCount, objectWindow);
         assert.equal(result.heldBuffers.outstanding_objects, objectWindow);
         assert.equal(result.heldBuffers.outstanding_payload_bytes, objectWindow * 100000);
         assert.equal(result.heldBuffers.peak_outstanding_objects, objectWindow);
         assert.equal(result.heldBuffers.native_paused, true);
         assert.ok(result.heldBuffers.window_full_ms >= 100);
-        assert.equal(result.objects.length, 6);
+        assert.equal(result.objects.length, objectCount);
         assert.ok(result.objects.every(object => object.valid && object.length === 100000));
-        assert.equal(result.events.find(event => event.type === 'fetch-opened').mode, 'prague');
+        assert.equal(result.events.find(event => event.type === 'fetch-opened').mode, transportMode);
         assert.equal(result.events.find(event => event.type === 'fetch-opened').congestion_options, 'pacing_interval=1/1000');
         assert.ok(result.events.some(event => event.type === 'audit-complete'));
     } finally {

@@ -14,6 +14,15 @@ def obj(object_id=0, due=1000):
 
 
 class IdealDeliveryTest(unittest.TestCase):
+    def test_offline_delivery_uses_simulated_arrivals_and_checks_payload_bytes(self):
+        dispatch = dict(request_id=1, tile_id='tile', refinement=0, object_id=0,
+                        ideal_arrival_ms=25, payload_bytes=100)
+        summary = dict(status='PASS', delivery_model='offline-imquic-v1', delivered_objects=1,
+                       delivered_payload_bytes=100)
+        result = validate_delivery(summary, [dict(dispatch, type='object')], [dispatch])
+        self.assertEqual(result['status'], 'PASS')
+        result = validate_delivery(summary, [dict(dispatch, type='object', payload_bytes=99)], [dispatch])
+        self.assertEqual(result['status'], 'FAIL')
     def test_delayed_intact_receipt_passes_without_timing_fields(self):
         dispatch = obj()
         result = validate_delivery({'status': 'PASS', 'delivered_objects': 1},

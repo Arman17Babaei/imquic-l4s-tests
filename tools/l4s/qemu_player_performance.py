@@ -76,6 +76,8 @@ def boot(args,overlay,serial_log,port):
 
 
 def main():
+    if os.environ.get("IMQUIC_QEMU_SESSION"):
+        return runner.main()
     previous_boot,previous_setup=runner.boot_qemu,runner.setup_script
     previous=subprocess.check_output(['powerprofilesctl','get'],text=True).strip()
     try:
