@@ -70,3 +70,15 @@ Gaussian-count, timing-grid and VMAF checks.
 The Mesa OpenGL/EGL backend failed to create a WebGL context in this environment.
 Manual-update, synchronous-readback and sort-drain variants did not produce a
 completed valid render; interrupted diagnostics are not performance evidence.
+
+## Two-shard batch with two Mesa threads: best completed time
+
+`LP_NUM_THREADS=2` with five concurrent scenes and two workers per scene completed
+in **217.51 s**, using **18.94 GiB peak summed process RSS**. All 100 PNGs are
+byte-identical to the four-shard batch, with matching timestamps, camera poses
+and applied Gaussian counts. Evidence:
+`results/render-benchmark/five-scenes-two-shards-mesa2/`.
+
+This reduces memory by 51.9% and wall time by 3.5% relative to the four-shard
+batch, but still requires a **2.42× wall-time speedup** to reach 90 seconds.
+That ratio is not a prediction of CPU scaling or a guaranteed hardware request.

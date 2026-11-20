@@ -25,7 +25,7 @@ AFTER = ('F.autoUpdate=!1,await (async()=>{const u=F.update({scene:j,camera:M});
 
 def prepare(source: Path, output: Path, *, manual_updates: bool = False,
             synchronous_readback: bool = False, profile: bool = False,
-            drain_sort: bool = False) -> None:
+            drain_sort: bool = False, no_read_pause: bool = False) -> None:
     output = output.resolve()
     if not output.is_relative_to(ROOT / 'results') or output.exists():
         raise ValueError('diagnostic build must be a new directory under results/')
@@ -43,6 +43,10 @@ def prepare(source: Path, output: Path, *, manual_updates: bool = False,
                        'if(performance.now()-t>30000)throw Error("sort drain timeout");'
                        'await new Promise(r=>setTimeout(r,5))}})(),' + BEFORE)
     modified = original.replace(BEFORE, replacement)
+    if no_read_pause:
+        if modified.count('this.readPause=1') != 1:
+            raise ValueError('unsupported read pause implementation')
+        modified = modified.replace('this.readPause=1', 'this.readPause=0')
     if synchronous_readback:
         before = 't.readRenderTargetPixelsAsync(e.target,0,0,Q,o,d,void 0,e.extSplats?2:1)'
         if modified.count(before) != 1:
@@ -66,6 +70,7 @@ def prepare(source: Path, output: Path, *, manual_updates: bool = False,
         'synchronous_readback': synchronous_readback,
         'profile': profile,
         'drain_sort': drain_sort,
+        'no_read_pause': no_read_pause,
         'experiment': ('manual camera-dependent updates; suppress redundant capture-time updates'
                        if manual_updates else 'render heartbeat while waiting for complete camera-dependent sort'),
     }, indent=2) + '\n')
@@ -80,7 +85,8 @@ if __name__ == '__main__':
     parser.add_argument('--synchronous-readback', action='store_true')
     parser.add_argument('--profile', action='store_true')
     parser.add_argument('--drain-sort', action='store_true')
+    parser.add_argument('--no-read-pause', action='store_true')
     args = parser.parse_args()
     prepare(args.dist.resolve(), args.output, manual_updates=args.manual_updates,
             synchronous_readback=args.synchronous_readback, profile=args.profile,
-            drain_sort=args.drain_sort)
+            drain_sort=args.drain_sort, no_read_pause=args.no_read_pause)

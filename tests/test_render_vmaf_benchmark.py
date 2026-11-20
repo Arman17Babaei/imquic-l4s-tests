@@ -60,6 +60,9 @@ class BoundedTraceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'profiling requires'):
                 prepare(source, root / 'unsupported-profile', profile=True)
             self.assertFalse((root / 'unsupported-profile').exists())
+            with self.assertRaisesRegex(ValueError, 'read pause implementation'):
+                prepare(source, root / 'unsupported-pause', no_read_pause=True)
+            self.assertFalse((root / 'unsupported-pause').exists())
             prepare(source, root / 'profile', manual_updates=True, profile=True)
             self.assertIn('PROFILE seek_update_ms', (root / 'profile/assets/main.js').read_text())
             asset.write_text('unknown build')
