@@ -72,6 +72,9 @@ def main():
     parser.add_argument('--target-seconds', type=float, default=120)
     parser.add_argument('--timeout-seconds', type=float, default=300)
     args = parser.parse_args()
+    if (not math.isfinite(args.target_seconds) or not math.isfinite(args.timeout_seconds)
+            or args.width % 2 or args.height % 2):
+        parser.error('timeouts must be finite and YUV420 dimensions must be even')
     if min(args.fps, args.width, args.height, args.threads, args.target_seconds, args.timeout_seconds) <= 0:
         parser.error('dimensions, FPS, threads and target must be positive')
     output = args.output.resolve()
