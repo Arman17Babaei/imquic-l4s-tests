@@ -9,11 +9,21 @@ an isolated baseline with identical CPU allocation. This is not a claim of 10×
 pure GPU rendering speed. Browser time currently includes PNG compression,
 readback, repeated stability captures, protocol transfer and frame persistence.
 
-An isolated baseline is running under
+The completed isolated baseline is retained under
 `results/render-benchmark/train-hd-isolated-baseline/`, using the unmodified
-player, all 24 CPUs, two render workers and `LP_NUM_THREADS=2`. Its result will
-establish the numeric target; the earlier concurrently measured train render
+player, all 24 CPUs, two render workers and `LP_NUM_THREADS=2`. Loading + rendering
++ capture took **666.96 s**, establishing a **66.70 s** tenfold target. Encoding
+took 26.50 s, VMAF 6.70 s, and overall wall time was 702.31 s. All 200 VMAF frames
+completed with mean encoding-fidelity VMAF 99.967341.
+The earlier concurrently measured train render
 time of 729.90 s is not an equivalent resource baseline.
+
+Both baseline browser workers loaded capture code before the detailed stage
+instrumentation was added, so their logs only contain full per-frame wall time.
+Do not infer missing seek/capture/transfer durations from this run. The isolated
+manual-update/no-read-pause variant is being measured with current instrumentation
+under `results/render-benchmark/train-hd-manual-profile/`. It is not yet a proven
+speedup; it must complete and its 200 PNGs/poses must be checked against baseline.
 
 Per-frame diagnostics now sum every browser probe and report:
 
