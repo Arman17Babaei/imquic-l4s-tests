@@ -79,7 +79,13 @@ export async function renderReference(page, candidateManifest, tracePath, direct
     if (!gridMode && candidate.frames.some(frame => !Number.isFinite(frame.timestampMs) || !frame.cameraPose))
         throw new Error('candidate frames require finite timestamps and camera poses');
     fs.mkdirSync(directory);
-    await page.waitForFunction(() => window.__priorityMoqMvp?.renderReady || window.__priorityMoqMvp?.failure,
+    await page.waitForFunction(() => {
+        const state = window.__priorityMoqMvp;
+        const renderer = state?.rendererState;
+        return state?.failure || state?.renderReady || (renderer && state.sourceGaussians > 0 &&
+            state.appliedGaussians === state.sourceGaussians && renderer.activeGaussians === state.sourceGaussians &&
+            !renderer.sorting && !renderer.pendingSort);
+    },
         null, { timeout: timeoutMs });
     const frames = [];
     let complete = false;
@@ -101,8 +107,9 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         // the async readback fence so software WebGL need not
                         // wait for a future animation frame to flush its queue.
                         const gl = document.querySelector('canvas').getContext('webgl2');
-                        gl?.flush();
-                        await pending;
+                        const submit = setInterval(() => gl?.finish(), 10);
+                        try { await pending; }
+                        finally { clearInterval(submit); }
                     }
                     else await window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;

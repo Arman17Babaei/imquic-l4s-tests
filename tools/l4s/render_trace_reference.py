@@ -7,9 +7,11 @@ import fcntl
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import socket
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -188,8 +190,20 @@ def main(argv: list[str] | None = None) -> None:
                     time.sleep(0.1)
             with (output / 'reference-browser.log').open('w') as browser_log:
                 browser_started = time.perf_counter()
-                subprocess.run(browser_command, check=True, cwd=ROOT, stdout=browser_log,
-                               stderr=subprocess.STDOUT, timeout=args.timeout_seconds + 60)
+                browser = subprocess.Popen(browser_command, cwd=ROOT, stdout=browser_log,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+                try:
+                    status = browser.wait(timeout=args.timeout_seconds + 60)
+                    if status:
+                        raise subprocess.CalledProcessError(status, browser_command)
+                finally:
+                    # Chromium descendants otherwise survive a timed-out Node
+                    # runner and consume cores during subsequent benchmarks.
+                    try:
+                        os.killpg(browser.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    browser.wait()
                 evidence['render_seconds'] = time.perf_counter() - browser_started
         telemetry = json.loads((output / 'reference-telemetry.json').read_text())
         evidence['browserContext'] = telemetry.get('browserContext')
