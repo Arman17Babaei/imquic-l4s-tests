@@ -125,7 +125,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         sourceGaussians: state.sourceGaussians, timestampMs, cameraPose: state.cameraPose,
                         appliedGaussians: state.appliedGaussians,
                         image: captured?.image ?? document.querySelector('canvas').toDataURL('image/png') };
-                }, { trace, timestampMs: candidateFrame.timestampMs, seek, timeoutMs });
+                }, { trace: seek ? trace : null, timestampMs: candidateFrame.timestampMs, seek, timeoutMs });
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
                 if (++probes % 100 === 0) console.log(JSON.stringify({
                     referenceFrame: candidateFrame.index, probes, ready: sample.ready,
