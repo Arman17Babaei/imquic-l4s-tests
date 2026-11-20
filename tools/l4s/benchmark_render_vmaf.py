@@ -106,6 +106,7 @@ def main():
                'logical_cpus': os.cpu_count(), 'threads': args.threads,
                'cpu_affinity': sorted(os.sched_getaffinity(0)),
                'gpu_mode': args.gpu_mode,
+               'mesa_thread_limit': os.environ.get('LP_NUM_THREADS'),
                'scope': 'external candidate comparison' if args.candidate else 'render + encode + encoding-fidelity VMAF',
                'ffmpeg_sha256': sha256(binary),
                'ffmpeg_version': subprocess.run([binary, '-version'], capture_output=True, text=True, check=True).stdout}
