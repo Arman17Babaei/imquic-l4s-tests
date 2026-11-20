@@ -103,8 +103,10 @@ export async function renderReference(page, candidateManifest, tracePath, direct
             let previous = null, settled = null;
             let seek = true;
             let probes = 0;
+            let browserProbeMs = 0, browserCaptureMs = 0, evaluateWallMs = 0;
             while (Date.now() < deadline) {
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek started');
+                const evaluateStarted = performance.now();
                 const sample = await page.evaluate(async ({ trace, timestampMs, seek, timeoutMs }) => {
                     const probeStarted = performance.now();
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
@@ -136,6 +138,9 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         browserProbeMs: performance.now() - probeStarted,
                         browserCaptureMs: performance.now() - captureStarted, image };
                 }, { trace: seek ? trace : null, timestampMs: candidateFrame.timestampMs, seek, timeoutMs });
+                evaluateWallMs += performance.now() - evaluateStarted;
+                browserProbeMs += sample.browserProbeMs ?? 0;
+                browserCaptureMs += sample.browserCaptureMs ?? 0;
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
                 if (++probes % 100 === 0) console.log(JSON.stringify({
                     referenceFrame: candidateFrame.index, probes, ready: sample.ready,
@@ -150,6 +155,9 @@ export async function renderReference(page, candidateManifest, tracePath, direct
             }
             if (gridMode) console.log(JSON.stringify({ referenceFrame: candidateFrame.index,
                 timestampMs: candidateFrame.timestampMs, frameWallMs: Date.now() - frameStarted, probes,
+                browserProbeMs, browserCaptureMs, evaluateWallMs,
+                browserSeekMs: browserProbeMs - browserCaptureMs,
+                evaluateOverheadMs: evaluateWallMs - browserProbeMs,
                 finalBrowserProbeMs: settled?.browserProbeMs, finalBrowserCaptureMs: settled?.browserCaptureMs }));
             if (!settled) throw new Error(`reference frame ${candidateFrame.index} did not settle`);
             if (!gridMode) {
