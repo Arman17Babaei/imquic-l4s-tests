@@ -87,10 +87,12 @@ export async function renderReference(page, candidateManifest, tracePath, direct
         for (const candidateFrame of candidate.frames) {
             const deadline = Date.now() + timeoutMs;
             let previous = null, settled = null;
+            let seek = true;
             while (Date.now() < deadline) {
-                const sample = await page.evaluate(async ({ trace, timestampMs }) => {
+                const sample = await page.evaluate(async ({ trace, timestampMs, seek }) => {
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
-                    await window.__priorityMoqSeek(trace, timestampMs);
+                    if (seek) await window.__priorityMoqSeek(trace, timestampMs);
+                    else window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;
                     // renderReady includes a wall-clock debounce intended for live
                     // animation. A seek stops that animation. Check the underlying
@@ -100,7 +102,10 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         sourceGaussians: state.sourceGaussians, timestampMs, cameraPose: state.cameraPose,
                         appliedGaussians: state.appliedGaussians,
                         image: document.querySelector('canvas').toDataURL('image/png') };
-                }, { trace, timestampMs: candidateFrame.timestampMs });
+                }, { trace, timestampMs: candidateFrame.timestampMs, seek });
+                // Re-seeking forces Spark to regenerate and sort even for the
+                // same pose, invalidating readiness on every stability probe.
+                seek = false;
                 if (referenceSampleReady({ ...sample, renderReady: sample.ready }) && sample.image === previous) { settled = sample; break; }
                 previous = sample.image;
                 await page.waitForTimeout(50);
