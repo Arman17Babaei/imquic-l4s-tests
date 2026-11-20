@@ -57,6 +57,10 @@ busy-core value as a reliable machine-utilization estimate.
 Train, room and truck's 60 PNGs were also checked byte-for-byte against the
 completed single-renderer captures, including poses and timestamps: all match.
 The other two scenes lack completed single-renderer baselines.
+Drjohnson has 16 distinct PNGs across 20 changing poses; five samples are black.
+This may reflect its trace looking outside the scene, but no independent baseline
+has yet confirmed those samples. Treat its visual correctness as unverified,
+even though full Gaussian-count, timing-grid and VMAF checks completed.
 
 The Mesa OpenGL/EGL backend failed to create a WebGL context in this environment.
 Manual-update, synchronous-readback and sort-drain variants did not produce a

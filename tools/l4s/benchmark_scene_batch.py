@@ -63,6 +63,7 @@ def main():
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--parallel-scenes', type=int, default=5)
     parser.add_argument('--render-workers', type=int, default=1)
+    parser.add_argument('--scene-workers', help='comma-separated worker counts in fixed scene order')
     parser.add_argument('--fps', type=int, default=1)
     parser.add_argument('--width', type=int, default=320)
     parser.add_argument('--height', type=int, default=180)
@@ -89,6 +90,18 @@ def main():
     if (min(args.fps, args.width, args.height, args.timeout_seconds, args.target_seconds,
             args.render_workers) <= 0 or args.render_workers > min(map(len, lanes))):
         parser.error('positive settings and at least one CPU per render worker are required')
+    workers_by_scene = {scene: args.render_workers for scene, _ in SCENES}
+    if args.scene_workers:
+        try:
+            values = [int(value) for value in args.scene_workers.split(',')]
+        except ValueError:
+            parser.error('scene workers must be comma-separated integers')
+        if len(values) != len(SCENES):
+            parser.error('provide one worker count per scene')
+        for index, ((scene, _), workers) in enumerate(zip(SCENES, values)):
+            if not 1 <= workers <= min(len(lanes[index % args.parallel_scenes]), 20 * args.fps):
+                parser.error('scene worker count exceeds CPU lane or frame count')
+            workers_by_scene[scene] = workers
     for scene, trace in SCENES:
         for path in (args.data / f'scenes/{scene}/manifest-v2.json', args.data / 'traces' / trace):
             if not path.is_file():
@@ -109,7 +122,7 @@ def main():
                 '--dist', str(args.dist.resolve()), '--ffmpeg', str(args.ffmpeg.resolve()),
                 '--output', str(output / scene), '--duration', '20', '--fps', str(args.fps),
                 '--width', str(args.width), '--height', str(args.height), '--gpu-mode', 'llvmpipe',
-                '--threads', '2', '--render-workers', str(args.render_workers),
+                '--threads', '2', '--render-workers', str(workers_by_scene[scene]),
                 '--timeout-seconds', str(args.timeout_seconds), '--target-seconds', str(args.target_seconds)]
             start = time.perf_counter()
             with (output / f'{scene}.log').open('w') as log:
@@ -139,6 +152,7 @@ def main():
     summary = {'complete': len(results) == 5 and all(result['complete'] for result in results),
                'wall_seconds': elapsed, 'target_seconds': args.target_seconds,
                'parallel_scenes': args.parallel_scenes, 'render_workers_per_scene': args.render_workers,
+               'scene_workers': workers_by_scene,
                'fps': args.fps, 'viewport': [args.width, args.height], 'duration_seconds_per_scene': 20,
                'cpu_affinity': cpus, 'peak_tree_rss_bytes': peak_rss,
                'cpu_lanes': lanes,
