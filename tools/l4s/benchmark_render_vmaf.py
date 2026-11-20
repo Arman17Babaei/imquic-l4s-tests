@@ -13,6 +13,7 @@ import math
 import os
 from pathlib import Path
 import platform
+import shutil
 import subprocess
 import time
 
@@ -22,6 +23,11 @@ from render_trace_reference import ROOT, main as render_reference, sha256
 def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
                        height: int, frames: int) -> None:
     probe = binary.with_name('ffprobe')
+    if not probe.is_file():
+        fallback = shutil.which('ffprobe')
+        if fallback is None:
+            raise FileNotFoundError('VMAF benchmark requires ffprobe beside FFmpeg or on PATH')
+        probe = Path(fallback)
     result = json.loads(subprocess.run([
         str(probe), '-v', 'error', '-count_frames', '-select_streams', 'v:0',
         '-show_entries', 'stream=width,height,nb_read_frames,r_frame_rate,start_time',
