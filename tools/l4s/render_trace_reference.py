@@ -137,6 +137,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--gpu-mode', choices=('hardware', 'software'), default='hardware')
     parser.add_argument('--headless', action='store_true')
     args = parser.parse_args(argv)
+    started = time.perf_counter()
     if min(args.fps, args.width, args.height, args.timeout_seconds) <= 0:
         parser.error('FPS, dimensions and timeout must be positive')
     manifest, trace, dist = args.manifest.resolve(), args.trace.resolve(), args.dist.resolve()
@@ -186,8 +187,10 @@ def main(argv: list[str] | None = None) -> None:
                         raise TimeoutError('reference server did not start')
                     time.sleep(0.1)
             with (output / 'reference-browser.log').open('w') as browser_log:
+                browser_started = time.perf_counter()
                 subprocess.run(browser_command, check=True, cwd=ROOT, stdout=browser_log,
                                stderr=subprocess.STDOUT, timeout=args.timeout_seconds + 60)
+                evidence['render_seconds'] = time.perf_counter() - browser_started
         telemetry = json.loads((output / 'reference-telemetry.json').read_text())
         evidence['browserContext'] = telemetry.get('browserContext')
         evidence['browserVersion'] = telemetry.get('browserVersion')
@@ -195,8 +198,10 @@ def main(argv: list[str] | None = None) -> None:
         if telemetry.get('failure') or telemetry.get('appliedGaussians') != expected_gaussians:
             raise RuntimeError('reference did not render the complete scene; inspect telemetry')
         evidence['appliedGaussians'] = telemetry['appliedGaussians']
+        encode_started = time.perf_counter()
         evidence['video'] = encode_snapshot_video(output / 'reference-frames/frames.json',
                                                   output / 'reference.mp4', fps=args.fps)
+        evidence['encode_seconds'] = time.perf_counter() - encode_started
         evidence['complete'] = True
     except Exception as error:
         evidence['failure'] = str(error)
@@ -212,6 +217,7 @@ def main(argv: list[str] | None = None) -> None:
         telemetry_path = output / 'reference-telemetry.json'
         if telemetry_path.exists():
             evidence['browserContext'] = json.loads(telemetry_path.read_text()).get('browserContext')
+        evidence['total_seconds'] = time.perf_counter() - started
         (output / 'reference-summary.json').write_text(json.dumps(evidence, indent=2) + '\n')
 
 
