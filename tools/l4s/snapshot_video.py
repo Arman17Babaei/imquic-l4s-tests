@@ -59,7 +59,10 @@ def snapshot_video_command(manifest: Path, output: Path, fps: int = 10) -> list[
         '-c:v', 'libvpx-vp9', '-crf', '18', '-b:v', '0']
     return ['ffmpeg', '-hide_banner', '-loglevel', 'warning', '-n',
             '-framerate', str(fps), '-start_number', '0', '-i', str(manifest.parent / 'frame-%06d.png'),
-            '-frames:v', str(len(frames)), *codec, '-pix_fmt', 'yuv420p', '-threads', '2', str(output)]
+            '-frames:v', str(len(frames)), *codec,
+            '-vf', 'scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p',
+            '-color_primaries', 'bt709', '-color_trc', 'bt709', '-colorspace', 'bt709',
+            '-color_range', 'tv', '-pix_fmt', 'yuv420p', '-threads', '2', str(output)]
 
 
 def encode_snapshot_video(manifest: Path, output: Path, fps: int = 10) -> dict:

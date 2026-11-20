@@ -106,12 +106,12 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         // Seeking stops requestAnimationFrame. Submit pending
                         // software WebGL work while its async readback resolves.
                         const gl = document.querySelector('canvas').getContext('webgl2');
-                        const submit = setInterval(() => gl?.flush(), 10);
+                        gl?.flush();
                         let timer;
                         try { await Promise.race([pending, new Promise((_, reject) => {
                             timer = setTimeout(() => reject(new Error(`reference seek timed out at ${timestampMs} ms`)), timeoutMs);
                         })]); }
-                        finally { clearInterval(submit); clearTimeout(timer); }
+                        finally { clearTimeout(timer); }
                     }
                     else await window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;
