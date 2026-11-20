@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Time a cold trace render, MP4 encoding and full-frame CPU VMAF.
+
+Without --candidate, measure encoding fidelity against the clean rendered PNGs.
+With --candidate, measure the supplied video's fidelity; its generation is NOT
+included in the reported wall time. Never substitute SSIM for missing VMAF.
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import platform
+import subprocess
+import time
+
+from render_trace_reference import ROOT, main as render_reference
+
+
+def bounded_trace(trace: list[dict], duration_ms: float) -> list[dict]:
+    if (not math.isfinite(duration_ms) or duration_ms <= 0 or len(trace) < 2
+            or trace[0]['timestamp_ms'] != 0
+            or any(b['timestamp_ms'] <= a['timestamp_ms'] for a, b in zip(trace, trace[1:]))
+            or trace[-1]['timestamp_ms'] < duration_ms):
+        raise ValueError('trace must start at zero, be ordered and cover the requested duration')
+    # Preserve the first pose after the boundary and rescale only that final
+    # segment's endpoint by interpolation, not by stretching the whole trace.
+    from copy import deepcopy
+    result = [deepcopy(frame) for frame in trace if frame['timestamp_ms'] < duration_ms]
+    right = next(frame for frame in trace if frame['timestamp_ms'] >= duration_ms)
+    if right['timestamp_ms'] == duration_ms:
+        result.append(deepcopy(right))
+    else:
+        left = result[-1]
+        fraction = (duration_ms - left['timestamp_ms']) / (right['timestamp_ms'] - left['timestamp_ms'])
+        def interpolate(a, b):
+            if isinstance(a, list):
+                return [interpolate(x, y) for x, y in zip(a, b)]
+            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+                return a + (b - a) * fraction
+            return a
+        result.append({key: interpolate(value, right[key]) for key, value in left.items()})
+        result[-1]['timestamp_ms'] = duration_ms
+    return result
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--manifest', type=Path, required=True)
+    parser.add_argument('--trace', type=Path, required=True)
+    parser.add_argument('--dist', type=Path, required=True)
+    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--ffmpeg', type=Path, required=True, help='FFmpeg built with libvmaf')
+    parser.add_argument('--candidate', type=Path)
+    parser.add_argument('--duration', type=float, default=20)
+    parser.add_argument('--fps', type=int, default=10)
+    parser.add_argument('--width', type=int, default=960)
+    parser.add_argument('--height', type=int, default=540)
+    parser.add_argument('--threads', type=int, default=8)
+    parser.add_argument('--target-seconds', type=float, default=120)
+    args = parser.parse_args()
+    if min(args.fps, args.width, args.height, args.threads, args.target_seconds) <= 0:
+        parser.error('dimensions, FPS, threads and target must be positive')
+    output = args.output.resolve()
+    if not output.is_relative_to(ROOT / 'results') or output.exists():
+        parser.error('output must be a new directory under results/')
+    trace = bounded_trace(json.loads(args.trace.read_text()), args.duration * 1000)
+    binary = args.ffmpeg.resolve()
+    filters = subprocess.run([binary, '-hide_banner', '-filters'], check=True, capture_output=True, text=True)
+    if ' libvmaf ' not in filters.stdout:
+        parser.error('selected FFmpeg lacks libvmaf')
+    output.mkdir(parents=True)
+    (output / 'trace.json').write_text(json.dumps(trace) + '\n')
+    summary = {'complete': False, 'duration_seconds': args.duration, 'fps': args.fps,
+               'viewport': [args.width, args.height], 'cpu': platform.processor(),
+               'logical_cpus': os.cpu_count(), 'threads': args.threads,
+               'scope': 'external candidate comparison' if args.candidate else 'render + encode + encoding-fidelity VMAF',
+               'ffmpeg_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+               'ffmpeg_version': subprocess.run([binary, '-version'], capture_output=True, text=True, check=True).stdout}
+    started = time.perf_counter()
+    try:
+        render_reference(['--manifest', str(args.manifest.resolve()), '--trace', str(output / 'trace.json'),
+                          '--dist', str(args.dist.resolve()), '--output', str(output / 'render'),
+                          '--fps', str(args.fps), '--width', str(args.width), '--height', str(args.height),
+                          '--gpu-mode', 'software', '--headless', '--timeout-seconds', '1200'])
+        render = json.loads((output / 'render/reference-summary.json').read_text())
+        summary.update({key: render[key] for key in ('render_seconds', 'encode_seconds', 'total_seconds')})
+        candidate = args.candidate.resolve() if args.candidate else output / 'render/reference.mp4'
+        # Both streams use the same frame-grid time base. No resizing, duplicate
+        # frames or VMAF subsampling; RGB is explicitly converted to BT.709 limited.
+        command = [str(binary), '-hide_banner', '-loglevel', 'info', '-threads', '2', '-i', str(candidate),
+                   '-framerate', str(args.fps), '-threads', '2', '-i',
+                   str(output / 'render/reference-frames/frame-%06d.png'),
+                   '-filter_complex_threads', '2', '-filter_complex',
+                   f'[0:v]settb=AVTB,setpts=PTS-STARTPTS,format=yuv420p[d];'
+                   f'[1:v]settb=AVTB,setpts=PTS-STARTPTS,scale=in_range=full:out_range=limited:'
+                   f'out_color_matrix=bt709,format=yuv420p[r];'
+                   f'[d][r]libvmaf=n_threads={args.threads}:log_fmt=json:log_path=vmaf.json',
+                   '-f', 'null', '-']
+        summary['vmaf_command'] = command
+        vmaf_started = time.perf_counter()
+        with (output / 'vmaf.log').open('w') as log:
+            subprocess.run(command, cwd=output, stdout=log, stderr=subprocess.STDOUT, check=True)
+        summary['vmaf_seconds'] = time.perf_counter() - vmaf_started
+        scores = json.loads((output / 'vmaf.json').read_text())
+        expected = math.ceil(args.duration * args.fps)
+        if len(scores['frames']) != expected:
+            raise ValueError(f'VMAF returned {len(scores["frames"])} frames; expected {expected}')
+        summary.update(complete=True, frames=expected, mean_vmaf=scores['pooled_metrics']['vmaf']['mean'])
+    finally:
+        summary['wall_seconds'] = time.perf_counter() - started
+        summary['target_met'] = summary['complete'] and summary['wall_seconds'] < args.target_seconds
+        (output / 'benchmark.json').write_text(json.dumps(summary, indent=2) + '\n')
+        print(json.dumps(summary, indent=2))
+
+
+if __name__ == '__main__':
+    main()
