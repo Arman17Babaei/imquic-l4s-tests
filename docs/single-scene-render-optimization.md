@@ -39,6 +39,20 @@ not guaranteed faster. The experiment is under
 `results/render-benchmark/train-hd-raw-capture/`; decoded pixel equality rather
 than compressed PNG byte equality is required before accepting its output.
 
+The raw-over-base64 trial completed in **843.64 s** for loading/render/capture
+(877.40 s overall), versus 762.97 s for the same manual-update player using
+browser PNG capture and 666.96 s for the original baseline. It is not a speedup
+and remains opt-in only. Median protocol/evaluate overhead increased to
+1.13–1.30 s per frame, and median capture times were 3.55–4.61 s. Disabling
+browser PNG compression did not remove the measured capture bottleneck; these
+timings include synchronous readback and raw-to-base64 conversion. They do not
+prove PNG compression itself takes seconds or rule out binary streaming.
+The 66.70-second target remains unmet. VMAF completed for all 200 frames with
+the same mean 99.967341, but equal VMAF alone is not a pixel-equality test.
+An independent decoded-RGBA comparison subsequently confirmed exact equality
+for all 200 1280×720 frames, including matching poses, timestamps and Gaussian
+counts (`train-hd-raw-capture/validation.json`). Correctness passed, speed did not.
+
 Per-frame diagnostics now sum every browser probe and report:
 
 - `browserSeekMs`: seek/update/draw work before capture;
