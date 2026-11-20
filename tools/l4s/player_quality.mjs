@@ -99,16 +99,19 @@ export async function renderReference(page, candidateManifest, tracePath, direct
             let probes = 0;
             while (Date.now() < deadline) {
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek started');
-                const sample = await page.evaluate(async ({ trace, timestampMs, seek }) => {
+                const sample = await page.evaluate(async ({ trace, timestampMs, seek, timeoutMs }) => {
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
                     if (seek) {
                         const pending = window.__priorityMoqSeek(trace, timestampMs);
                         // Seeking stops requestAnimationFrame. Submit pending
                         // software WebGL work while its async readback resolves.
                         const gl = document.querySelector('canvas').getContext('webgl2');
-                        const submit = setInterval(() => gl?.finish(), 10);
-                        try { await pending; }
-                        finally { clearInterval(submit); }
+                        const submit = setInterval(() => gl?.flush(), 10);
+                        let timer;
+                        try { await Promise.race([pending, new Promise((_, reject) => {
+                            timer = setTimeout(() => reject(new Error(`reference seek timed out at ${timestampMs} ms`)), timeoutMs);
+                        })]); }
+                        finally { clearInterval(submit); clearTimeout(timer); }
                     }
                     else await window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;
@@ -120,7 +123,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         sourceGaussians: state.sourceGaussians, timestampMs, cameraPose: state.cameraPose,
                         appliedGaussians: state.appliedGaussians,
                         image: document.querySelector('canvas').toDataURL('image/png') };
-                }, { trace, timestampMs: candidateFrame.timestampMs, seek });
+                }, { trace, timestampMs: candidateFrame.timestampMs, seek, timeoutMs });
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
                 if (++probes % 100 === 0) console.log(JSON.stringify({
                     referenceFrame: candidateFrame.index, probes, ready: sample.ready,
