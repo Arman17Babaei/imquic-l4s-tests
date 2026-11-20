@@ -37,7 +37,9 @@ class SnapshotVideoTest(unittest.TestCase):
             command = snapshot_video_command(manifest, root / 'reference.mp4')
             self.assertEqual(command[command.index('-framerate') + 1], '10')
             self.assertEqual(command[command.index('-frames:v') + 1], '3')
-            self.assertNotIn('-vf', command)
+            self.assertEqual(command[command.index('-vf') + 1],
+                'scale=in_range=full:out_range=limited:out_color_matrix=bt709,format=yuv420p')
+            self.assertEqual(command[command.index('-colorspace') + 1], 'bt709')
             self.assertNotIn('setpts', ' '.join(command))
             for invalid in ([frames[1], frames[2]], [frames[0], frames[2]]):
                 manifest.write_text(json.dumps({'complete': True, 'frames': invalid}))
