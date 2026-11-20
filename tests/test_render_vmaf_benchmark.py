@@ -56,6 +56,6 @@ class BoundedTraceTests(unittest.TestCase):
         self.assertEqual(bounded_trace(trace, 20), trace[:3])
 
     def test_rejects_short_or_unordered_trace(self):
-        for times in ((0, 10), (1, 30), (0, 30, 20)):
+        for times in ((0, 10), (1, 30), (0, 30, 20), (0, float('nan')), (0, float('inf'))):
             with self.assertRaises(ValueError):
                 bounded_trace([{'timestamp_ms': x} for x in times], 20)
