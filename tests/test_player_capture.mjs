@@ -62,6 +62,41 @@ test('reference readiness accepts a settled complete sort without live debounce'
     assert.equal(quality.referenceSampleReady({ ...state, rendererState: { ...state.rendererState, activeGaussians: 41 } }), false);
 });
 
+test('reference browser callback seeks once and reuses capture PNG', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-callback-'));
+    const trace = path.join(root, 'trace.json');
+    fs.writeFileSync(trace, JSON.stringify([{ timestamp_ms: 0 }, { timestamp_ms: 100 }]));
+    const previousWindow = globalThis.window, previousDocument = globalThis.document;
+    let seeks = 0, captures = 0, encodes = 0;
+    const image = 'data:image/png;base64,cG5n';
+    globalThis.window = {
+        __priorityMoqMvp: { renderReady: true, sourceGaussians: 42, appliedGaussians: 42,
+            cameraPose: {}, rendererState: { activeGaussians: 42, sorting: false, pendingSort: false } },
+        async __priorityMoqSeek() { seeks++; },
+        __priorityMoqCapture() { captures++; return { image }; },
+    };
+    globalThis.document = { querySelector() { return {
+        getContext() { return { flush() {} }; },
+        toDataURL() { encodes++; return image; },
+    }; } };
+    const page = { async waitForFunction() {}, async waitForTimeout() {},
+        async evaluate(callback, argument) { return callback(argument); } };
+    try {
+        await quality.renderReference(page, null, trace, path.join(root, 'frames'), 1000,
+            { traceGrid: true, fps: 10 });
+        assert.equal(seeks, 1);
+        assert.equal(captures, 1);
+        assert.equal(encodes, 1);
+    } finally {
+        globalThis.window = previousWindow;
+        globalThis.document = previousDocument;
+        fs.rmSync(root, { recursive: true });
+    }
+});
+
 test('independent reference seeks every grid pose and records actual poses without candidate data', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');
