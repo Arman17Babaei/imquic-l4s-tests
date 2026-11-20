@@ -140,7 +140,8 @@ def main():
         raise
     finally:
         summary['wall_seconds'] = time.perf_counter() - started
-        summary['target_met'] = summary['complete'] and summary['wall_seconds'] < args.target_seconds
+        summary['target_met'] = (summary['complete'] and summary['wall_seconds'] < args.target_seconds
+                                 if not args.candidate else None)
         (output / 'benchmark.json').write_text(json.dumps(summary, indent=2) + '\n')
         print(json.dumps(summary, indent=2))
 
