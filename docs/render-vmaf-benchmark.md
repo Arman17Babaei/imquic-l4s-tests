@@ -48,6 +48,11 @@ the accumulator generation returns, then Spark's depth readback for sorting
 does not return. This is stronger evidence than the earlier live-debounce
 hypothesis; readiness changes alone have not fixed the actual runtime blocker.
 
+`--gpu-mode llvmpipe` selects ANGLE Vulkan with Mesa's lavapipe ICD (override
+the ICD path using `L4S_LAVAPIPE_ICD`). This is still CPU rendering, not hardware
+acceleration. The first lavapipe trial eventually returned from its first seek,
+but did not establish a completed sequence or an under-two-minute result.
+
 Focused Python benchmark/reference/cache/video tests and Node capture unit
 tests pass. Full browser playback tests require the missing local player
 submodule build and failed in this checkout; they are not a passing acceptance
