@@ -68,7 +68,7 @@ def main():
     parser.add_argument('--width', type=int, default=960)
     parser.add_argument('--height', type=int, default=540)
     parser.add_argument('--threads', type=int, default=8)
-    parser.add_argument('--gpu-mode', choices=('software', 'hardware'), default='software')
+    parser.add_argument('--gpu-mode', choices=('software', 'hardware', 'llvmpipe'), default='software')
     parser.add_argument('--target-seconds', type=float, default=120)
     parser.add_argument('--timeout-seconds', type=float, default=300)
     args = parser.parse_args()
