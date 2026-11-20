@@ -7,9 +7,27 @@ from benchmark_render_vmaf import bounded_trace, validate_candidate
 from unittest.mock import patch
 from types import SimpleNamespace
 import json
+import tempfile
+from prepare_benchmark_heartbeat import BEFORE, AFTER, prepare, ROOT
 
 
 class BoundedTraceTests(unittest.TestCase):
+    def test_heartbeat_adapter_is_guarded_and_preserves_original(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / 'results') as temporary:
+            root = Path(temporary)
+            source = root / 'source'
+            (source / 'assets').mkdir(parents=True)
+            asset = source / 'assets/main.js'
+            asset.write_text(BEFORE)
+            prepare(source, root / 'patched')
+            self.assertEqual(asset.read_text(), BEFORE)
+            self.assertEqual((root / 'patched/assets/main.js').read_text(), AFTER)
+            with self.assertRaises(ValueError):
+                prepare(source, root / 'patched')
+            asset.write_text('unknown build')
+            with self.assertRaisesRegex(ValueError, 'unsupported player'):
+                prepare(source, root / 'unsupported')
+
     def test_candidate_must_match_grid(self):
         stream = dict(width=640, height=360, nb_read_frames='200', r_frame_rate='10/1', start_time='0')
         def validate(overrides):
