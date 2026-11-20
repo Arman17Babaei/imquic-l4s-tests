@@ -52,6 +52,16 @@ test('reference trace grid rejects invalid duration, origin, timestamps and rate
         assert.throws(() => quality.createTraceFrameGrid([{ timestamp_ms: 0 }, { timestamp_ms: 100 }], fps));
 });
 
+test('reference readiness accepts a settled complete sort without live debounce', () => {
+    const state = { renderReady: false, sourceGaussians: 42, appliedGaussians: 42,
+        rendererState: { activeGaussians: 42, sorting: false, pendingSort: false } };
+    assert.equal(quality.referenceSampleReady(state), true);
+    assert.equal(quality.referenceSampleReady({ ...state, appliedGaussians: 41 }), false);
+    assert.equal(quality.referenceSampleReady({ ...state, rendererState: { ...state.rendererState, sorting: true } }), false);
+    assert.equal(quality.referenceSampleReady({ ...state, rendererState: { ...state.rendererState, pendingSort: true } }), false);
+    assert.equal(quality.referenceSampleReady({ ...state, rendererState: { ...state.rendererState, activeGaussians: 41 } }), false);
+});
+
 test('independent reference seeks every grid pose and records actual poses without candidate data', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');

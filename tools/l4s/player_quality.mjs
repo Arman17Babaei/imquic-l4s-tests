@@ -60,6 +60,14 @@ export function createTraceFrameGrid(trace, fps = 10) {
         nominalTimestampMs: index * 1000 / fps, timestampMs: index * 1000 / fps }));
 }
 
+export function referenceSampleReady(state) {
+    const renderer = state.rendererState;
+    return Boolean(state.renderReady || (renderer &&
+        state.sourceGaussians > 0 && state.appliedGaussians === state.sourceGaussians &&
+        renderer.activeGaussians === state.sourceGaussians &&
+        !renderer.sorting && !renderer.pendingSort));
+}
+
 export async function renderReference(page, candidateManifest, tracePath, directory, timeoutMs, options = {}) {
     const trace = JSON.parse(fs.readFileSync(tracePath, 'utf8'));
     const fps = options.fps ?? 10;
@@ -84,11 +92,16 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
                     await window.__priorityMoqSeek(trace, timestampMs);
                     const state = window.__priorityMoqMvp;
-                    return { ready: state.renderReady, timestampMs, cameraPose: state.cameraPose,
+                    // renderReady includes a wall-clock debounce intended for live
+                    // animation. A seek stops that animation. Check the underlying
+                    // sort state as well as identical pixels instead of waiting
+                    // for the live debounce to advance after every seek.
+                    return { ready: state.renderReady, rendererState: state.rendererState,
+                        sourceGaussians: state.sourceGaussians, timestampMs, cameraPose: state.cameraPose,
                         appliedGaussians: state.appliedGaussians,
                         image: document.querySelector('canvas').toDataURL('image/png') };
                 }, { trace, timestampMs: candidateFrame.timestampMs });
-                if (sample.ready && sample.image === previous) { settled = sample; break; }
+                if (referenceSampleReady({ ...sample, renderReady: sample.ready }) && sample.image === previous) { settled = sample; break; }
                 previous = sample.image;
                 await page.waitForTimeout(50);
             }
@@ -108,6 +121,8 @@ export async function renderReference(page, candidateManifest, tracePath, direct
             }
             if (gridMode) settled.nominalTimestampMs = candidateFrame.nominalTimestampMs;
             delete settled.ready;
+            delete settled.rendererState;
+            delete settled.sourceGaussians;
             writeFrame(directory, frames, settled);
         }
         complete = true;
