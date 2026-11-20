@@ -113,7 +113,9 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         })]); }
                         finally { clearTimeout(timer); }
                     }
-                    else await window.__priorityMoqCapture();
+                    // The capture hook already serializes the canvas. Reuse
+                    // that PNG rather than encoding it a second time below.
+                    const captured = seek ? null : await window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;
                     // renderReady includes a wall-clock debounce intended for live
                     // animation. A seek stops that animation. Check the underlying
@@ -122,7 +124,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                     return { ready: state.renderReady, rendererState: state.rendererState,
                         sourceGaussians: state.sourceGaussians, timestampMs, cameraPose: state.cameraPose,
                         appliedGaussians: state.appliedGaussians,
-                        image: document.querySelector('canvas').toDataURL('image/png') };
+                        image: captured?.image ?? document.querySelector('canvas').toDataURL('image/png') };
                 }, { trace, timestampMs: candidateFrame.timestampMs, seek, timeoutMs });
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
                 if (++probes % 100 === 0) console.log(JSON.stringify({
