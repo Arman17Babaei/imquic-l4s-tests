@@ -158,7 +158,7 @@ def main():
                'cpu_lanes': lanes,
                'peak_observed_tree_cpu_seconds': peak_cpu_seconds,
                'completed_children_cpu_seconds': cpu_seconds,
-               'average_busy_cores': cpu_seconds / elapsed,
+               'completed_children_average_busy_cores': cpu_seconds / elapsed,
                'sampled_cumulative_cpu_seconds': sum(cpu_samples.values()),
                'sampled_average_busy_cores': sum(cpu_samples.values()) / elapsed,
                'batch_harness_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),

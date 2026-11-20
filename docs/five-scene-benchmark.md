@@ -19,6 +19,9 @@ python3 tools/l4s/benchmark_scene_batch.py \
 `--parallel-scenes 1` runs sequentially; larger values allocate disjoint CPU
 lanes to scenes. `--render-workers` subdivides each lane into independent frame
 shards. No cached rendered frames are reused. The output directory must be new.
+`--lane-cpus '0,1;2,3;4,5;6,7;8,9'` explicitly selects disjoint lanes;
+`--scene-workers 1,1,2,2,2` permits unequal worker budgets. Lane lists must be
+subsets of the invoking process's affinity, and workers must fit each lane.
 
 ## Initial baseline: target not met
 
