@@ -50,6 +50,8 @@ class BoundedTraceTests(unittest.TestCase):
             prepare(source, root / 'patched')
             self.assertEqual(asset.read_text(), BEFORE)
             self.assertEqual((root / 'patched/assets/main.js').read_text(), AFTER)
+            prepare(source, root / 'manual', manual_updates=True)
+            self.assertEqual((root / 'manual/assets/main.js').read_text(), 'F.autoUpdate=!1,' + BEFORE)
             with self.assertRaises(ValueError):
                 prepare(source, root / 'patched')
             asset.write_text('unknown build')

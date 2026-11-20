@@ -6,6 +6,7 @@ import argparse
 from concurrent.futures import ThreadPoolExecutor
 import json
 import os
+import resource
 from pathlib import Path
 import subprocess
 import sys
@@ -67,6 +68,7 @@ def main():
         parser.error('output must be a new directory under results/')
     output.mkdir(parents=True)
     started = time.perf_counter()
+    usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     def run_lane(lane):
         assigned = cpus[len(cpus) * lane // args.parallel_scenes:len(cpus) * (lane + 1) // args.parallel_scenes]
         results = []
@@ -101,12 +103,17 @@ def main():
             time.sleep(0.5)
         results = [result for future in futures for result in future.result()]
     elapsed = time.perf_counter() - started
+    usage_after = resource.getrusage(resource.RUSAGE_CHILDREN)
+    cpu_seconds = (usage_after.ru_utime + usage_after.ru_stime -
+                   usage_before.ru_utime - usage_before.ru_stime)
     summary = {'complete': len(results) == 5 and all(result['complete'] for result in results),
                'wall_seconds': elapsed, 'target_seconds': args.target_seconds,
                'parallel_scenes': args.parallel_scenes, 'render_workers_per_scene': args.render_workers,
                'fps': args.fps, 'viewport': [args.width, args.height], 'duration_seconds_per_scene': 20,
                'cpu_affinity': cpus, 'peak_tree_rss_bytes': peak_rss,
                'peak_observed_tree_cpu_seconds': peak_cpu_seconds,
+               'completed_children_cpu_seconds': cpu_seconds,
+               'average_busy_cores': cpu_seconds / elapsed,
                'resource_note': 'RSS sums processes and double-counts shared pages; CPU samples exclude exited processes',
                'scope': 'five cold complete scenes + encode + encoding-fidelity VMAF', 'scenes': results}
     summary['target_met'] = summary['complete'] and elapsed < args.target_seconds
