@@ -1,9 +1,13 @@
 # Five-scene render/VMAF batch
 
-Goal: five distinct full scenes, each sampled over 20 seconds at 320×180,
-1 FPS, including loading, rendering, encoding and encoding-fidelity VMAF in
-90 seconds total. This is not 10/30 FPS video or separately rendered progressive
-candidate/reference pairs.
+Required workload: five distinct full scenes, each sampled over 20 seconds at
+320×180, **10 FPS: 200 frames per scene, 1,000 frames total**, including loading,
+rendering, encoding and encoding-fidelity VMAF. The target is 90 seconds total.
+The batch runner now defaults to 10 FPS. No completed timing for this required
+workload has been established yet. All timings below are historical **1 FPS
+diagnostics**, not results for the required 1,000-frame workload. VMAF still
+measures encoding fidelity, not separately rendered progressive candidate/reference
+pairs.
 
 The fixed set is train, room, truck, playroom and drjohnson (11,112,379 Gaussians
 total). Each scene keeps its own original trace, full SH3 payload and provenance.
@@ -13,7 +17,7 @@ python3 tools/l4s/benchmark_scene_batch.py \
   --dist /opt/live4s/experiments/comprehensive-20261120/source/deps/gaussian-player/dist \
   --ffmpeg .toolchains/ffmpeg-7.0.2-amd64-static/ffmpeg \
   --output results/render-benchmark/five-scenes-NEW \
-  --parallel-scenes 5 --render-workers 1 --timeout-seconds 300
+  --fps 10 --parallel-scenes 5 --render-workers 2 --timeout-seconds 1800
 ```
 
 `--parallel-scenes 1` runs sequentially; larger values allocate disjoint CPU
