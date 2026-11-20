@@ -48,14 +48,16 @@ def render_parallel(args, output: Path, expected: int) -> None:
     directory = render / 'reference-frames'
     directory.mkdir(parents=True)
     frames = []
+    from compare_player_sequence import load_frames
     for index, shard in enumerate(shards):
         source = output / f'shard-{index}/reference-frames'
         shard_summary = json.loads((source.parent / 'reference-summary.json').read_text())
         record = json.loads((source / 'frames.json').read_text())
+        validated_frames = load_frames(source / 'frames.json')
         if (not shard_summary['complete'] or not record['complete'] or
                 len(record['frames']) != shard['end'] - shard['start']):
             raise ValueError('incomplete render shard')
-        for frame in record['frames']:
+        for frame in validated_frames:
             slot = len(frames)
             if abs(frame['timestampMs'] - slot * 1000 / args.fps) > 1e-6:
                 raise ValueError('shard timestamp grid mismatch')

@@ -26,7 +26,8 @@ class BoundedTraceTests(unittest.TestCase):
                 for local, slot in enumerate(range(start, end)):
                     file = f'frame-{local:06d}.png'
                     (directory / file).write_bytes(f'pixel-{slot}'.encode())
-                    frames.append(dict(index=local, timestampMs=slot * 1000, file=file, appliedGaussians=42))
+                    frames.append(dict(index=local, timestampMs=slot * 1000, file=file, appliedGaussians=42,
+                        cameraPose=dict(viewMatrix=[1], position=[0, 0, 0], up=[0, 1, 0], fov=50, aspect=1)))
                 (directory / 'frames.json').write_text(json.dumps(dict(complete=True, frames=frames)))
                 (shard / 'reference-summary.json').write_text(json.dumps(dict(complete=True, appliedGaussians=42)))
             with patch('benchmark_render_vmaf.os.sched_getaffinity', return_value={0, 1, 2, 3}), \
