@@ -43,7 +43,10 @@ const renderLoopCapture = options.capture_frames && !options.reference_frames &&
     ? await installRenderLoopCapture(page, options.capture_frames, options.capture_fps, options.capture_camera_timestamps ?? "actual") : null;
 let qualityCapture = null;
 const consoleErrors = [];
-page.on("console", message => { if (message.type() === "error") { consoleErrors.push(message.text()); console.error(message.text()); } });
+page.on("console", message => {
+    if (message.type() === "error") { consoleErrors.push(message.text()); console.error(message.text()); }
+    else if (options.reference_trace_grid) console.log(`BROWSER ${message.text()}`);
+});
 page.on("pageerror", error => { consoleErrors.push(String(error)); console.error(String(error)); });
 const downloadPromise = options.record
     ? page.waitForEvent("download", { timeout: options.timeout_ms })
