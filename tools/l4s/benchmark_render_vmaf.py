@@ -68,6 +68,7 @@ def main():
     parser.add_argument('--width', type=int, default=960)
     parser.add_argument('--height', type=int, default=540)
     parser.add_argument('--threads', type=int, default=8)
+    parser.add_argument('--gpu-mode', choices=('software', 'hardware'), default='software')
     parser.add_argument('--target-seconds', type=float, default=120)
     parser.add_argument('--timeout-seconds', type=float, default=300)
     args = parser.parse_args()
@@ -87,6 +88,7 @@ def main():
                'viewport': [args.width, args.height], 'cpu': platform.processor(),
                'logical_cpus': os.cpu_count(), 'threads': args.threads,
                'cpu_affinity': sorted(os.sched_getaffinity(0)),
+               'gpu_mode': args.gpu_mode,
                'scope': 'external candidate comparison' if args.candidate else 'render + encode + encoding-fidelity VMAF',
                'ffmpeg_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                'ffmpeg_version': subprocess.run([binary, '-version'], capture_output=True, text=True, check=True).stdout}
@@ -95,7 +97,7 @@ def main():
         render_reference(['--manifest', str(args.manifest.resolve()), '--trace', str(output / 'trace.json'),
                           '--dist', str(args.dist.resolve()), '--output', str(output / 'render'),
                           '--fps', str(args.fps), '--width', str(args.width), '--height', str(args.height),
-                          '--gpu-mode', 'software', '--headless', '--timeout-seconds', str(args.timeout_seconds)])
+                          '--gpu-mode', args.gpu_mode, '--headless', '--timeout-seconds', str(args.timeout_seconds)])
         render = json.loads((output / 'render/reference-summary.json').read_text())
         summary.update({key: render[key] for key in ('render_seconds', 'encode_seconds', 'total_seconds')})
         candidate = args.candidate.resolve() if args.candidate else output / 'render/reference.mp4'
