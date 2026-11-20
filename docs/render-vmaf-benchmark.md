@@ -43,6 +43,11 @@ shutdown allowance. Interrupted runs with `complete: false` and
 `target_met: false` are failures, even when interrupted before 120 seconds.
 No under-two-minute end-to-end result has been established.
 
+Instrumented copies of the player further localized the first-seek stall:
+the accumulator generation returns, then Spark's depth readback for sorting
+does not return. This is stronger evidence than the earlier live-debounce
+hypothesis; readiness changes alone have not fixed the actual runtime blocker.
+
 Focused Python benchmark/reference/cache/video tests and Node capture unit
 tests pass. Full browser playback tests require the missing local player
 submodule build and failed in this checkout; they are not a passing acceptance
