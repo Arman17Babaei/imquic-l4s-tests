@@ -175,7 +175,10 @@ def main(argv: list[str] | None = None) -> None:
     player_ui = output / 'player-ui'
     snapshot_player_ui(dist, player_ui)
     evidence.update({'complete': False, 'requestedFps': args.fps, 'viewport': [args.width, args.height],
-                     'mode': 'independent-complete-scene-trace-grid'})
+                     'mode': 'independent-complete-scene-trace-grid',
+                     'harness': {name: sha256(ROOT / 'tools/l4s' / name) for name in (
+                         'render_trace_reference.py', 'camera_trace_browser_runner.mjs',
+                         'player_quality.mjs', 'snapshot_video.py')}})
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1', 0))
         port = reservation.getsockname()[1]
