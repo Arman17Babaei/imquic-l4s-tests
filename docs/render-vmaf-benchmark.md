@@ -60,6 +60,8 @@ Mean encoding-fidelity VMAF was 99.924. This run used an encoder process
 started before the explicit BT.709 fix was loaded, so that score should not be
 used as color-corrected evidence. Timing establishes that rendering dominates;
 it does not meet the 120-second target and is not a 10/30 FPS result.
+The retained manifest has 40 distinct camera poses and 40 distinct PNGs,
+timestamps 0–19,500 ms, and all 1,026,508 Gaussians applied at every sample.
 
 Instrumented copies of the player further localized the first-seek stall:
 the accumulator generation returns, then Spark's depth readback for sorting
