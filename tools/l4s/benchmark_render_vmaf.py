@@ -83,6 +83,7 @@ def main():
     if not output.is_relative_to(ROOT / 'results') or output.exists():
         parser.error('output must be a new directory under results/')
     trace = bounded_trace(json.loads(args.trace.read_text()), args.duration * 1000, args.fps)
+    expected = math.ceil(trace[-1]['timestamp_ms'] * args.fps / 1000)
     binary = args.ffmpeg.resolve()
     filters = subprocess.run([binary, '-hide_banner', '-filters'], check=True, capture_output=True, text=True)
     if ' libvmaf ' not in filters.stdout:
@@ -107,7 +108,7 @@ def main():
         summary.update({key: render[key] for key in ('render_seconds', 'encode_seconds', 'total_seconds')})
         candidate = args.candidate.resolve() if args.candidate else output / 'render/reference.mp4'
         validate_candidate(binary, candidate, fps=args.fps, width=args.width,
-                           height=args.height, frames=math.ceil(args.duration * args.fps))
+                           height=args.height, frames=expected)
         # Both streams use the same frame-grid time base. No resizing, duplicate
         # frames or VMAF subsampling; RGB is explicitly converted to BT.709 limited.
         command = [str(binary), '-hide_banner', '-loglevel', 'info', '-threads', '2', '-i', str(candidate),
@@ -125,7 +126,6 @@ def main():
             subprocess.run(command, cwd=output, stdout=log, stderr=subprocess.STDOUT, check=True)
         summary['vmaf_seconds'] = time.perf_counter() - vmaf_started
         scores = json.loads((output / 'vmaf.json').read_text())
-        expected = math.ceil(args.duration * args.fps)
         if len(scores['frames']) != expected:
             raise ValueError(f'VMAF returned {len(scores["frames"])} frames; expected {expected}')
         summary.update(complete=True, frames=expected, mean_vmaf=scores['pooled_metrics']['vmaf']['mean'])
