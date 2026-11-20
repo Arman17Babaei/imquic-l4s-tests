@@ -4,12 +4,30 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 import tempfile
+import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/l4s'))
 from benchmark_scene_batch import process_tree_usage, SCENES
+from validate_scene_batch import validate
 
 
 class BatchTests(unittest.TestCase):
+    def test_validation_checks_pixels_and_poses_for_every_scene(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for side in ('current', 'baseline'):
+                for scene, _ in SCENES:
+                    directory = root / side / scene / 'render/reference-frames'
+                    directory.mkdir(parents=True)
+                    (directory / 'frame.png').write_bytes(b'pixels')
+                    (directory / 'frames.json').write_text(json.dumps({'complete': True, 'frames': [
+                        {'file': 'frame.png', 'timestampMs': 0, 'cameraPose': {'position': [0, 0, 0]},
+                         'appliedGaussians': 42}]}))
+            self.assertEqual(len(validate(root / 'current', root / 'baseline')['scenes']), 5)
+            (root / 'current/train/render/reference-frames/frame.png').write_bytes(b'wrong')
+            with self.assertRaisesRegex(ValueError, 'PNG differs'):
+                validate(root / 'current', root / 'baseline')
+
     def test_five_distinct_scenes_and_traces(self):
         self.assertEqual(len(SCENES), 5)
         self.assertEqual(len({scene for scene, _ in SCENES}), 5)
