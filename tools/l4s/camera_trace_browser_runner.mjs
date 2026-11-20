@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import { installRawCapture } from './raw_capture.mjs';
 import { chromium } from "playwright";
 import { capturePlayback, renderReference, installRenderLoopCapture, captureRenderLoop } from "./player_quality.mjs";
 
@@ -46,6 +47,7 @@ const browser = await chromium.launch({ headless: options.headless, args: gpuArg
 const context = await browser.newContext({ viewport: { width: options.width, height: options.height },
     serviceWorkers: "block", acceptDownloads: true });
 const page = await context.newPage();
+if (process.env.L4S_RAW_CAPTURE === '1') await page.addInitScript(installRawCapture);
 const renderLoopCapture = options.capture_frames && !options.reference_frames && !options.reference_trace_grid && options.capture_mode === "render-loop"
     ? await installRenderLoopCapture(page, options.capture_frames, options.capture_fps, options.capture_camera_timestamps ?? "actual") : null;
 let qualityCapture = null;

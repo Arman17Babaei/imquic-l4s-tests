@@ -25,6 +25,20 @@ manual-update/no-read-pause variant is being measured with current instrumentati
 under `results/render-benchmark/train-hd-manual-profile/`. It is not yet a proven
 speedup; it must complete and its 200 PNGs/poses must be checked against baseline.
 
+The manual-update variant completed in **762.97 s** for loading/render/capture,
+slower than baseline. All 200 PNGs, poses and Gaussian counts match exactly.
+Across the two shards, median summed per-frame capture times were 3.18–4.29 s,
+seek times 0.35–0.40 s, and evaluate overhead 0.79–0.93 s. These are per-shard
+medians, not additive batch wall-time totals.
+
+`L4S_RAW_CAPTURE=1` enables an experimental lossless path: intercept PNG capture,
+read RGBA from the default framebuffer, transfer raw bytes as base64, then write
+lossless level-1 PNGs in Node. It preserves two-probe stability checks and the
+existing encode/VMAF pipeline. Raw frames are larger on the protocol, so this is
+not guaranteed faster. The experiment is under
+`results/render-benchmark/train-hd-raw-capture/`; decoded pixel equality rather
+than compressed PNG byte equality is required before accepting its output.
+
 Per-frame diagnostics now sum every browser probe and report:
 
 - `browserSeekMs`: seek/update/draw work before capture;

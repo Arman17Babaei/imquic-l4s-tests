@@ -183,7 +183,8 @@ def main(argv: list[str] | None = None) -> None:
                      'mode': 'independent-complete-scene-trace-grid',
                      'harness': {name: sha256(ROOT / 'tools/l4s' / name) for name in (
                          'render_trace_reference.py', 'camera_trace_browser_runner.mjs',
-                         'player_quality.mjs', 'snapshot_video.py')}})
+                          'player_quality.mjs', 'raw_capture.mjs', 'snapshot_video.py')},
+                     'rawCapture': os.environ.get('L4S_RAW_CAPTURE') == '1'})
     with socket.socket() as reservation:
         reservation.bind(('127.0.0.1', 0))
         port = reservation.getsockname()[1]

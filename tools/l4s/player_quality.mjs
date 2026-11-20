@@ -1,9 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { captureImageBytes } from './raw_capture.mjs';
 
 function writeFrame(directory, frames, sample) {
     const file = `frame-${String(frames.length).padStart(6, '0')}.png`;
-    fs.writeFileSync(path.join(directory, file), Buffer.from(sample.image.split(',')[1], 'base64'));
+    fs.writeFileSync(path.join(directory, file), captureImageBytes(sample.image));
     const { image, ...metadata } = sample;
     frames.push({ index: frames.length, file, ...metadata });
 }
