@@ -106,12 +106,14 @@ test('independent reference seeks every grid pose and records actual poses witho
     fs.writeFileSync(trace, JSON.stringify([{ timestamp_ms: 0 }, { timestamp_ms: 250 }]));
     const sought = [];
     const seekFlags = [];
+    const tracePayloads = [];
     const page = {
         async waitForFunction() {},
         async waitForTimeout() {},
-        async evaluate(_callback, { timestampMs, seek }) {
+        async evaluate(_callback, { timestampMs, seek, trace }) {
             sought.push(timestampMs);
             seekFlags.push(seek);
+            tracePayloads.push(trace);
             return { ready: true, timestampMs, cameraPose: { actualSeek: timestampMs },
                 appliedGaussians: 42, image: 'data:image/png;base64,cG5n' };
         },
@@ -122,6 +124,7 @@ test('independent reference seeks every grid pose and records actual poses witho
         const manifest = JSON.parse(fs.readFileSync(path.join(directory, 'frames.json')));
         assert.deepEqual(sought, [0, 0, 100, 100, 200, 200]);
         assert.deepEqual(seekFlags, [true, false, true, false, true, false]);
+        assert.deepEqual(tracePayloads.map(value => value === null), [false, true, false, true, false, true]);
         assert.equal(manifest.complete, true);
         assert.equal(manifest.requestedFps, 10);
         assert.equal(manifest.expectedFrames, 3);
