@@ -104,3 +104,11 @@ python3 tools/l4s/prepare_benchmark_heartbeat.py \
 Every pose still performs an explicit camera-dependent Spark update. No previous
 pose's sort is intentionally reused. A five-scene validation is required before
 using this variant as a batch optimization.
+
+The combined variant subsequently completed the five-scene batch in **234.21 s**,
+with **19.60 GiB peak summed RSS**. All 100 PNGs match the 217.51-second batch
+byte-for-byte. This did **not** improve batch performance, so the original player
+with two shards remains the best measured configuration. Evidence:
+`results/render-benchmark/five-scenes-manual-no-pause/validation.json` and
+`batch.json`. Sampled cumulative CPU use was about 2,392 CPU-seconds (a lower
+bound due to sampling and process exits), not a reliable scaling forecast.
