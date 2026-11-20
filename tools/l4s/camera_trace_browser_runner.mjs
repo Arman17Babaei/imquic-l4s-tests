@@ -27,18 +27,21 @@ function parseArgs(argv) {
     if (!["actual", "fixed"].includes(options.capture_camera_timestamps ?? "actual")) throw new Error("invalid capture camera timestamps");
     if (options.reference_trace_grid && (options.reference_frames || !options.capture_frames)) throw new Error("trace-grid reference requires capture directory and excludes candidate reference");
     if ((options.reference_frames || options.reference_trace_grid) && !options.motion_trace) throw new Error("reference frames require --motion-trace");
-    if (!["hardware", "software", "llvmpipe"].includes(options.gpu_mode)) throw new Error("--gpu-mode must be hardware, software or llvmpipe");
+    if (!["hardware", "software", "llvmpipe", "mesa-gl"].includes(options.gpu_mode)) throw new Error("invalid --gpu-mode");
     return options;
 }
 
 const options = parseArgs(process.argv.slice(2));
-const gpuArgs = options.gpu_mode === "llvmpipe"
+const gpuArgs = options.gpu_mode === "mesa-gl"
+    ? ["--enable-gpu", "--use-gl=angle", "--use-angle=gl-egl", "--ignore-gpu-blocklist", "--disable-software-rasterizer"]
+    : options.gpu_mode === "llvmpipe"
     ? ["--enable-gpu", "--use-gl=angle", "--use-angle=vulkan", "--disable-software-rasterizer", "--ignore-gpu-blocklist"]
     : options.gpu_mode === "hardware"
     ? ["--enable-gpu", "--use-gl=angle", "--use-angle=gl"]
     : ["--use-gl=angle", "--use-angle=swiftshader", "--enable-unsafe-swiftshader"];
 const browser = await chromium.launch({ headless: options.headless, args: gpuArgs,
-    ...(options.gpu_mode === "llvmpipe" ? { env: { ...process.env,
+    ...(options.gpu_mode === "mesa-gl" ? { env: { ...process.env, EGL_PLATFORM: 'surfaceless', LIBGL_ALWAYS_SOFTWARE: '1' } }
+    : options.gpu_mode === "llvmpipe" ? { env: { ...process.env,
         VK_ICD_FILENAMES: process.env.L4S_LAVAPIPE_ICD ?? "/usr/share/vulkan/icd.d/lvp_icd.json" } } : {}) });
 const context = await browser.newContext({ viewport: { width: options.width, height: options.height },
     serviceWorkers: "block", acceptDownloads: true });

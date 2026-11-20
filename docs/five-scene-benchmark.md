@@ -44,3 +44,13 @@ No hardware GPU is available to this workflow: VMware SVGA is exposed, and the
 working renderer uses CPU Mesa lavapipe. More RAM alone will not resolve the
 current bottleneck. No measured hardware sizing recommendation yet guarantees
 five scenes in 90 seconds.
+
+## Completed four-shard batch: target still not met
+
+Five scenes × four render workers (20 independent browsers) completed all 100
+samples, encoding and VMAF in **225.42 s**. Peak summed process RSS was
+**39.35 GiB**. Evidence: `results/render-benchmark/five-scenes-four-shards/`.
+The 90-second goal is not met. Loading the same full scenes four times increases
+memory and initialization cost substantially. CPU time from `getrusage` does not
+fully account for reparented Chromium processes; do not use its reported average
+busy-core value as a reliable machine-utilization estimate.

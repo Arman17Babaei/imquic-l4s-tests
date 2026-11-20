@@ -155,7 +155,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--width', type=int, default=960)
     parser.add_argument('--height', type=int, default=540)
     parser.add_argument('--timeout-seconds', type=float, default=600)
-    parser.add_argument('--gpu-mode', choices=('hardware', 'software', 'llvmpipe'), default='hardware')
+    parser.add_argument('--gpu-mode', choices=('hardware', 'software', 'llvmpipe', 'mesa-gl'), default='hardware')
     parser.add_argument('--headless', action='store_true')
     parser.add_argument('--capture-only', action='store_true')
     parser.add_argument('--frame-start', type=int, default=0)

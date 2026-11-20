@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import os
 import resource
@@ -59,13 +60,26 @@ def main():
     parser.add_argument('--height', type=int, default=180)
     parser.add_argument('--timeout-seconds', type=float, default=300)
     parser.add_argument('--target-seconds', type=float, default=90)
+    parser.add_argument('--lane-cpus',
+                        help='optional semicolon-separated disjoint CPU lists, one per parallel scene')
     args = parser.parse_args()
     output = args.output.resolve()
     cpus = sorted(os.sched_getaffinity(0))
     if not 1 <= args.parallel_scenes <= min(5, len(cpus)):
         parser.error('parallel scenes must be between 1 and 5 and fit allowed CPUs')
+    lanes = [cpus[len(cpus) * lane // args.parallel_scenes:len(cpus) * (lane + 1) // args.parallel_scenes]
+             for lane in range(args.parallel_scenes)]
+    if args.lane_cpus:
+        try:
+            lanes = [[int(cpu) for cpu in lane.split(',')] for lane in args.lane_cpus.split(';')]
+        except ValueError:
+            parser.error('lane CPUs must be comma-separated integers, lanes separated by semicolons')
+        flattened = [cpu for lane in lanes for cpu in lane]
+        if (len(lanes) != args.parallel_scenes or len(set(flattened)) != len(flattened) or
+                not set(flattened).issubset(cpus) or any(not lane for lane in lanes)):
+            parser.error('CPU lanes must be nonempty, disjoint subsets of allowed CPUs')
     if (min(args.fps, args.width, args.height, args.timeout_seconds, args.target_seconds,
-            args.render_workers) <= 0 or args.render_workers > len(cpus) // args.parallel_scenes):
+            args.render_workers) <= 0 or args.render_workers > min(map(len, lanes))):
         parser.error('positive settings and at least one CPU per render worker are required')
     for scene, trace in SCENES:
         for path in (args.data / f'scenes/{scene}/manifest-v2.json', args.data / 'traces' / trace):
@@ -77,7 +91,7 @@ def main():
     started = time.perf_counter()
     usage_before = resource.getrusage(resource.RUSAGE_CHILDREN)
     def run_lane(lane):
-        assigned = cpus[len(cpus) * lane // args.parallel_scenes:len(cpus) * (lane + 1) // args.parallel_scenes]
+        assigned = lanes[lane]
         results = []
         for scene, trace in SCENES[lane::args.parallel_scenes]:
             command = ['taskset', '-c', ','.join(map(str, assigned)), sys.executable,
@@ -118,9 +132,11 @@ def main():
                'parallel_scenes': args.parallel_scenes, 'render_workers_per_scene': args.render_workers,
                'fps': args.fps, 'viewport': [args.width, args.height], 'duration_seconds_per_scene': 20,
                'cpu_affinity': cpus, 'peak_tree_rss_bytes': peak_rss,
+               'cpu_lanes': lanes,
                'peak_observed_tree_cpu_seconds': peak_cpu_seconds,
                'completed_children_cpu_seconds': cpu_seconds,
                'average_busy_cores': cpu_seconds / elapsed,
+               'batch_harness_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                'resource_note': 'RSS sums processes and double-counts shared pages; CPU samples exclude exited processes',
                'scope': 'five cold complete scenes + encode + encoding-fidelity VMAF', 'scenes': results}
     summary['target_met'] = summary['complete'] and elapsed < args.target_seconds
