@@ -7,11 +7,22 @@ import tempfile
 import json
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/l4s'))
-from benchmark_scene_batch import process_tree_usage, SCENES
+from benchmark_scene_batch import process_tree_usage, SCENES, main
 from validate_scene_batch import validate
 
 
 class BatchTests(unittest.TestCase):
+    def test_batch_rejects_overlapping_cpu_lanes_before_creating_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            output = Path(temporary) / 'output'
+            with patch('sys.argv', ['batch', '--dist', temporary, '--ffmpeg', '/bin/true',
+                    '--output', str(output), '--parallel-scenes', '2', '--lane-cpus', '0,1;1,2']), \
+                    patch('benchmark_scene_batch.os.sched_getaffinity', return_value={0, 1, 2, 3}), \
+                    patch('sys.stderr'):
+                with self.assertRaises(SystemExit):
+                    main()
+            self.assertFalse(output.exists())
+
     def test_validation_checks_pixels_and_poses_for_every_scene(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
