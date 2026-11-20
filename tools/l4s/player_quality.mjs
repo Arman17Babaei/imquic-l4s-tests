@@ -96,6 +96,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
     let complete = false;
     try {
         for (const candidateFrame of candidate.frames) {
+            const frameStarted = Date.now();
             if (candidateFrame.index % 20 === 0)
                 console.log(`REFERENCE frame ${candidateFrame.index}/${candidate.frames.length}`);
             const deadline = Date.now() + timeoutMs;
@@ -143,6 +144,8 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                 previous = sample.image;
                 await page.waitForTimeout(50);
             }
+            if (gridMode) console.log(JSON.stringify({ referenceFrame: candidateFrame.index,
+                timestampMs: candidateFrame.timestampMs, frameWallMs: Date.now() - frameStarted, probes }));
             if (!settled) throw new Error(`reference frame ${candidateFrame.index} did not settle`);
             if (!gridMode) {
                 const actual = settled.cameraPose, expected = candidateFrame.cameraPose;

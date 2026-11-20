@@ -64,6 +64,13 @@ def main():
     cpus = sorted(os.sched_getaffinity(0))
     if not 1 <= args.parallel_scenes <= min(5, len(cpus)):
         parser.error('parallel scenes must be between 1 and 5 and fit allowed CPUs')
+    if (min(args.fps, args.width, args.height, args.timeout_seconds, args.target_seconds,
+            args.render_workers) <= 0 or args.render_workers > len(cpus) // args.parallel_scenes):
+        parser.error('positive settings and at least one CPU per render worker are required')
+    for scene, trace in SCENES:
+        for path in (args.data / f'scenes/{scene}/manifest-v2.json', args.data / 'traces' / trace):
+            if not path.is_file():
+                parser.error(f'missing batch input: {path}')
     if not output.is_relative_to(ROOT / 'results') or output.exists():
         parser.error('output must be a new directory under results/')
     output.mkdir(parents=True)

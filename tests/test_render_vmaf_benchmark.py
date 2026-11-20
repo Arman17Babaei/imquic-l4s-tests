@@ -54,6 +54,9 @@ class BoundedTraceTests(unittest.TestCase):
             self.assertEqual((root / 'manual/assets/main.js').read_text(), 'F.autoUpdate=!1,' + BEFORE)
             with self.assertRaises(ValueError):
                 prepare(source, root / 'patched')
+            with self.assertRaisesRegex(ValueError, 'readback implementation'):
+                prepare(source, root / 'unsupported-readback', synchronous_readback=True)
+            self.assertFalse((root / 'unsupported-readback').exists())
             asset.write_text('unknown build')
             with self.assertRaisesRegex(ValueError, 'unsupported player'):
                 prepare(source, root / 'unsupported')
