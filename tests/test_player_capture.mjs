@@ -97,6 +97,31 @@ test('reference browser callback seeks once and reuses capture PNG', async () =>
     }
 });
 
+test('reference shard keeps original grid timestamps and local output indices', async () => {
+    const fs = await import('node:fs');
+    const os = await import('node:os');
+    const path = await import('node:path');
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'reference-shard-'));
+    const trace = path.join(root, 'trace.json');
+    fs.writeFileSync(trace, JSON.stringify([{ timestamp_ms: 0 }, { timestamp_ms: 400 }]));
+    const page = { async waitForFunction() {}, async waitForTimeout() {},
+        async evaluate(_callback, { timestampMs }) { return {
+            ready: true, timestampMs, cameraPose: {}, appliedGaussians: 42,
+            image: 'data:image/png;base64,cG5n',
+        }; } };
+    try {
+        await quality.renderReference(page, null, trace, path.join(root, 'frames'), 1000,
+            { traceGrid: true, fps: 10, frameStart: 2, frameEnd: 4 });
+        const record = JSON.parse(fs.readFileSync(path.join(root, 'frames/frames.json')));
+        assert.equal(record.complete, true);
+        assert.equal(record.frameStart, 2);
+        assert.deepEqual(record.frames.map(frame => frame.timestampMs), [200, 300]);
+        assert.deepEqual(record.frames.map(frame => frame.index), [0, 1]);
+        await assert.rejects(quality.renderReference(page, null, trace, path.join(root, 'bad'), 1000,
+            { traceGrid: true, fps: 10, frameStart: 4, frameEnd: 5 }), /invalid reference frame range/);
+    } finally { fs.rmSync(root, { recursive: true }); }
+});
+
 test('independent reference seeks every grid pose and records actual poses without candidate data', async () => {
     const fs = await import('node:fs');
     const os = await import('node:os');
