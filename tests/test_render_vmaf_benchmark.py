@@ -3,7 +3,7 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/l4s'))
-from benchmark_render_vmaf import bounded_trace, validate_candidate
+from benchmark_render_vmaf import bounded_trace, validate_candidate, render_parallel
 from unittest.mock import patch
 from types import SimpleNamespace
 import json
@@ -12,6 +12,33 @@ from prepare_benchmark_heartbeat import BEFORE, AFTER, prepare, ROOT
 
 
 class BoundedTraceTests(unittest.TestCase):
+    def test_parallel_merge_preserves_grid_and_disjoint_cpus(self):
+        with tempfile.TemporaryDirectory(dir=ROOT / 'results') as temporary:
+            root = Path(temporary).resolve()
+            args = SimpleNamespace(render_workers=2, manifest=root / 'scene.json', dist=root,
+                fps=1, width=320, height=180, gpu_mode='llvmpipe', timeout_seconds=10)
+            def run(command, **kwargs):
+                shard = Path(command[command.index('--output') + 1])
+                start, end = (int(command[command.index(flag) + 1]) for flag in ('--frame-start', '--frame-end'))
+                directory = shard / 'reference-frames'
+                directory.mkdir(parents=True)
+                frames = []
+                for local, slot in enumerate(range(start, end)):
+                    file = f'frame-{local:06d}.png'
+                    (directory / file).write_bytes(f'pixel-{slot}'.encode())
+                    frames.append(dict(index=local, timestampMs=slot * 1000, file=file, appliedGaussians=42))
+                (directory / 'frames.json').write_text(json.dumps(dict(complete=True, frames=frames)))
+                (shard / 'reference-summary.json').write_text(json.dumps(dict(complete=True, appliedGaussians=42)))
+            with patch('benchmark_render_vmaf.os.sched_getaffinity', return_value={0, 1, 2, 3}), \
+                    patch('benchmark_render_vmaf.subprocess.run', side_effect=run), \
+                    patch('snapshot_video.encode_snapshot_video', return_value={'frames': 4}):
+                render_parallel(args, root, 4)
+            summary = json.loads((root / 'render/reference-summary.json').read_text())
+            self.assertEqual([shard['cpus'] for shard in summary['shards']], [[0, 1], [2, 3]])
+            frames = json.loads((root / 'render/reference-frames/frames.json').read_text())['frames']
+            self.assertEqual([frame['timestampMs'] for frame in frames], [0, 1000, 2000, 3000])
+            self.assertEqual((root / 'render/reference-frames/frame-000002.png').read_bytes(), b'pixel-2')
+
     def test_heartbeat_adapter_is_guarded_and_preserves_original(self):
         with tempfile.TemporaryDirectory(dir=ROOT / 'results') as temporary:
             root = Path(temporary)
