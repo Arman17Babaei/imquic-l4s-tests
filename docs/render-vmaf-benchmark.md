@@ -27,3 +27,23 @@ These sets follow the VM's two NUMA nodes. Memory bandwidth and storage are
 still shared, so confirm final timing with a standalone run. Do not compare
 a 12-core diagnostic timing against an unrestricted 24-core timing as if the
 resource budgets were identical.
+
+## Initial host observations
+
+The host exposes 24 Intel Xeon E5-4669 v4 vCPUs and about 62 GiB RAM.
+Its VMware SVGA device did not provide a usable accelerated renderer through
+the existing Chromium hardware flags: an explicit WebGL renderer probe still
+reported SwiftShader. The available train scene contains 1,026,508 Gaussians.
+
+An isolated synthetic 640×360, 10 FPS, 20-second VMAF self-comparison evaluated
+all 200 frames in 0.93 seconds with eight threads. **This is not a completed
+Gaussian render timing.** Full-scene trials stalled on the first seek; a
+bounded 640×360 trial timed out after 241.76 seconds including the browser
+shutdown allowance. Interrupted runs with `complete: false` and
+`target_met: false` are failures, even when interrupted before 120 seconds.
+No under-two-minute end-to-end result has been established.
+
+Focused Python benchmark/reference/cache/video tests and Node capture unit
+tests pass. Full browser playback tests require the missing local player
+submodule build and failed in this checkout; they are not a passing acceptance
+gate. The environment-specific external player build is recorded in each run.
