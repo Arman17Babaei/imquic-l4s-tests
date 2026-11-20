@@ -15,9 +15,63 @@ from pathlib import Path
 import platform
 import shutil
 import subprocess
+import sys
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 from render_trace_reference import ROOT, main as render_reference, sha256
+
+
+def render_parallel(args, output: Path, expected: int) -> None:
+    cpus = sorted(os.sched_getaffinity(0))
+    workers = args.render_workers
+    if workers > min(len(cpus), expected):
+        raise ValueError('render workers exceed available CPUs or frames')
+    def run(index):
+        start, end = expected * index // workers, expected * (index + 1) // workers
+        assigned = cpus[len(cpus) * index // workers:len(cpus) * (index + 1) // workers]
+        command = ['taskset', '-c', ','.join(map(str, assigned)), sys.executable,
+                   str(ROOT / 'tools/l4s/render_trace_reference.py'), '--manifest', str(args.manifest.resolve()),
+                   '--trace', str(output / 'trace.json'), '--dist', str(args.dist.resolve()),
+                   '--output', str(output / f'shard-{index}'), '--fps', str(args.fps),
+                   '--width', str(args.width), '--height', str(args.height), '--gpu-mode', args.gpu_mode,
+                   '--headless', '--capture-only', '--frame-start', str(start), '--frame-end', str(end),
+                   '--timeout-seconds', str(args.timeout_seconds)]
+        with (output / f'shard-{index}.log').open('w') as log:
+            subprocess.run(command, check=True, stdout=log, stderr=subprocess.STDOUT)
+        return {'command': command, 'cpus': assigned, 'start': start, 'end': end}
+    started = time.perf_counter()
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        shards = list(pool.map(run, range(workers)))
+    render_seconds = time.perf_counter() - started
+    render = output / 'render'
+    directory = render / 'reference-frames'
+    directory.mkdir(parents=True)
+    frames = []
+    for index, shard in enumerate(shards):
+        source = output / f'shard-{index}/reference-frames'
+        record = json.loads((source / 'frames.json').read_text())
+        if not record['complete'] or len(record['frames']) != shard['end'] - shard['start']:
+            raise ValueError('incomplete render shard')
+        for frame in record['frames']:
+            slot = len(frames)
+            if abs(frame['timestampMs'] - slot * 1000 / args.fps) > 1e-6:
+                raise ValueError('shard timestamp grid mismatch')
+            file = f'frame-{slot:06d}.png'
+            os.link(source / frame['file'], directory / file)
+            frames.append(dict(frame, index=slot, file=file))
+    if len(frames) != expected:
+        raise ValueError('merged render frame count mismatch')
+    manifest = directory / 'frames.json'
+    manifest.write_text(json.dumps({'complete': True, 'expectedFrames': expected,
+                                   'requestedFps': args.fps, 'frames': frames}, indent=2) + '\n')
+    from snapshot_video import encode_snapshot_video
+    encode_started = time.perf_counter()
+    video = encode_snapshot_video(manifest, render / 'reference.mp4', fps=args.fps)
+    summary = {'complete': True, 'render_seconds': render_seconds,
+               'encode_seconds': time.perf_counter() - encode_started,
+               'total_seconds': time.perf_counter() - started, 'shards': shards, 'video': video}
+    (render / 'reference-summary.json').write_text(json.dumps(summary, indent=2) + '\n')
 
 
 def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
@@ -81,6 +135,7 @@ def main():
     parser.add_argument('--width', type=int, default=960)
     parser.add_argument('--height', type=int, default=540)
     parser.add_argument('--threads', type=int, default=8)
+    parser.add_argument('--render-workers', type=int, default=1)
     parser.add_argument('--gpu-mode', choices=('software', 'hardware', 'llvmpipe'), default='software')
     parser.add_argument('--target-seconds', type=float, default=120)
     parser.add_argument('--timeout-seconds', type=float, default=300)
@@ -88,7 +143,7 @@ def main():
     if (not math.isfinite(args.target_seconds) or not math.isfinite(args.timeout_seconds)
             or args.width % 2 or args.height % 2):
         parser.error('timeouts must be finite and YUV420 dimensions must be even')
-    if min(args.fps, args.width, args.height, args.threads, args.target_seconds, args.timeout_seconds) <= 0:
+    if min(args.fps, args.width, args.height, args.threads, args.target_seconds, args.timeout_seconds, args.render_workers) <= 0:
         parser.error('dimensions, FPS, threads and target must be positive')
     output = args.output.resolve()
     if not output.is_relative_to(ROOT / 'results') or output.exists():
@@ -107,12 +162,16 @@ def main():
                'cpu_affinity': sorted(os.sched_getaffinity(0)),
                'gpu_mode': args.gpu_mode,
                'mesa_thread_limit': os.environ.get('LP_NUM_THREADS'),
+               'render_workers': args.render_workers,
                'scope': 'external candidate comparison' if args.candidate else 'render + encode + encoding-fidelity VMAF',
                'ffmpeg_sha256': sha256(binary),
                'ffmpeg_version': subprocess.run([binary, '-version'], capture_output=True, text=True, check=True).stdout}
     started = time.perf_counter()
     try:
-        render_reference(['--manifest', str(args.manifest.resolve()), '--trace', str(output / 'trace.json'),
+        if args.render_workers > 1:
+            render_parallel(args, output, expected)
+        else:
+            render_reference(['--manifest', str(args.manifest.resolve()), '--trace', str(output / 'trace.json'),
                           '--dist', str(args.dist.resolve()), '--output', str(output / 'render'),
                           '--fps', str(args.fps), '--width', str(args.width), '--height', str(args.height),
                           '--gpu-mode', args.gpu_mode, '--headless', '--timeout-seconds', str(args.timeout_seconds)])

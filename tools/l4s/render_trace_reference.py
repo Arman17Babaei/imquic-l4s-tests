@@ -157,10 +157,15 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument('--timeout-seconds', type=float, default=600)
     parser.add_argument('--gpu-mode', choices=('hardware', 'software', 'llvmpipe'), default='hardware')
     parser.add_argument('--headless', action='store_true')
+    parser.add_argument('--capture-only', action='store_true')
+    parser.add_argument('--frame-start', type=int, default=0)
+    parser.add_argument('--frame-end', type=int)
     args = parser.parse_args(argv)
     started = time.perf_counter()
     if min(args.fps, args.width, args.height, args.timeout_seconds) <= 0:
         parser.error('FPS, dimensions and timeout must be positive')
+    if (args.frame_start or args.frame_end is not None) and not args.capture_only:
+        parser.error('frame ranges require --capture-only; merge before encoding')
     manifest, trace, dist = args.manifest.resolve(), args.trace.resolve(), args.dist.resolve()
     output = validate_output(args.output)
     evidence = input_provenance(manifest, trace)
@@ -194,6 +199,9 @@ def main(argv: list[str] | None = None) -> None:
         '--capture-frames', str(output / 'reference-frames'), '--capture-fps', str(args.fps)]
     if args.headless:
         browser_command.append('--headless')
+    browser_command.extend(['--frame-start', str(args.frame_start)])
+    if args.frame_end is not None:
+        browser_command.extend(['--frame-end', str(args.frame_end)])
     evidence['commands'] = {'server': server_command, 'browser': browser_command}
     server = None
     try:
@@ -247,8 +255,9 @@ def main(argv: list[str] | None = None) -> None:
             raise RuntimeError('reference did not render the complete scene; inspect telemetry')
         evidence['appliedGaussians'] = telemetry['appliedGaussians']
         encode_started = time.perf_counter()
-        evidence['video'] = encode_snapshot_video(output / 'reference-frames/frames.json',
-                                                  output / 'reference.mp4', fps=args.fps)
+        if not args.capture_only:
+            evidence['video'] = encode_snapshot_video(output / 'reference-frames/frames.json',
+                                                      output / 'reference.mp4', fps=args.fps)
         evidence['encode_seconds'] = time.perf_counter() - encode_started
         evidence['complete'] = True
     except Exception as error:

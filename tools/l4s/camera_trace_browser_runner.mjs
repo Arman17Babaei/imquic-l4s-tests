@@ -11,7 +11,7 @@ function parseArgs(argv) {
         else if (arg === "--reference-trace-grid") options.reference_trace_grid = true;
         else if (arg === "--no-record") options.record = false;
         else if (arg === "--allow-partial-reference") options.allow_partial_reference = true;
-        else if (["--url", "--output", "--telemetry", "--timeout-ms", "--width", "--height", "--snapshot", "--gpu-mode", "--motion-trace", "--yaw-trace", "--capture-frames", "--capture-fps", "--reference-frames", "--capture-mode", "--capture-camera-timestamps", "--allow-partial-reference"].includes(arg))
+        else if (["--url", "--output", "--telemetry", "--timeout-ms", "--width", "--height", "--snapshot", "--gpu-mode", "--motion-trace", "--yaw-trace", "--capture-frames", "--capture-fps", "--reference-frames", "--capture-mode", "--capture-camera-timestamps", "--allow-partial-reference", "--frame-start", "--frame-end"].includes(arg))
             options[arg.slice(2).replaceAll("-", "_")] = argv[++index];
         else throw new Error(`unknown argument ${arg}`);
     }
@@ -76,7 +76,8 @@ try {
     await page.goto(options.url, { waitUntil: "domcontentloaded", timeout: 30000 });
     if (options.reference_frames || options.reference_trace_grid) {
         await renderReference(page, options.reference_frames, options.motion_trace,
-            options.capture_frames, options.timeout_ms, { allowPartial: options.allow_partial_reference, traceGrid: options.reference_trace_grid, fps: options.capture_fps });
+            options.capture_frames, options.timeout_ms, { allowPartial: options.allow_partial_reference, traceGrid: options.reference_trace_grid, fps: options.capture_fps,
+                frameStart: Number(options.frame_start ?? 0), frameEnd: options.frame_end === undefined ? undefined : Number(options.frame_end) });
     } else if (options.snapshot) {
         await page.waitForFunction(() => window.__priorityMoqMvp?.renderReady || window.__priorityMoqMvp?.failure,
             null, { timeout: options.timeout_ms });

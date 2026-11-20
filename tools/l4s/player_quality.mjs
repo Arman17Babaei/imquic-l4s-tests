@@ -74,6 +74,11 @@ export async function renderReference(page, candidateManifest, tracePath, direct
     const gridMode = options.traceGrid === true;
     const candidate = gridMode ? { frames: createTraceFrameGrid(trace, fps) }
         : JSON.parse(fs.readFileSync(candidateManifest, 'utf8'));
+    const frameStart = options.frameStart ?? 0, frameEnd = options.frameEnd ?? candidate.frames.length;
+    if (!Number.isInteger(frameStart) || !Number.isInteger(frameEnd) || frameStart < 0 ||
+        frameEnd > candidate.frames.length || frameEnd <= frameStart)
+        throw new Error('invalid reference frame range');
+    if (gridMode) candidate.frames = candidate.frames.slice(frameStart, frameEnd);
     if (!gridMode && ((!candidate.complete && !options.allowPartial) || !candidate.frames?.length))
         throw new Error('candidate frame capture is incomplete');
     if (!gridMode && candidate.frames.some(frame => !Number.isFinite(frame.timestampMs) || !frame.cameraPose))
@@ -163,6 +168,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
         fs.writeFileSync(path.join(directory, 'frames.json'), JSON.stringify({
             complete, ...(gridMode ? {
                 captureMode: 'trace-grid-reference', requestedFps: fps, expectedFrames: candidate.frames.length,
+                frameStart, frameEnd,
                 tracePath: path.resolve(tracePath), traceOriginMs: 0,
                 durationMs: trace.at(-1).timestamp_ms, gridInterval: '[0,durationMs)',
                 timestampSource: 'camera-trace-common-zero',
