@@ -20,6 +20,21 @@ import time
 from render_trace_reference import ROOT, main as render_reference
 
 
+def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
+                       height: int, frames: int) -> None:
+    probe = binary.with_name('ffprobe')
+    result = json.loads(subprocess.run([
+        str(probe), '-v', 'error', '-count_frames', '-select_streams', 'v:0',
+        '-show_entries', 'stream=width,height,nb_read_frames,r_frame_rate,start_time',
+        '-of', 'json', str(candidate)], check=True, capture_output=True, text=True).stdout)
+    stream = result['streams'][0]
+    numerator, denominator = map(int, stream['r_frame_rate'].split('/'))
+    if (stream['width'] != width or stream['height'] != height or
+            int(stream['nb_read_frames']) != frames or numerator / denominator != fps or
+            float(stream.get('start_time', 0)) != 0):
+        raise ValueError('candidate must match dimensions, frame count, FPS and zero origin')
+
+
 def bounded_trace(trace: list[dict], duration_ms: float) -> list[dict]:
     if (not math.isfinite(duration_ms) or duration_ms <= 0 or len(trace) < 2
             or trace[0]['timestamp_ms'] != 0
@@ -83,6 +98,8 @@ def main():
         render = json.loads((output / 'render/reference-summary.json').read_text())
         summary.update({key: render[key] for key in ('render_seconds', 'encode_seconds', 'total_seconds')})
         candidate = args.candidate.resolve() if args.candidate else output / 'render/reference.mp4'
+        validate_candidate(binary, candidate, fps=args.fps, width=args.width,
+                           height=args.height, frames=math.ceil(args.duration * args.fps))
         # Both streams use the same frame-grid time base. No resizing, duplicate
         # frames or VMAF subsampling; RGB is explicitly converted to BT.709 limited.
         command = [str(binary), '-hide_banner', '-loglevel', 'info', '-threads', '2', '-i', str(candidate),

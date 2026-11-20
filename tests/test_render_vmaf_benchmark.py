@@ -3,10 +3,24 @@ from pathlib import Path
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/l4s'))
-from benchmark_render_vmaf import bounded_trace
+from benchmark_render_vmaf import bounded_trace, validate_candidate
+from unittest.mock import patch
+from types import SimpleNamespace
+import json
 
 
 class BoundedTraceTests(unittest.TestCase):
+    def test_candidate_must_match_grid(self):
+        stream = dict(width=640, height=360, nb_read_frames='200', r_frame_rate='10/1', start_time='0')
+        def validate(overrides):
+            result = SimpleNamespace(stdout=json.dumps({'streams': [dict(stream, **overrides)]}))
+            with patch('benchmark_render_vmaf.subprocess.run', return_value=result):
+                validate_candidate(Path('/ffmpeg'), Path('/video'), fps=10, width=640, height=360, frames=200)
+        validate({})
+        for overrides in ({'width': 320}, {'nb_read_frames': '199'}, {'r_frame_rate': '30/1'}, {'start_time': '1'}):
+            with self.assertRaises(ValueError):
+                validate(overrides)
+
     def test_holds_final_pose_without_stretching(self):
         trace = [{'timestamp_ms': 0, 'camera_position': [0, 0, 0]},
                  {'timestamp_ms': 30, 'camera_position': [3, 6, 9]}]
