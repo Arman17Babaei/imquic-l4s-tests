@@ -23,7 +23,8 @@ AFTER = ('F.autoUpdate=!1,await (async()=>{const u=F.update({scene:j,camera:M});
          'N.getContext().finish(),I(),w.cameraPose')
 
 
-def prepare(source: Path, output: Path, *, manual_updates: bool = False) -> None:
+def prepare(source: Path, output: Path, *, manual_updates: bool = False,
+            synchronous_readback: bool = False) -> None:
     output = output.resolve()
     if not output.is_relative_to(ROOT / 'results') or output.exists():
         raise ValueError('diagnostic build must be a new directory under results/')
@@ -32,14 +33,21 @@ def prepare(source: Path, output: Path, *, manual_updates: bool = False) -> None
     if len(matches) != 1 or matches[0][1].count(BEFORE) != 1:
         raise ValueError('unsupported player build: expected exactly one known seek implementation')
     path, original = matches[0]
-    shutil.copytree(source, output)
     replacement = 'F.autoUpdate=!1,' + BEFORE if manual_updates else AFTER
     modified = original.replace(BEFORE, replacement)
+    if synchronous_readback:
+        before = 't.readRenderTargetPixelsAsync(e.target,0,0,Q,o,d,void 0,e.extSplats?2:1)'
+        if modified.count(before) != 1:
+            raise ValueError('unsupported player readback implementation')
+        modified = modified.replace(before,
+            'Promise.resolve(t.readRenderTargetPixels(e.target,0,0,Q,o,d,void 0,e.extSplats?2:1))')
+    shutil.copytree(source, output)
     (output / path.relative_to(source)).write_text(modified)
     (output / 'heartbeat-experiment.json').write_text(json.dumps({
         'source': str(source.resolve()), 'asset': str(path.relative_to(source)),
         'original_sha256': hashlib.sha256(original.encode()).hexdigest(),
         'modified_sha256': hashlib.sha256(modified.encode()).hexdigest(),
+        'synchronous_readback': synchronous_readback,
         'experiment': ('manual camera-dependent updates; suppress redundant capture-time updates'
                        if manual_updates else 'render heartbeat while waiting for complete camera-dependent sort'),
     }, indent=2) + '\n')
@@ -51,5 +59,7 @@ if __name__ == '__main__':
     parser.add_argument('--output', required=True, type=Path)
     parser.add_argument('--manual-updates', action='store_true',
                         help='disable onBeforeRender updates after first explicit seek, without heartbeat')
+    parser.add_argument('--synchronous-readback', action='store_true')
     args = parser.parse_args()
-    prepare(args.dist.resolve(), args.output, manual_updates=args.manual_updates)
+    prepare(args.dist.resolve(), args.output, manual_updates=args.manual_updates,
+            synchronous_readback=args.synchronous_readback)
