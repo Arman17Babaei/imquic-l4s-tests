@@ -48,7 +48,33 @@ Gaussian render timing.** Full-scene trials stalled on the first seek; a
 bounded 640×360 trial timed out after 241.76 seconds including the browser
 shutdown allowance. Interrupted runs with `complete: false` and
 `target_met: false` are failures, even when interrupted before 120 seconds.
-No under-two-minute end-to-end result has been established.
+An under-two-minute result has been established only for the explicitly reduced
+1 FPS workload below, not for 10/30 FPS video or paired progressive rendering.
+
+### Target reached: two pinned render shards
+
+The 20-second full train trace at **320×180, 1 FPS (20 frames)** completed in
+**89.52 seconds** with two render workers on CPUs 0–11 and 12–23:
+
+| Stage | Wall seconds |
+| --- | ---: |
+| Two complete-scene render shards, including loading | 88.17 |
+| Merge, encode and validation | 1.06 |
+| Full sampled-frame VMAF | 0.17 |
+| Total including orchestration | **89.52** |
+
+This is 29.4% faster than the 126.76-second standalone baseline. **All 20 PNGs
+are byte-identical to the standalone result**, with identical camera poses,
+timestamps and all 1,026,508 Gaussians applied. Mean encoding-fidelity VMAF is
+99.846 in both runs. Evidence and per-shard provenance are under
+`results/render-benchmark/lavapipe-sharded-1fps/`; `validation.json` records the
+cross-check. No reference cache or stale-sort shortcut was used.
+
+Reproduce using the initial command with `--gpu-mode llvmpipe --fps 1
+--width 320 --height 180 --render-workers 2` and a new output directory.
+This is a low-cadence quality/render benchmark, **not fluid video**. VMAF compares
+the encoded complete-scene render to its clean PNGs, not a separately rendered
+progressive candidate. Higher-cadence and paired workloads remain unproven.
 
 ### First completed 20-second run
 
