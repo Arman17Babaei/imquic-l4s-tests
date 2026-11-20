@@ -47,6 +47,7 @@ def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
 def bounded_trace(trace: list[dict], duration_ms: float, fps: int = 10) -> list[dict]:
     if (not math.isfinite(duration_ms) or duration_ms <= 0 or len(trace) < 2
             or trace[0]['timestamp_ms'] != 0
+            or any(not math.isfinite(frame['timestamp_ms']) for frame in trace)
             or any(b['timestamp_ms'] <= a['timestamp_ms'] for a, b in zip(trace, trace[1:]))
             or trace[-1]['timestamp_ms'] < duration_ms):
         raise ValueError('trace must start at zero, be ordered and cover the requested duration')

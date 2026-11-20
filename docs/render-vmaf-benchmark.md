@@ -63,6 +63,13 @@ it does not meet the 120-second target and is not a 10/30 FPS result.
 The retained manifest has 40 distinct camera poses and 40 distinct PNGs,
 timestamps 0–19,500 ms, and all 1,026,508 Gaussians applied at every sample.
 
+A standalone run with the original player, all 24 CPUs and **1 FPS (20
+frames)** at 320×180 completed in **126.76 s**: browser render 123.80 s,
+encoding 0.93 s and VMAF 0.18 s. It used the explicit BT.709 conversion and
+returned mean encoding-fidelity VMAF 99.846. Evidence is in
+`results/render-benchmark/lavapipe-1fps-fullcpu/benchmark.json`. This is a
+near-miss, not an under-two-minute result or a fluid video workload.
+
 Instrumented copies of the player further localized the first-seek stall:
 the accumulator generation returns, then Spark's depth readback for sorting
 does not return. This is stronger evidence than the earlier live-debounce
