@@ -24,7 +24,7 @@ AFTER = ('F.autoUpdate=!1,await (async()=>{const u=F.update({scene:j,camera:M});
 
 
 def prepare(source: Path, output: Path, *, manual_updates: bool = False,
-            synchronous_readback: bool = False) -> None:
+            synchronous_readback: bool = False, profile: bool = False) -> None:
     output = output.resolve()
     if not output.is_relative_to(ROOT / 'results') or output.exists():
         raise ValueError('diagnostic build must be a new directory under results/')
@@ -41,6 +41,14 @@ def prepare(source: Path, output: Path, *, manual_updates: bool = False,
             raise ValueError('unsupported player readback implementation')
         modified = modified.replace(before,
             'Promise.resolve(t.readRenderTargetPixels(e.target,0,0,Q,o,d,void 0,e.extSplats?2:1))')
+    if profile:
+        seek_before = 'await F.update({scene:j,camera:M}),N.render(j,M),N.getContext().finish(),I(),w.cameraPose'
+        if modified.count(seek_before) != 1:
+            raise ValueError('seek profiling requires --manual-updates')
+        modified = modified.replace(seek_before,
+            'await (async()=>{const t=performance.now();await F.update({scene:j,camera:M});'
+            'console.log("PROFILE seek_update_ms",performance.now()-t);const r=performance.now();'
+            'N.render(j,M);N.getContext().finish();console.log("PROFILE render_ms",performance.now()-r)})(),I(),w.cameraPose')
     shutil.copytree(source, output)
     (output / path.relative_to(source)).write_text(modified)
     (output / 'heartbeat-experiment.json').write_text(json.dumps({
@@ -48,6 +56,7 @@ def prepare(source: Path, output: Path, *, manual_updates: bool = False,
         'original_sha256': hashlib.sha256(original.encode()).hexdigest(),
         'modified_sha256': hashlib.sha256(modified.encode()).hexdigest(),
         'synchronous_readback': synchronous_readback,
+        'profile': profile,
         'experiment': ('manual camera-dependent updates; suppress redundant capture-time updates'
                        if manual_updates else 'render heartbeat while waiting for complete camera-dependent sort'),
     }, indent=2) + '\n')
@@ -60,6 +69,7 @@ if __name__ == '__main__':
     parser.add_argument('--manual-updates', action='store_true',
                         help='disable onBeforeRender updates after first explicit seek, without heartbeat')
     parser.add_argument('--synchronous-readback', action='store_true')
+    parser.add_argument('--profile', action='store_true')
     args = parser.parse_args()
     prepare(args.dist.resolve(), args.output, manual_updates=args.manual_updates,
-            synchronous_readback=args.synchronous_readback)
+            synchronous_readback=args.synchronous_readback, profile=args.profile)
