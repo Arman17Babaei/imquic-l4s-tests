@@ -43,6 +43,24 @@ shutdown allowance. Interrupted runs with `complete: false` and
 `target_met: false` are failures, even when interrupted before 120 seconds.
 No under-two-minute end-to-end result has been established.
 
+### First completed 20-second run
+
+`results/render-benchmark/lavapipe-2fps-320/benchmark.json` completed using the
+unmodified external player build, full train scene, Mesa lavapipe, CPUs 0–11,
+320×180 pixels and **2 FPS (40 frames)**:
+
+| Stage | Wall seconds |
+| --- | ---: |
+| Browser loading and rendering | 204.36 |
+| MP4 encoding and validation | 1.62 |
+| VMAF, every sampled frame | 0.26 |
+| Total including orchestration | **208.00** |
+
+Mean encoding-fidelity VMAF was 99.924. This run used an encoder process
+started before the explicit BT.709 fix was loaded, so that score should not be
+used as color-corrected evidence. Timing establishes that rendering dominates;
+it does not meet the 120-second target and is not a 10/30 FPS result.
+
 Instrumented copies of the player further localized the first-seek stall:
 the accumulator generation returns, then Spark's depth readback for sorting
 does not return. This is stronger evidence than the earlier live-debounce
