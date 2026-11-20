@@ -35,7 +35,8 @@ class BoundedTraceTests(unittest.TestCase):
             with patch('benchmark_render_vmaf.subprocess.run', return_value=result):
                 validate_candidate(Path('/ffmpeg'), Path('/video'), fps=10, width=640, height=360, frames=200)
         validate({})
-        for overrides in ({'width': 320}, {'nb_read_frames': '199'}, {'r_frame_rate': '30/1'}, {'start_time': '1'}):
+        for overrides in ({'width': 320}, {'nb_read_frames': '199'}, {'r_frame_rate': '30/1'},
+                          {'start_time': '1'}, {'avg_frame_rate': '9/1'}, {'duration': '21'}):
             with self.assertRaises(ValueError):
                 validate(overrides)
 
