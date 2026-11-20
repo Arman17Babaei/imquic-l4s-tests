@@ -8,7 +8,6 @@ included in the reported wall time. Never substitute SSIM for missing VMAF.
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import math
 import os
@@ -17,7 +16,7 @@ import platform
 import subprocess
 import time
 
-from render_trace_reference import ROOT, main as render_reference
+from render_trace_reference import ROOT, main as render_reference, sha256
 
 
 def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
@@ -96,7 +95,7 @@ def main():
                'cpu_affinity': sorted(os.sched_getaffinity(0)),
                'gpu_mode': args.gpu_mode,
                'scope': 'external candidate comparison' if args.candidate else 'render + encode + encoding-fidelity VMAF',
-               'ffmpeg_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
+               'ffmpeg_sha256': sha256(binary),
                'ffmpeg_version': subprocess.run([binary, '-version'], capture_output=True, text=True, check=True).stdout}
     started = time.perf_counter()
     try:
