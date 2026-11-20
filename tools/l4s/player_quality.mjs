@@ -90,11 +90,20 @@ export async function renderReference(page, candidateManifest, tracePath, direct
             const deadline = Date.now() + timeoutMs;
             let previous = null, settled = null;
             let seek = true;
+            let probes = 0;
             while (Date.now() < deadline) {
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek started');
                 const sample = await page.evaluate(async ({ trace, timestampMs, seek }) => {
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
-                    if (seek) await window.__priorityMoqSeek(trace, timestampMs);
+                    if (seek) {
+                        const pending = window.__priorityMoqSeek(trace, timestampMs);
+                        // Seeking stops requestAnimationFrame. Explicitly submit
+                        // the async readback fence so software WebGL need not
+                        // wait for a future animation frame to flush its queue.
+                        const gl = document.querySelector('canvas').getContext('webgl2');
+                        gl?.flush();
+                        await pending;
+                    }
                     else await window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;
                     // renderReady includes a wall-clock debounce intended for live
@@ -107,6 +116,10 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         image: document.querySelector('canvas').toDataURL('image/png') };
                 }, { trace, timestampMs: candidateFrame.timestampMs, seek });
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
+                if (++probes % 100 === 0) console.log(JSON.stringify({
+                    referenceFrame: candidateFrame.index, probes, ready: sample.ready,
+                    renderer: sample.rendererState, samePixels: sample.image === previous,
+                }));
                 // Re-seeking forces Spark to regenerate and sort even for the
                 // same pose, invalidating readiness on every stability probe.
                 seek = false;
