@@ -82,3 +82,25 @@ and applied Gaussian counts. Evidence:
 This reduces memory by 51.9% and wall time by 3.5% relative to the four-shard
 batch, but still requires a **2.42× wall-time speedup** to reach 90 seconds.
 That ratio is not a prediction of CPU scaling or a guaranteed hardware request.
+
+## Readback scheduling diagnostics
+
+Train alone, 12 pinned CPUs per trial and `LP_NUM_THREADS=4`, completed in
+135.05 s with Spark's read pause disabled and in **119.74 s** when also disabling
+automatic updates after the first explicit seek. The combined variant's 20 PNGs,
+poses, timestamps and applied counts are identical to the unmodified standalone
+baseline. Trials ran concurrently on disjoint CPU sets, so these are diagnostic
+timings, not a standalone scaling comparison or five-scene success.
+
+The combined build is reproducible using:
+
+```sh
+python3 tools/l4s/prepare_benchmark_heartbeat.py \
+  --dist /opt/live4s/experiments/comprehensive-20261120/source/deps/gaussian-player/dist \
+  --output results/render-benchmark/manual-no-pause-NEW \
+  --manual-updates --no-read-pause --profile
+```
+
+Every pose still performs an explicit camera-dependent Spark update. No previous
+pose's sort is intentionally reused. A five-scene validation is required before
+using this variant as a batch optimization.

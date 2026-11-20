@@ -106,6 +106,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
             while (Date.now() < deadline) {
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek started');
                 const sample = await page.evaluate(async ({ trace, timestampMs, seek, timeoutMs }) => {
+                    const probeStarted = performance.now();
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
                     if (seek) {
                         const pending = window.__priorityMoqSeek(trace, timestampMs);
@@ -121,7 +122,9 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                     }
                     // The capture hook already serializes the canvas. Reuse
                     // that PNG rather than encoding it a second time below.
+                    const captureStarted = performance.now();
                     const captured = seek ? null : await window.__priorityMoqCapture();
+                    const image = captured?.image ?? document.querySelector('canvas').toDataURL('image/png');
                     const state = window.__priorityMoqMvp;
                     // renderReady includes a wall-clock debounce intended for live
                     // animation. A seek stops that animation. Check the underlying
@@ -130,7 +133,8 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                     return { ready: state.renderReady, rendererState: state.rendererState,
                         sourceGaussians: state.sourceGaussians, timestampMs, cameraPose: state.cameraPose,
                         appliedGaussians: state.appliedGaussians,
-                        image: captured?.image ?? document.querySelector('canvas').toDataURL('image/png') };
+                        browserProbeMs: performance.now() - probeStarted,
+                        browserCaptureMs: performance.now() - captureStarted, image };
                 }, { trace: seek ? trace : null, timestampMs: candidateFrame.timestampMs, seek, timeoutMs });
                 if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
                 if (++probes % 100 === 0) console.log(JSON.stringify({
@@ -145,7 +149,8 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                 await page.waitForTimeout(50);
             }
             if (gridMode) console.log(JSON.stringify({ referenceFrame: candidateFrame.index,
-                timestampMs: candidateFrame.timestampMs, frameWallMs: Date.now() - frameStarted, probes }));
+                timestampMs: candidateFrame.timestampMs, frameWallMs: Date.now() - frameStarted, probes,
+                finalBrowserProbeMs: settled?.browserProbeMs, finalBrowserCaptureMs: settled?.browserCaptureMs }));
             if (!settled) throw new Error(`reference frame ${candidateFrame.index} did not settle`);
             if (!gridMode) {
                 const actual = settled.cameraPose, expected = candidateFrame.cameraPose;
