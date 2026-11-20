@@ -60,6 +60,25 @@ def snapshot_player_ui(dist: Path, target: Path) -> None:
     shutil.copytree(dist / 'assets', target / 'assets')
 
 
+def process_descendants(pid: int) -> set[int]:
+    """Snapshot descendants before killing Node; Chromium can change groups."""
+    parents = {}
+    for entry in Path('/proc').iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            stat = (entry / 'stat').read_text()
+            parents[int(entry.name)] = int(stat[stat.rfind(')') + 2:].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+    descendants = {pid}
+    while True:
+        expanded = descendants | {child for child, parent in parents.items() if parent in descendants}
+        if expanded == descendants:
+            return descendants - {pid}
+        descendants = expanded
+
+
 def cached_trace_reference(*, cache_root: Path, manifest: Path, trace: Path, dist: Path,
                            fps: int, width: int, height: int, gpu_mode: str,
                            headless: bool, timeout_seconds: float) -> Path:
@@ -192,8 +211,15 @@ def main(argv: list[str] | None = None) -> None:
                 browser_started = time.perf_counter()
                 browser = subprocess.Popen(browser_command, cwd=ROOT, stdout=browser_log,
                                            stderr=subprocess.STDOUT, start_new_session=True)
+                descendants = set()
                 try:
-                    status = browser.wait(timeout=args.timeout_seconds + 60)
+                    deadline = time.monotonic() + args.timeout_seconds + 60
+                    while browser.poll() is None:
+                        descendants.update(process_descendants(browser.pid))
+                        if time.monotonic() >= deadline:
+                            raise subprocess.TimeoutExpired(browser_command, args.timeout_seconds + 60)
+                        time.sleep(0.1)
+                    status = browser.returncode
                     if status:
                         raise subprocess.CalledProcessError(status, browser_command)
                 finally:
@@ -203,6 +229,11 @@ def main(argv: list[str] | None = None) -> None:
                         os.killpg(browser.pid, signal.SIGKILL)
                     except ProcessLookupError:
                         pass
+                    for pid in descendants:
+                        try:
+                            os.kill(pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
                     browser.wait()
                 evidence['render_seconds'] = time.perf_counter() - browser_started
         telemetry = json.loads((output / 'reference-telemetry.json').read_text())
