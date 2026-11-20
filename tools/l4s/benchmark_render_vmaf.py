@@ -26,23 +26,16 @@ def bounded_trace(trace: list[dict], duration_ms: float) -> list[dict]:
             or any(b['timestamp_ms'] <= a['timestamp_ms'] for a, b in zip(trace, trace[1:]))
             or trace[-1]['timestamp_ms'] < duration_ms):
         raise ValueError('trace must start at zero, be ordered and cover the requested duration')
-    # Preserve the first pose after the boundary and rescale only that final
-    # segment's endpoint by interpolation, not by stretching the whole trace.
+    # Keep the exact boundary if present. Otherwise preserve all original
+    # samples and place the boundary at the preceding pose. This affects only
+    # the final sub-sample interval; never interpolate view matrices elementwise.
     from copy import deepcopy
     result = [deepcopy(frame) for frame in trace if frame['timestamp_ms'] < duration_ms]
     right = next(frame for frame in trace if frame['timestamp_ms'] >= duration_ms)
     if right['timestamp_ms'] == duration_ms:
         result.append(deepcopy(right))
     else:
-        left = result[-1]
-        fraction = (duration_ms - left['timestamp_ms']) / (right['timestamp_ms'] - left['timestamp_ms'])
-        def interpolate(a, b):
-            if isinstance(a, list):
-                return [interpolate(x, y) for x, y in zip(a, b)]
-            if isinstance(a, (int, float)) and isinstance(b, (int, float)):
-                return a + (b - a) * fraction
-            return a
-        result.append({key: interpolate(value, right[key]) for key, value in left.items()})
+        result.append(deepcopy(result[-1]))
         result[-1]['timestamp_ms'] = duration_ms
     return result
 

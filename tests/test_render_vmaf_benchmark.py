@@ -7,11 +7,11 @@ from benchmark_render_vmaf import bounded_trace
 
 
 class BoundedTraceTests(unittest.TestCase):
-    def test_interpolates_boundary_without_stretching(self):
+    def test_holds_final_pose_without_stretching(self):
         trace = [{'timestamp_ms': 0, 'camera_position': [0, 0, 0]},
                  {'timestamp_ms': 30, 'camera_position': [3, 6, 9]}]
         result = bounded_trace(trace, 20)
-        self.assertEqual(result[-1], {'timestamp_ms': 20, 'camera_position': [2, 4, 6]})
+        self.assertEqual(result[-1], {'timestamp_ms': 20, 'camera_position': [0, 0, 0]})
         self.assertEqual(trace[-1]['timestamp_ms'], 30)
 
     def test_exact_boundary(self):
