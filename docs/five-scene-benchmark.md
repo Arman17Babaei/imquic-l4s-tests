@@ -3,11 +3,37 @@
 Required workload: five distinct full scenes, each sampled over 20 seconds at
 **1280×720 HD**, **10 FPS: 200 frames per scene, 1,000 frames total**, including loading,
 rendering, encoding and encoding-fidelity VMAF. The target is 90 seconds total.
-The batch runner now defaults to 10 FPS and 1280×720. No completed timing for this required
-workload has been established yet. All timings below are historical **1 FPS
+The batch runner now defaults to 10 FPS and 1280×720. The first completed required
+workload took **1,149.84 seconds**; see the HD result below. Earlier timings are historical **1 FPS
 diagnostics**, not results for the required 1,000-frame workload. VMAF still
 measures encoding fidelity, not separately rendered progressive candidate/reference
 pairs.
+
+## Completed HD / 10 FPS baseline
+
+All five scenes, 200 frames each, completed in **1,149.84 s (19 min 9.84 s)**,
+including cold scene loading, rendering, encoding and encoding-fidelity VMAF.
+Each retained frame manifest has exactly 200 samples at 0, 100, …, 19,900 ms;
+each VMAF report contains 200 evaluated frames. Dimensions are 1280×720.
+
+| Scene | Render s | Encode s | VMAF s | Scene wall s | Mean VMAF |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| train | 729.90 | 26.22 | 10.99 | 769.42 | 99.967 |
+| room | 747.98 | 25.19 | 9.95 | 785.22 | 99.954 |
+| truck | 998.01 | 27.95 | 9.82 | 1,038.46 | 99.981 |
+| playroom | 972.97 | 23.57 | 8.80 | 1,006.93 | 99.684 |
+| drjohnson | 1,124.50 | 15.40 | 7.87 | 1,148.93 | 98.670 |
+
+Scenes run concurrently, so their times must not be summed to obtain batch wall
+time. Resources: 24 vCPUs, five disjoint CPU lanes, two renderers per scene,
+`LP_NUM_THREADS=2`; peak summed process RSS **20.06 GiB** (shared pages counted
+multiple times). The 90-second goal is **not met**: 12.78× lower wall time is
+needed. This ratio is not a hardware scaling forecast.
+
+Evidence: `results/render-benchmark/five-scenes-10fps-hd-two-shards/batch.json`
+and per-scene benchmark, provenance, frame and VMAF files. PNG compression cost
+has not been isolated; this run does not establish that JPEG or WebP would
+improve performance. Encoding-fidelity VMAF is not a progressive delivery score.
 
 The fixed set is train, room, truck, playroom and drjohnson (11,112,379 Gaussians
 total). Each scene keeps its own original trace, full SH3 payload and provenance.
