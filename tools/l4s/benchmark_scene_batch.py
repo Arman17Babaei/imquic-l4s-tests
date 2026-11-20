@@ -65,8 +65,8 @@ def main():
     parser.add_argument('--render-workers', type=int, default=1)
     parser.add_argument('--scene-workers', help='comma-separated worker counts in fixed scene order')
     parser.add_argument('--fps', type=int, default=10)
-    parser.add_argument('--width', type=int, default=320)
-    parser.add_argument('--height', type=int, default=180)
+    parser.add_argument('--width', type=int, default=1280)
+    parser.add_argument('--height', type=int, default=720)
     parser.add_argument('--timeout-seconds', type=float, default=300)
     parser.add_argument('--target-seconds', type=float, default=90)
     parser.add_argument('--lane-cpus',
