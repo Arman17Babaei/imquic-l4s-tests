@@ -30,13 +30,17 @@ def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
         probe = Path(fallback)
     result = json.loads(subprocess.run([
         str(probe), '-v', 'error', '-count_frames', '-select_streams', 'v:0',
-        '-show_entries', 'stream=width,height,nb_read_frames,r_frame_rate,start_time',
+        '-show_entries', 'stream=width,height,nb_read_frames,r_frame_rate,avg_frame_rate,start_time,duration,color_space,color_range',
         '-of', 'json', str(candidate)], check=True, capture_output=True, text=True).stdout)
     stream = result['streams'][0]
     numerator, denominator = map(int, stream['r_frame_rate'].split('/'))
+    average = stream.get('avg_frame_rate', stream['r_frame_rate'])
+    average_numerator, average_denominator = map(int, average.split('/'))
     if (stream['width'] != width or stream['height'] != height or
             int(stream['nb_read_frames']) != frames or numerator / denominator != fps or
-            float(stream.get('start_time', 0)) != 0):
+            not average_denominator or average_numerator / average_denominator != fps or
+            float(stream.get('start_time', 0)) != 0 or
+            ('duration' in stream and abs(float(stream['duration']) - frames / fps) > 1e-4)):
         raise ValueError('candidate must match dimensions, frame count, FPS and zero origin')
 
 
