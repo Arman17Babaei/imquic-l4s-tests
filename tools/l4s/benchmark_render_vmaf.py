@@ -50,13 +50,17 @@ def render_parallel(args, output: Path, expected: int) -> None:
     frames = []
     for index, shard in enumerate(shards):
         source = output / f'shard-{index}/reference-frames'
+        shard_summary = json.loads((source.parent / 'reference-summary.json').read_text())
         record = json.loads((source / 'frames.json').read_text())
-        if not record['complete'] or len(record['frames']) != shard['end'] - shard['start']:
+        if (not shard_summary['complete'] or not record['complete'] or
+                len(record['frames']) != shard['end'] - shard['start']):
             raise ValueError('incomplete render shard')
         for frame in record['frames']:
             slot = len(frames)
             if abs(frame['timestampMs'] - slot * 1000 / args.fps) > 1e-6:
                 raise ValueError('shard timestamp grid mismatch')
+            if frame['appliedGaussians'] != shard_summary['appliedGaussians']:
+                raise ValueError('shard frame does not contain the complete scene')
             file = f'frame-{slot:06d}.png'
             os.link(source / frame['file'], directory / file)
             frames.append(dict(frame, index=slot, file=file))

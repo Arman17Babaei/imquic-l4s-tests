@@ -28,6 +28,13 @@ still shared, so confirm final timing with a standalone run. Do not compare
 a 12-core diagnostic timing against an unrestricted 24-core timing as if the
 resource budgets were identical.
 
+`--render-workers 2` instead splits one benchmark's exact frame grid into
+contiguous shards, runs independent complete-scene browser captures on disjoint
+CPU sets, validates and merges their original timestamps, then encodes and
+evaluates VMAF once. Scene initialization is paid by every shard and included in
+wall time. Shard directories retain scene/player/harness provenance and commands.
+This parallelizes offline complete-scene rendering only, not live network runs.
+
 ## Initial host observations
 
 The host exposes 24 Intel Xeon E5-4669 v4 vCPUs and about 62 GiB RAM.
