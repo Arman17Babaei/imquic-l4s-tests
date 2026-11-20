@@ -10,7 +10,8 @@ import urllib.request
 from http.server import ThreadingHTTPServer
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'tools/l4s'))
-from laptop_rpc import Workspace, handler_for, load_token
+from laptop_rpc import Workspace, handler_for, load_token, wait_for_job
+from unittest.mock import patch
 
 
 class LaptopRpcTests(unittest.TestCase):
@@ -43,6 +44,19 @@ class LaptopRpcTests(unittest.TestCase):
         status = self.workspace.dispatch('status', {'job': result['job']})
         self.assertEqual(base64.b64decode(status['log_base64']), b'hello\n')
         self.assertEqual(status['returncode'], 0)
+        self.assertEqual(self.workspace.dispatch('wait', {'job': result['job'], 'timeout': 0})['returncode'], 0)
+
+    def test_watch_supports_existing_and_new_servers(self):
+        for capabilities, expected_method in (([], 'status'), (['wait'], 'wait')):
+            calls = []
+            def request(method, params):
+                calls.append(method)
+                if method == 'info':
+                    return {'capabilities': capabilities}
+                return {'returncode': 7, 'log_base64': base64.b64encode(b'done').decode(), 'next_offset': 4}
+            with patch('builtins.print'):
+                self.assertEqual(wait_for_job(request, 'job', 5), 7)
+            self.assertEqual(calls, ['info', expected_method])
 
     def test_stop_owned_process(self):
         result = self.workspace.dispatch('start', {'argv': [sys.executable, '-c', 'import time;time.sleep(60)']})

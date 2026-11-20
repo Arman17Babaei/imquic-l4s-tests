@@ -93,3 +93,28 @@ transfers instead of this JSON interface.
 
 There is no automatic startup, network discovery, deletion method, or unattended
 installation. No laptop connection exists until the user starts both commands.
+
+## Completion notifications in the host session
+
+After starting a laptop job, run this on the host as a background shell command:
+
+```sh
+python3 tools/l4s/laptop_rpc.py \
+  --token-file "$HOME/.config/live4s/laptop-rpc.token" wait-job \
+  --timeout-seconds 7200 JOB_ID
+```
+
+The host command streams the remote log and exits with the remote job's exit
+code. OpenCode's normal background-shell completion event then notifies the
+session, including on failure. No incoming laptop connection is required.
+New services support bounded blocking `wait` calls (up to 20 seconds); the
+watcher also supports old running services using `status`, so no service restart
+is needed to attach to an existing render. A watch deadline or broken tunnel
+fails the watcher but does not stop the laptop job. This is a session-level
+notification, not an email or persistent notification daemon. Attach a watcher
+to each new job; RPC launch alone does not automatically create one.
+
+Pulling updated code does not hot-reload a running service. Existing job ownership
+is preserved by leaving that service running. New server features take effect
+on a deliberate restart after its jobs are finished; the compatibility watcher
+works immediately without a restart.

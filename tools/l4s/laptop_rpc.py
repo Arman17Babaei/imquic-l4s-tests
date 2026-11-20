@@ -18,6 +18,7 @@ import signal
 import stat
 import subprocess
 import threading
+import time
 import urllib.request
 
 MAX_REQUEST = 8 * 1024 * 1024
@@ -52,7 +53,7 @@ class Workspace:
     def dispatch(self, method: str, params: dict) -> dict:
         if method == 'info':
             return {'root': str(self.root), 'pid': os.getpid(), 'cpu_count': os.cpu_count(),
-                    'uid': os.getuid(), 'capabilities': ['list', 'read', 'write', 'start', 'status', 'stop']}
+                    'uid': os.getuid(), 'capabilities': ['list', 'read', 'write', 'start', 'status', 'stop', 'wait']}
         if method == 'list':
             path = self.path(params.get('path', '.'))
             entries = sorted(path.iterdir())
@@ -98,7 +99,7 @@ class Workspace:
                 (self.state / f'{job}.json').write_text(json.dumps(
                     {'job': job, 'argv': argv, 'cwd': str(cwd), 'pid': process.pid}) + '\n')
             return {'job': job, 'pid': process.pid}
-        if method in ('status', 'stop'):
+        if method in ('status', 'stop', 'wait'):
             job = params['job']
             with self.lock:
                 process = self.jobs[job]
@@ -107,6 +108,14 @@ class Workspace:
                         os.killpg(process.pid, signal.SIGTERM)
                     except ProcessLookupError:
                         pass
+            if method == 'wait':
+                timeout = float(params.get('timeout', 20))
+                if not 0 <= timeout <= 20:
+                    raise ValueError('wait timeout must be between 0 and 20 seconds')
+                try:
+                    process.wait(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    pass
             offset = int(params.get('offset', 0))
             if offset < 0:
                 raise ValueError('invalid log offset')
@@ -149,6 +158,35 @@ def handler_for(workspace: Workspace, token: str):
     return Handler
 
 
+def wait_for_job(request, job: str, timeout: float, interval: float = 2) -> int:
+    """Compatibility watcher works with already-running V1 status-only servers.
+
+    Run this CLI in a host background shell to receive the harness completion
+    event. It monitors the remote job rather than repeatedly querying tool jobs.
+    """
+    deadline = time.monotonic() + timeout
+    offset = 0
+    info = request('info', {})
+    method = 'wait' if 'wait' in info.get('capabilities', []) else 'status'
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError(f'watch deadline exceeded for job {job}; remote job was not stopped')
+        params = {'job': job, 'offset': offset}
+        if method == 'wait':
+            params['timeout'] = min(20, remaining)
+        result = request(method, params)
+        log = base64.b64decode(result['log_base64'])
+        if log:
+            print(log.decode('utf-8', errors='replace'), end='', flush=True)
+        old_offset, offset = offset, result['next_offset']
+        if result['returncode'] is not None and offset - old_offset < MAX_CHUNK:
+            print(f'\nREMOTE JOB COMPLETE {job}: exit={result["returncode"]}', flush=True)
+            return result['returncode']
+        if method == 'status' and not log:
+            time.sleep(min(interval, remaining))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--token-file', required=True, type=Path)
@@ -163,6 +201,10 @@ def main():
     call.add_argument('--port', type=int, default=18766)
     call.add_argument('method')
     call.add_argument('params', nargs='?', default='{}', help='JSON object')
+    wait = sub.add_parser('wait-job', help='wait and stream logs; exit with remote job status')
+    wait.add_argument('--port', type=int, default=18766)
+    wait.add_argument('--timeout-seconds', type=float, default=7200)
+    wait.add_argument('job')
     args = parser.parse_args()
     if args.action == 'init-token':
         fd = os.open(args.token_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -189,11 +231,17 @@ def main():
                         pass
             server.server_close()
     else:
-        body = json.dumps({'method': args.method, 'params': json.loads(args.params)}).encode()
-        request = urllib.request.Request(f'http://127.0.0.1:{args.port}/rpc', data=body,
-            headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            print(json.dumps(json.load(response), indent=2))
+        def request(method, params):
+            body = json.dumps({'method': method, 'params': params}).encode()
+            req = urllib.request.Request(f'http://127.0.0.1:{args.port}/rpc', data=body,
+                headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=30) as response:
+                return json.load(response)['result']
+        if args.action == 'wait-job':
+            if args.timeout_seconds <= 0:
+                parser.error('watch timeout must be positive')
+            raise SystemExit(wait_for_job(request, args.job, args.timeout_seconds))
+        print(json.dumps({'ok': True, 'result': request(args.method, json.loads(args.params))}, indent=2))
 
 
 if __name__ == '__main__':
