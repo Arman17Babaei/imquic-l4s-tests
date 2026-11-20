@@ -35,7 +35,7 @@ def validate_candidate(binary: Path, candidate: Path, *, fps: int, width: int,
         raise ValueError('candidate must match dimensions, frame count, FPS and zero origin')
 
 
-def bounded_trace(trace: list[dict], duration_ms: float) -> list[dict]:
+def bounded_trace(trace: list[dict], duration_ms: float, fps: int = 10) -> list[dict]:
     if (not math.isfinite(duration_ms) or duration_ms <= 0 or len(trace) < 2
             or trace[0]['timestamp_ms'] != 0
             or any(b['timestamp_ms'] <= a['timestamp_ms'] for a, b in zip(trace, trace[1:]))
@@ -50,6 +50,9 @@ def bounded_trace(trace: list[dict], duration_ms: float) -> list[dict]:
     if right['timestamp_ms'] == duration_ms:
         result.append(deepcopy(right))
     else:
+        last_capture = (math.ceil(duration_ms * fps / 1000) - 1) * 1000 / fps
+        if result[-1]['timestamp_ms'] < last_capture:
+            raise ValueError('sparse trace boundary would change captured camera poses; supply an exact duration sample')
         result.append(deepcopy(result[-1]))
         result[-1]['timestamp_ms'] = duration_ms
     return result
@@ -80,7 +83,7 @@ def main():
     output = args.output.resolve()
     if not output.is_relative_to(ROOT / 'results') or output.exists():
         parser.error('output must be a new directory under results/')
-    trace = bounded_trace(json.loads(args.trace.read_text()), args.duration * 1000)
+    trace = bounded_trace(json.loads(args.trace.read_text()), args.duration * 1000, args.fps)
     binary = args.ffmpeg.resolve()
     filters = subprocess.run([binary, '-hide_banner', '-filters'], check=True, capture_output=True, text=True)
     if ' libvmaf ' not in filters.stdout:
