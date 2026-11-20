@@ -57,6 +57,11 @@ class BoundedTraceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, 'readback implementation'):
                 prepare(source, root / 'unsupported-readback', synchronous_readback=True)
             self.assertFalse((root / 'unsupported-readback').exists())
+            with self.assertRaisesRegex(ValueError, 'profiling requires'):
+                prepare(source, root / 'unsupported-profile', profile=True)
+            self.assertFalse((root / 'unsupported-profile').exists())
+            prepare(source, root / 'profile', manual_updates=True, profile=True)
+            self.assertIn('PROFILE seek_update_ms', (root / 'profile/assets/main.js').read_text())
             asset.write_text('unknown build')
             with self.assertRaisesRegex(ValueError, 'unsupported player'):
                 prepare(source, root / 'unsupported')
