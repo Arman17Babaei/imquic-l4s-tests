@@ -103,9 +103,8 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
                     if (seek) {
                         const pending = window.__priorityMoqSeek(trace, timestampMs);
-                        // Seeking stops requestAnimationFrame. Explicitly submit
-                        // the async readback fence so software WebGL need not
-                        // wait for a future animation frame to flush its queue.
+                        // Seeking stops requestAnimationFrame. Submit pending
+                        // software WebGL work while its async readback resolves.
                         const gl = document.querySelector('canvas').getContext('webgl2');
                         const submit = setInterval(() => gl?.finish(), 10);
                         try { await pending; }
