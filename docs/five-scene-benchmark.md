@@ -54,3 +54,10 @@ The 90-second goal is not met. Loading the same full scenes four times increases
 memory and initialization cost substantially. CPU time from `getrusage` does not
 fully account for reparented Chromium processes; do not use its reported average
 busy-core value as a reliable machine-utilization estimate.
+Train, room and truck's 60 PNGs were also checked byte-for-byte against the
+completed single-renderer captures, including poses and timestamps: all match.
+The other two scenes lack completed single-renderer baselines.
+
+The Mesa OpenGL/EGL backend failed to create a WebGL context in this environment.
+Manual-update, synchronous-readback and sort-drain variants did not produce a
+completed valid render; interrupted diagnostics are not performance evidence.

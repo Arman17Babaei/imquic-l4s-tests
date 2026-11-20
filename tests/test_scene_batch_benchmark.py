@@ -44,3 +44,7 @@ class BatchTests(unittest.TestCase):
             with patch('benchmark_scene_batch.Path', return_value=root), \
                     patch('benchmark_scene_batch.os.sysconf', side_effect=lambda key: 100 if key == 'SC_CLK_TCK' else 4096):
                 self.assertEqual(process_tree_usage(10), (4.5, 3 * 10 * 4096))
+                cumulative = {}
+                self.assertEqual(process_tree_usage(10, cumulative), (4.5, 3 * 10 * 4096))
+                (root / '12/stat').unlink()
+                self.assertEqual(process_tree_usage(10, cumulative), (4.5, 2 * 10 * 4096))

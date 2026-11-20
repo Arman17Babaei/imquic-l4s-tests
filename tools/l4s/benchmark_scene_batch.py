@@ -24,7 +24,7 @@ SCENES = (
 )
 
 
-def process_tree_usage(root: int) -> tuple[float, int]:
+def process_tree_usage(root: int, accumulated: dict | None = None) -> tuple[float, int]:
     """Sum CPU seconds and RSS of the current tree (RSS double-counts shared pages)."""
     rows = {}
     for entry in Path('/proc').iterdir():
@@ -35,7 +35,7 @@ def process_tree_usage(root: int) -> tuple[float, int]:
             fields = text[text.rfind(')') + 2:].split()
             rows[int(entry.name)] = (int(fields[1]),
                 (int(fields[11]) + int(fields[12])) / os.sysconf('SC_CLK_TCK'),
-                int(fields[21]) * os.sysconf('SC_PAGE_SIZE'))
+                int(fields[21]) * os.sysconf('SC_PAGE_SIZE'), fields[19])
         except (OSError, ValueError, IndexError):
             continue
     owned = {root}
@@ -44,7 +44,15 @@ def process_tree_usage(root: int) -> tuple[float, int]:
         if expanded == owned:
             break
         owned = expanded
-    return sum(rows[pid][1] for pid in owned if pid in rows), sum(rows[pid][2] for pid in owned if pid in rows)
+    if accumulated is not None:
+        # Keep the last sample from exited processes and continue tracking known
+        # descendants if Chromium reparents them. Start time protects PID reuse.
+        owned |= {pid for pid, start in accumulated if pid in rows and rows[pid][3] == start}
+        for pid in owned:
+            if pid in rows:
+                accumulated[(pid, rows[pid][3])] = rows[pid][1]
+    return (sum(accumulated.values()) if accumulated is not None else
+            sum(rows[pid][1] for pid in owned if pid in rows)), sum(rows[pid][2] for pid in owned if pid in rows)
 
 
 def main():
@@ -114,10 +122,11 @@ def main():
         return results
     peak_rss, peak_cpu_seconds = 0, 0.0
     samples = []
+    cpu_samples = {}
     with ThreadPoolExecutor(max_workers=args.parallel_scenes) as executor:
         futures = [executor.submit(run_lane, lane) for lane in range(args.parallel_scenes)]
         while not all(future.done() for future in futures):
-            cpu_seconds, rss = process_tree_usage(os.getpid())
+            cpu_seconds, rss = process_tree_usage(os.getpid(), cpu_samples)
             peak_rss, peak_cpu_seconds = max(peak_rss, rss), max(peak_cpu_seconds, cpu_seconds)
             samples.append({'wall_seconds': time.perf_counter() - started,
                             'tree_cpu_seconds': cpu_seconds, 'tree_rss_bytes': rss})
@@ -136,8 +145,11 @@ def main():
                'peak_observed_tree_cpu_seconds': peak_cpu_seconds,
                'completed_children_cpu_seconds': cpu_seconds,
                'average_busy_cores': cpu_seconds / elapsed,
+               'sampled_cumulative_cpu_seconds': sum(cpu_samples.values()),
+               'sampled_average_busy_cores': sum(cpu_samples.values()) / elapsed,
                'batch_harness_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-               'resource_note': 'RSS sums processes and double-counts shared pages; CPU samples exclude exited processes',
+               'resource_note': 'RSS sums processes and double-counts shared pages; cumulative CPU preserves last samples but misses tails and short-lived processes',
+               'cpu_accounting_note': 'getrusage may omit reparented Chromium descendants; average_busy_cores is not total utilization',
                'scope': 'five cold complete scenes + encode + encoding-fidelity VMAF', 'scenes': results}
     summary['target_met'] = summary['complete'] and elapsed < args.target_seconds
     (output / 'resources.json').write_text(json.dumps(samples, indent=2) + '\n')
