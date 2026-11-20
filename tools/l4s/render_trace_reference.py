@@ -98,7 +98,7 @@ def cached_trace_reference(*, cache_root: Path, manifest: Path, trace: Path, dis
                            if path.is_file()},
                 'renderer': {name: sha256(ROOT / 'tools/l4s' / name) for name in (
                     'render_trace_reference.py', 'camera_trace_browser_runner.mjs',
-                    'player_quality.mjs', 'camera_trace_player_server.py')}}
+                    'player_quality.mjs', 'camera_trace_player_server.py', 'snapshot_video.py')}}
     key = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
     cache_root.mkdir(parents=True, exist_ok=True)
     entry = cache_root / key
