@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 SPEC = importlib.util.spec_from_file_location('render_trace_reference',
     Path(__file__).resolve().parents[1] / 'tools/l4s/render_trace_reference.py')
@@ -12,6 +13,17 @@ SPEC.loader.exec_module(REFERENCE)
 
 
 class TraceReferenceTests(unittest.TestCase):
+    def test_process_descendants_include_changed_groups(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            # Parent IDs, not process groups, define ownership.
+            for pid, parent in ((10, 1), (11, 10), (12, 11), (20, 1)):
+                (root / str(pid)).mkdir()
+                (root / str(pid) / 'stat').write_text(f'{pid} (name with spaces) S {parent} 0')
+            original_path = Path
+            with patch.object(REFERENCE, 'Path', side_effect=lambda value: root if value == '/proc' else original_path(value)):
+                self.assertEqual(REFERENCE.process_descendants(10), {11, 12})
+
     def test_provenance_hashes_assets_and_rejects_escape(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
