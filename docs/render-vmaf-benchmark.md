@@ -70,6 +70,19 @@ returned mean encoding-fidelity VMAF 99.846. Evidence is in
 `results/render-benchmark/lavapipe-1fps-fullcpu/benchmark.json`. This is a
 near-miss, not an under-two-minute result or a fluid video workload.
 
+The isolated render-heartbeat variant can be reproduced without editing the
+external build:
+
+```sh
+python3 tools/l4s/prepare_benchmark_heartbeat.py \
+  --dist /opt/live4s/experiments/comprehensive-20261120/source/deps/gaussian-player/dist \
+  --output results/render-benchmark/heartbeat-player
+```
+
+This guarded adapter supports only the known bundle implementation and records
+before/after hashes. It did **not** fix the stall in its initial lavapipe trial
+and is not the recommended renderer or evidence of a speedup.
+
 Instrumented copies of the player further localized the first-seek stall:
 the accumulator generation returns, then Spark's depth readback for sorting
 does not return. This is stronger evidence than the earlier live-debounce
