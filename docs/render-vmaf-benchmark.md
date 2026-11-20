@@ -19,3 +19,11 @@ The explicit player path above is an environment-specific existing build. Ordina
 With no candidate supplied, VMAF compares the encoded render to its clean PNG sequence: this measures **encoding fidelity**, not network/progressive quality. `--candidate path/to/video.mp4` instead evaluates an external candidate, whose generation time is explicitly excluded. Neither mode measures QEMU transport setup or makes claims about other scenes, resolutions or FPS. A future paired progressive benchmark must include the candidate rendering cost too.
 
 Generated videos, PNGs, logs and summaries stay under ignored `results/`.
+
+For concurrent diagnostic trials on the 24-core host, prefix their commands with
+`taskset -c 0-11` and `taskset -c 12-23`. Affinity is inherited by browser,
+SwiftShader workers and FFmpeg; `benchmark.json` records the allowed CPUs.
+These sets follow the VM's two NUMA nodes. Memory bandwidth and storage are
+still shared, so confirm final timing with a standalone run. Do not compare
+a 12-core diagnostic timing against an unrestricted 24-core timing as if the
+resource budgets were identical.

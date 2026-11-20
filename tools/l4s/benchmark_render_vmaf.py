@@ -86,6 +86,7 @@ def main():
     summary = {'complete': False, 'duration_seconds': args.duration, 'fps': args.fps,
                'viewport': [args.width, args.height], 'cpu': platform.processor(),
                'logical_cpus': os.cpu_count(), 'threads': args.threads,
+               'cpu_affinity': sorted(os.sched_getaffinity(0)),
                'scope': 'external candidate comparison' if args.candidate else 'render + encode + encoding-fidelity VMAF',
                'ffmpeg_sha256': hashlib.sha256(binary.read_bytes()).hexdigest(),
                'ffmpeg_version': subprocess.run([binary, '-version'], capture_output=True, text=True, check=True).stdout}
