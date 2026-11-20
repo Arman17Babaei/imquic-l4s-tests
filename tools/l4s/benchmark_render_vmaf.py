@@ -54,8 +54,9 @@ def main():
     parser.add_argument('--height', type=int, default=540)
     parser.add_argument('--threads', type=int, default=8)
     parser.add_argument('--target-seconds', type=float, default=120)
+    parser.add_argument('--timeout-seconds', type=float, default=300)
     args = parser.parse_args()
-    if min(args.fps, args.width, args.height, args.threads, args.target_seconds) <= 0:
+    if min(args.fps, args.width, args.height, args.threads, args.target_seconds, args.timeout_seconds) <= 0:
         parser.error('dimensions, FPS, threads and target must be positive')
     output = args.output.resolve()
     if not output.is_relative_to(ROOT / 'results') or output.exists():
@@ -78,7 +79,7 @@ def main():
         render_reference(['--manifest', str(args.manifest.resolve()), '--trace', str(output / 'trace.json'),
                           '--dist', str(args.dist.resolve()), '--output', str(output / 'render'),
                           '--fps', str(args.fps), '--width', str(args.width), '--height', str(args.height),
-                          '--gpu-mode', 'software', '--headless', '--timeout-seconds', '1200'])
+                          '--gpu-mode', 'software', '--headless', '--timeout-seconds', str(args.timeout_seconds)])
         render = json.loads((output / 'render/reference-summary.json').read_text())
         summary.update({key: render[key] for key in ('render_seconds', 'encode_seconds', 'total_seconds')})
         candidate = args.candidate.resolve() if args.candidate else output / 'render/reference.mp4'
@@ -103,6 +104,9 @@ def main():
         if len(scores['frames']) != expected:
             raise ValueError(f'VMAF returned {len(scores["frames"])} frames; expected {expected}')
         summary.update(complete=True, frames=expected, mean_vmaf=scores['pooled_metrics']['vmaf']['mean'])
+    except Exception as error:
+        summary['failure'] = str(error)
+        raise
     finally:
         summary['wall_seconds'] = time.perf_counter() - started
         summary['target_met'] = summary['complete'] and summary['wall_seconds'] < args.target_seconds

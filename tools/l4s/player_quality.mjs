@@ -85,14 +85,17 @@ export async function renderReference(page, candidateManifest, tracePath, direct
     let complete = false;
     try {
         for (const candidateFrame of candidate.frames) {
+            if (candidateFrame.index % 20 === 0)
+                console.log(`REFERENCE frame ${candidateFrame.index}/${candidate.frames.length}`);
             const deadline = Date.now() + timeoutMs;
             let previous = null, settled = null;
             let seek = true;
             while (Date.now() < deadline) {
+                if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek started');
                 const sample = await page.evaluate(async ({ trace, timestampMs, seek }) => {
                     if (window.__priorityMoqMvp.failure) throw new Error(window.__priorityMoqMvp.failure);
                     if (seek) await window.__priorityMoqSeek(trace, timestampMs);
-                    else window.__priorityMoqCapture();
+                    else await window.__priorityMoqCapture();
                     const state = window.__priorityMoqMvp;
                     // renderReady includes a wall-clock debounce intended for live
                     // animation. A seek stops that animation. Check the underlying
@@ -103,6 +106,7 @@ export async function renderReference(page, candidateManifest, tracePath, direct
                         appliedGaussians: state.appliedGaussians,
                         image: document.querySelector('canvas').toDataURL('image/png') };
                 }, { trace, timestampMs: candidateFrame.timestampMs, seek });
+                if (seek && candidateFrame.index === 0) console.log('REFERENCE first seek returned');
                 // Re-seeking forces Spark to regenerate and sort even for the
                 // same pose, invalidating readiness on every stability probe.
                 seek = false;
