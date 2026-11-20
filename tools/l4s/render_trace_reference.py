@@ -218,7 +218,7 @@ def main(argv: list[str] | None = None) -> None:
                         descendants.update(process_descendants(browser.pid))
                         if time.monotonic() >= deadline:
                             raise subprocess.TimeoutExpired(browser_command, args.timeout_seconds + 60)
-                        time.sleep(0.1)
+                        time.sleep(0.5)
                     status = browser.returncode
                     if status:
                         raise subprocess.CalledProcessError(status, browser_command)
